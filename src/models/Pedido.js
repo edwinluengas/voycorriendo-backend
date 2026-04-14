@@ -1,0 +1,100 @@
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
+
+const Pedido = sequelize.define('Pedido', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
+  numero: {
+    type: DataTypes.STRING(12),
+    unique: true,
+    allowNull: false,
+    // Ej: MND-004823
+  },
+  cliente_id: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: { model: 'usuarios', key: 'id' },
+  },
+  negocio_id: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: { model: 'negocios', key: 'id' },
+  },
+  repartidor_id: {
+    type: DataTypes.UUID,
+    allowNull: true,  // null hasta que se asigne
+    references: { model: 'repartidores', key: 'id' },
+  },
+  // Items del pedido (JSON array)
+  // [{ producto_id, nombre, precio, cantidad, notas }]
+  items: { type: DataTypes.JSONB, allowNull: false },
+  // Totales
+  subtotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+  costo_envio: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  descuento: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  total: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+  // Pago
+  metodo_pago: {
+    type: DataTypes.ENUM('efectivo', 'tarjeta', 'transferencia', 'mercado_pago'),
+    allowNull: false,
+  },
+  pago_estado: {
+    type: DataTypes.ENUM('pendiente', 'autorizado', 'capturado', 'fallido', 'reembolsado'),
+    defaultValue: 'pendiente',
+  },
+  pago_referencia: { type: DataTypes.STRING, allowNull: true },
+  // Validación de límite de efectivo
+  excede_limite_efectivo: {
+    type: DataTypes.VIRTUAL,
+    get() {
+      return this.metodo_pago === 'efectivo' && this.total > 1000;
+    },
+  },
+  // Estado del pedido
+  estado: {
+    type: DataTypes.ENUM(
+      'pendiente',        // recién creado, esperando confirmación negocio
+      'confirmado',       // negocio confirmó
+      'preparando',       // negocio está preparando
+      'listo',            // listo para recoger
+      'en_camino',        // repartidor lo recogió
+      'entregado',        // entregado al cliente
+      'cancelado',        // cancelado
+      'rechazado'         // rechazado por negocio
+    ),
+    defaultValue: 'pendiente',
+  },
+  // Dirección de entrega
+  direccion_entrega: { type: DataTypes.STRING(250), allowNull: false },
+  latitud_entrega: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
+  longitud_entrega: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
+  notas_entrega: { type: DataTypes.TEXT, allowNull: true },
+  // Tiempos
+  confirmado_en: { type: DataTypes.DATE, allowNull: true },
+  asignado_en: { type: DataTypes.DATE, allowNull: true },
+  recogido_en: { type: DataTypes.DATE, allowNull: true },
+  entregado_en: { type: DataTypes.DATE, allowNull: true },
+  cancelado_en: { type: DataTypes.DATE, allowNull: true },
+  // Calificaciones
+  calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
+  calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
+  comentario: { type: DataTypes.TEXT, allowNull: true },
+}, {
+  tableName: 'pedidos',
+  timestamps: true,
+  createdAt: 'creado_en',
+  updatedAt: 'actualizado_en',
+  hooks: {
+    beforeCreate: (pedido) => {
+      // Validar límite de efectivo antes de crear
+      if (pedido.metodo_pago === 'efectivo' && pedido.total > 1000) {
+        throw new Error('Los pedidos en efectivo no pueden superar $1,000 MXN. Por favor elige otro método de pago.');
+      }
+    },
+  },
+});
+
+module.exports = Pedido;
