@@ -26,6 +26,12 @@ const registro = async (req, res) => {
     const otp = generarOTP();
     const otpExpira = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
 
+    // Solo exigimos OTP cuando Twilio esta realmente configurado.
+    // Mientras no haya credenciales de Twilio, auto-activamos al usuario
+    // sin importar el valor de NODE_ENV (evita quedar bloqueados en Railway).
+    const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
+    const estadoInicial = esProduccion ? 'pendiente' : 'activo';
+
     const usuario = await Usuario.create({
       nombre,
       apellido,
@@ -33,20 +39,42 @@ const registro = async (req, res) => {
       email,
       password,
       rol: rol || 'cliente',
-      estado: 'pendiente',
-      otp_codigo: otp,
-      otp_expira: otpExpira,
+      estado: estadoInicial,
+      telefono_verificado: !esProduccion,
+      otp_codigo: esProduccion ? otp : null,
+      otp_expira: esProduccion ? otpExpira : null,
     });
 
-    // TODO: Enviar OTP por SMS via Twilio
-    // await enviarSMS(telefono, `Tu código de Mandaditos es: ${otp}`);
+    if (esProduccion) {
+      // TODO: Enviar OTP por SMS via Twilio
+      // await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otp}`);
+      console.log(`[PROD] OTP para ${telefono}: ${otp}`);
+      return res.status(201).json({
+        ok: true,
+        mensaje: 'Registro exitoso. Te enviamos un código por SMS para verificar tu número.',
+        data: { usuario_id: usuario.id, telefono: usuario.telefono },
+      });
+    }
 
-    console.log(`[DEV] OTP para ${telefono}: ${otp}`); // Solo en desarrollo
+    // En desarrollo: regresamos JWT directo para entrar sin OTP
+    const token = generarToken(usuario.id);
+    console.log(`[DEV] Usuario registrado y auto-activado: ${telefono} (rol: ${usuario.rol})`);
 
     res.status(201).json({
       ok: true,
-      mensaje: 'Registro exitoso. Te enviamos un código por SMS para verificar tu número.',
-      data: { usuario_id: usuario.id, telefono: usuario.telefono },
+      mensaje: '¡Cuenta creada! Bienvenido a VoyCorriendo.',
+      data: {
+        token,
+        usuario: {
+          id: usuario.id,
+          nombre: usuario.nombre,
+          apellido: usuario.apellido,
+          telefono: usuario.telefono,
+          email: usuario.email,
+          rol: usuario.rol,
+          estado: usuario.estado,
+        },
+      },
     });
   } catch (error) {
     console.error('Error en registro:', error);
@@ -80,7 +108,7 @@ const verificarOTP = async (req, res) => {
     const token = generarToken(usuario.id);
     res.json({
       ok: true,
-      mensaje: '¡Número verificado! Bienvenido a Mandaditos 🎉',
+      mensaje: '¡Número verificado! Bienvenido a VoyCorriendo 🎉',
       token,
       data: { usuario },
     });
@@ -102,10 +130,20 @@ const login = async (req, res) => {
     if (!usuario || !(await usuario.verificarPassword(password))) {
       return res.status(401).json({ ok: false, mensaje: 'Teléfono o contraseña incorrectos.' });
     }
-    if (!usuario.telefono_verificado) {
+
+    // Solo bloqueamos por OTP cuando Twilio esta realmente configurado.
+    const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
+
+    // Auto-verificamos usuarios de registros viejos (sin OTP) cuando no hay Twilio
+    if (!esProduccion && (!usuario.telefono_verificado || usuario.estado !== 'activo')) {
+      await usuario.update({ telefono_verificado: true, estado: 'activo' });
+      console.log(`[DEV] Usuario auto-verificado en login: ${telefono}`);
+    }
+
+    if (esProduccion && !usuario.telefono_verificado) {
       return res.status(403).json({ ok: false, mensaje: 'Verifica tu número de teléfono primero.' });
     }
-    if (usuario.estado !== 'activo') {
+    if (esProduccion && usuario.estado !== 'activo') {
       return res.status(403).json({ ok: false, mensaje: 'Tu cuenta no está activa. Contacta a soporte.' });
     }
 
@@ -115,8 +153,18 @@ const login = async (req, res) => {
     res.json({
       ok: true,
       mensaje: `¡Bienvenido de vuelta, ${usuario.nombre}!`,
-      token,
-      data: { usuario },
+      data: {
+        token,
+        usuario: {
+          id: usuario.id,
+          nombre: usuario.nombre,
+          apellido: usuario.apellido,
+          telefono: usuario.telefono,
+          email: usuario.email,
+          rol: usuario.rol,
+          estado: usuario.estado,
+        },
+      },
     });
   } catch (error) {
     console.error('Error en login:', error);
@@ -140,7 +188,7 @@ const solicitarOTP = async (req, res) => {
       otp_expira: new Date(Date.now() + 10 * 60 * 1000),
     });
 
-    // TODO: await enviarSMS(telefono, `Tu código de acceso Mandaditos: ${otp}`);
+    // TODO: await enviarSMS(telefono, `Tu código de acceso VoyCorriendo: ${otp}`);
     console.log(`[DEV] OTP para ${telefono}: ${otp}`);
 
     res.json({ ok: true, mensaje: 'Te enviamos un código por SMS.' });
