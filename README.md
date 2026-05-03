@@ -14,7 +14,7 @@
 
 ### 2. Clonar / abrir el proyecto
 ```bash
-cd mandaditos-backend
+cd voycorriendo-backend
 npm install
 ```
 
