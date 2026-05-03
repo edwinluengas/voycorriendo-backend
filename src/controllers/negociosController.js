@@ -3,13 +3,15 @@ const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 
 // ─── GET /api/negocios ────────────────────────────────────
-// Lista negocios activos, con filtros por categoría
+// Lista negocios activos, con filtros por categoría y por ciudad
 const listarNegocios = async (req, res) => {
   try {
-    const { categoria, buscar, pagina = 1, limite = 20 } = req.query;
+    const { categoria, buscar, ciudad, pagina = 1, limite = 20 } = req.query;
     const offset = (pagina - 1) * limite;
 
-    const where = { activo: true };
+    // Por defecto solo mostramos negocios de Puerto Escondido (ciudad piloto).
+    // Cuando la app envie ?ciudad=huatulco u otra, filtrara por esa.
+    const where = { activo: true, ciudad: ciudad || 'puerto_escondido' };
     if (categoria) where.categoria = categoria;
     if (buscar) {
       where.nombre = { [Op.iLike]: `%${buscar}%` };
@@ -70,7 +72,7 @@ const crearNegocio = async (req, res) => {
     return res.status(400).json({ ok: false, errores: errores.array() });
   }
   try {
-    const { nombre, descripcion, categoria, direccion, colonia, telefono, horarios } = req.body;
+    const { nombre, descripcion, categoria, direccion, colonia, ciudad, telefono, horarios } = req.body;
 
     const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (yaExiste) {
@@ -84,6 +86,7 @@ const crearNegocio = async (req, res) => {
       categoria,
       direccion,
       colonia,
+      ciudad: ciudad || 'puerto_escondido',  // ciudad piloto por defecto
       telefono,
       horarios,
       activo: false,   // Admin debe activarlo
@@ -91,7 +94,7 @@ const crearNegocio = async (req, res) => {
 
     res.status(201).json({
       ok: true,
-      mensaje: 'Negocio registrado. El equipo de Mandaditos lo revisará pronto.',
+      mensaje: 'Negocio registrado. El equipo de VoyCorriendo lo revisará pronto.',
       data: { negocio },
     });
   } catch (error) {

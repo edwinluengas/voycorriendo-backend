@@ -46,10 +46,18 @@ const Producto = sequelize.define('Producto', {
     defaultValue: 10,   // minutos
   },
   // Opciones / modificadores (JSON)
-  // [{ nombre: "Sin cebolla", extra_precio: 0 }, { nombre: "Con queso", extra_precio: 10 }]
+  // Formato flexible:
+  // - Lista simple de sabores: { tipo: 'sabor', requerida: true, valores: ['Jamaica','Horchata','Tamarindo'] }
+  // - Modificadores con precio extra: { tipo: 'extras', valores: [{ nombre: 'Con queso', extra: 10 }, ...] }
   opciones: {
     type: DataTypes.JSONB,
     allowNull: true,
+  },
+  // Producto restringido: requiere foto del INE del cliente para entregarse
+  // (alcohol, cigarros, medicamentos controlados)
+  requiere_id: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
   },
 }, {
   tableName: 'productos',

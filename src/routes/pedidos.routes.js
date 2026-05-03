@@ -1,7 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const {
-  crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido,
+  crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido, pedidosDelNegocio, cotizarEnvio,
 } = require('../controllers/pedidosController');
 const { proteger, restringirA } = require('../middleware/auth');
 
@@ -19,6 +19,9 @@ router.post('/', [
 ], crearPedido);
 
 router.get('/',       misPedidos);
+// IMPORTANTE: las rutas estáticas van ANTES de /:id para que no las absorba
+router.get('/cotizar',             cotizarEnvio);
+router.get('/negocio/mis-pedidos', restringirA('negocio'), pedidosDelNegocio);
 router.get('/:id',    obtenerPedido);
 router.patch('/:id/estado', [
   body('estado').notEmpty().withMessage('El estado es obligatorio'),

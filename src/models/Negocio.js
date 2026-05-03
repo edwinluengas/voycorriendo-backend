@@ -15,14 +15,42 @@ const Negocio = sequelize.define('Negocio', {
   nombre: { type: DataTypes.STRING(150), allowNull: false },
   descripcion: { type: DataTypes.TEXT, allowNull: true },
   categoria: {
-    type: DataTypes.ENUM('restaurante', 'farmacia', 'abarrotes', 'distribuidora', 'otro'),
+    type: DataTypes.STRING(30),
     allowNull: false,
+    validate: {
+      isIn: [[
+        'restaurante',
+        'tienda_conveniencia',
+        'farmacia',
+        'papeleria',
+        'panaderia',
+        'ahivoy store',
+        'distribuidora',
+        'otro',
+      ]],
+    },
+  },
+  // Negocio destacado en el carrusel principal
+  destacado: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // 'local' = entrega en moto; 'paqueteria' = envío desde CDMX
+  tipo_entrega: {
+    type: DataTypes.STRING(20),
+    defaultValue: 'local',
+    validate: { isIn: [['local', 'paqueteria']] },
   },
   logo: { type: DataTypes.STRING, allowNull: true },
   foto_portada: { type: DataTypes.STRING, allowNull: true },
   // Ubicación
   direccion: { type: DataTypes.STRING(250), allowNull: false },
   colonia: { type: DataTypes.STRING(100), allowNull: true },
+  // Ciudad/zona donde opera el negocio. Slug en minusculas y guion bajo.
+  // Ejemplos: 'puerto_escondido', 'huatulco', 'oaxaca_centro', 'salina_cruz'.
+  // Permite que la app filtre lo que ve cada cliente segun su ubicacion.
+  ciudad: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    defaultValue: 'puerto_escondido',
+  },
   latitud: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
   longitud: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
   // Contacto
@@ -37,7 +65,7 @@ const Negocio = sequelize.define('Negocio', {
   // Cuenta bancaria para recibir pagos
   clabe_bancaria: { type: DataTypes.STRING(18), allowNull: true },
   banco: { type: DataTypes.STRING(50), allowNull: true },
-  // Comisión (% que se lleva Mandaditos)
+  // Comisión (% que se lleva VoyCorriendo)
   comision_porcentaje: { type: DataTypes.DECIMAL(5, 2), defaultValue: 15.00 },
   // Estadísticas
   calificacion_promedio: { type: DataTypes.DECIMAL(3, 2), defaultValue: 0.00 },

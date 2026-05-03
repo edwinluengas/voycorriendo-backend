@@ -37,6 +37,14 @@ const Repartidor = sequelize.define('Repartidor', {
   },
   verificacion_nota: { type: DataTypes.TEXT, allowNull: true },
   antecedentes_ok: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Ciudad/zona donde opera el repartidor. Mismo slug que en Negocio.
+  // Por ahora todos quedan en 'puerto_escondido'; al expandirnos a otra ciudad
+  // crearemos repartidores con su slug correspondiente.
+  ciudad: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    defaultValue: 'puerto_escondido',
+  },
   // Disponibilidad actual
   disponible: { type: DataTypes.BOOLEAN, defaultValue: false },
   latitud: { type: DataTypes.DECIMAL(10, 8), allowNull: true },

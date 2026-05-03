@@ -36,6 +36,12 @@ const Pedido = sequelize.define('Pedido', {
   costo_envio: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   descuento: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
   total: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+  // Modelo económico (tipo Rappi)
+  distancia_km:     { type: DataTypes.DECIMAL(6, 2), allowNull: true },   // 0-99.99 km
+  zona:             { type: DataTypes.STRING(1),    allowNull: true },   // 'A'|'B'|'C'
+  pago_repartidor:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, // MXN que le pagamos al repa
+  comision_negocio: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, // MXN que retiene la app al negocio
+  ganancia_app:     { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 }, // comisión + (envío - pago repa)
   // Pago
   metodo_pago: {
     type: DataTypes.ENUM('efectivo', 'tarjeta', 'transferencia', 'mercado_pago'),
@@ -72,6 +78,10 @@ const Pedido = sequelize.define('Pedido', {
   latitud_entrega: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
   longitud_entrega: { type: DataTypes.DECIMAL(11, 8), allowNull: true },
   notas_entrega: { type: DataTypes.TEXT, allowNull: true },
+  // Foto del INE del cliente (si algún producto requiere verificación de edad).
+  // TEXT porque guardamos data URI base64 temporalmente; cuando movamos a S3/Cloudinary
+  // será una URL corta.
+  ine_foto_url: { type: DataTypes.TEXT, allowNull: true },
   // Tiempos
   confirmado_en: { type: DataTypes.DATE, allowNull: true },
   asignado_en: { type: DataTypes.DATE, allowNull: true },
