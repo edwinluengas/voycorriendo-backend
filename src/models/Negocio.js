@@ -70,6 +70,23 @@ const Negocio = sequelize.define('Negocio', {
   // Estadísticas
   calificacion_promedio: { type: DataTypes.DECIMAL(3, 2), defaultValue: 0.00 },
   total_pedidos: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // ─── Estado operativo de la cuenta (estilo DoorDash/Rappi) ───
+  // 'normal'      → aparece en el feed normalmente
+  // 'observacion' → aparece pero el panel del negocio le muestra mensajes de coaching
+  // 'probation'   → aparece al final del feed, ranking degradado
+  // 'suspendido'  → no aparece en el feed, no recibe pedidos
+  // 'bloqueado'   → cuenta cerrada permanentemente
+  estado_cuenta: {
+    type: DataTypes.ENUM('normal', 'observacion', 'probation', 'suspendido', 'bloqueado'),
+    defaultValue: 'normal',
+  },
+  estado_motivo: { type: DataTypes.TEXT, allowNull: true },
+  // ─── Metricas para el sistema de reputacion ─────────────────
+  tasa_cancelacion: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0.00 },
+  tiempo_prep_promedio_min: { type: DataTypes.INTEGER, defaultValue: 0 },
+  quejas_30d: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // Badge "Top" / "Mas pedido" que se muestra en el feed (estilo DoorDash)
+  destacado_calidad: { type: DataTypes.BOOLEAN, defaultValue: false },
 }, {
   tableName: 'negocios',
   timestamps: true,

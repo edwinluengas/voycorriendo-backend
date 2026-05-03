@@ -30,13 +30,32 @@ const Repartidor = sequelize.define('Repartidor', {
   // Cuenta bancaria (para recibir pagos)
   clabe_bancaria: { type: DataTypes.STRING(18), allowNull: true },
   banco: { type: DataTypes.STRING(50), allowNull: true },
-  // Estado de verificación
+  // Estado de verificación inicial (al subir documentos)
   verificacion_estado: {
     type: DataTypes.ENUM('pendiente', 'en_revision', 'aprobado', 'rechazado'),
     defaultValue: 'pendiente',
   },
   verificacion_nota: { type: DataTypes.TEXT, allowNull: true },
   antecedentes_ok: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // ─── Estado operativo de la cuenta (estilo Uber) ────────────
+  // 'normal'      → recibe pedidos sin restriccion
+  // 'observacion' → recibe pedidos pero ve mensajes de coaching
+  // 'probation'   → algoritmo lo prioriza menos (asignacion al final)
+  // 'suspendido'  → no recibe pedidos hasta hablar con soporte
+  // 'bloqueado'   → cuenta cerrada permanentemente
+  estado_cuenta: {
+    type: DataTypes.ENUM('normal', 'observacion', 'probation', 'suspendido', 'bloqueado'),
+    defaultValue: 'normal',
+  },
+  estado_motivo: { type: DataTypes.TEXT, allowNull: true },
+  // ─── Metricas para el sistema de reputacion ─────────────────
+  tasa_cancelacion: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0.00 },
+  tasa_aceptacion: { type: DataTypes.DECIMAL(5, 2), defaultValue: 100.00 },
+  quejas_30d: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // Conectado en este momento (estilo Uber "Go Online" / Rappi "Conectarme")
+  // Independiente de 'disponible' (que indica que esta esperando pedido).
+  conectado: { type: DataTypes.BOOLEAN, defaultValue: false },
+  conectado_desde: { type: DataTypes.DATE, allowNull: true },
   // Ciudad/zona donde opera el repartidor. Mismo slug que en Negocio.
   // Por ahora todos quedan en 'puerto_escondido'; al expandirnos a otra ciudad
   // crearemos repartidores con su slug correspondiente.

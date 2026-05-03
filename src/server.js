@@ -16,6 +16,7 @@ const { conectarDB, sequelize } = require('./config/database');
 
 // Rutas
 const authRoutes         = require('./routes/auth.routes');
+const usuariosRoutes     = require('./routes/usuarios.routes');
 const negociosRoutes     = require('./routes/negocios.routes');
 const pedidosRoutes      = require('./routes/pedidos.routes');
 const repartidoresRoutes = require('./routes/repartidores.routes');
@@ -94,6 +95,7 @@ app.get('/api/salud', (req, res) => {
 });
 
 app.use('/api/auth',         authRoutes);
+app.use('/api/usuarios',     usuariosRoutes);
 app.use('/api/negocios',     negociosRoutes);
 app.use('/api/pedidos',      pedidosRoutes);
 app.use('/api/repartidores', repartidoresRoutes);

@@ -34,7 +34,17 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.STRING,
     allowNull: true, // null si usa solo OTP por SMS
   },
+  // 'rol' se mantiene por compatibilidad. Representa el rol PRIMARIO con el
+  // que el usuario se registro originalmente. Para saber si tiene activos
+  // otros roles, consultar la presencia de filas en 'repartidores' / 'negocios'.
   rol: {
+    type: DataTypes.ENUM('cliente', 'repartidor', 'negocio', 'admin'),
+    defaultValue: 'cliente',
+  },
+  // 'modo_activo' es el modo en el que el usuario esta operando AHORA.
+  // Cambia con el switch del menu (estilo Rappi/Uber). El frontend lo
+  // usa para decidir que tabs mostrar y a que endpoints llamar.
+  modo_activo: {
     type: DataTypes.ENUM('cliente', 'repartidor', 'negocio', 'admin'),
     defaultValue: 'cliente',
   },
