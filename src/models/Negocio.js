@@ -12,22 +12,27 @@ const Negocio = sequelize.define('Negocio', {
     allowNull: false,
     references: { model: 'usuarios', key: 'id' },
   },
-  nombre: { type: DataTypes.STRING(150), allowNull: false },
+  // ─── Datos basicos (allowNull: true porque el wizard los llena por etapas) ─
+  nombre: { type: DataTypes.STRING(150), allowNull: true },
   descripcion: { type: DataTypes.TEXT, allowNull: true },
   categoria: {
     type: DataTypes.STRING(30),
-    allowNull: false,
+    allowNull: true,
     validate: {
-      isIn: [[
-        'restaurante',
-        'tienda_conveniencia',
-        'farmacia',
-        'papeleria',
-        'panaderia',
-        'ahivoy store',
-        'distribuidora',
-        'otro',
-      ]],
+      isIn: {
+        args: [[
+          'restaurante',
+          'tienda_conveniencia',
+          'farmacia',
+          'papeleria',
+          'panaderia',
+          'ahivoy store',
+          'abarrotes',
+          'distribuidora',
+          'otro',
+        ]],
+        msg: 'Categoria invalida',
+      },
     },
   },
   // Negocio destacado en el carrusel principal
@@ -40,12 +45,15 @@ const Negocio = sequelize.define('Negocio', {
   },
   logo: { type: DataTypes.STRING, allowNull: true },
   foto_portada: { type: DataTypes.STRING, allowNull: true },
+  // ─── Documentos para verificacion ────────────────────────
+  foto_local: { type: DataTypes.STRING, allowNull: true },
+  comprobante_domicilio: { type: DataTypes.STRING, allowNull: true },
+  documento_rfc: { type: DataTypes.STRING, allowNull: true },
+  documento_ine_dueno: { type: DataTypes.STRING, allowNull: true },
   // Ubicación
-  direccion: { type: DataTypes.STRING(250), allowNull: false },
+  direccion: { type: DataTypes.STRING(250), allowNull: true },
   colonia: { type: DataTypes.STRING(100), allowNull: true },
-  // Ciudad/zona donde opera el negocio. Slug en minusculas y guion bajo.
-  // Ejemplos: 'puerto_escondido', 'huatulco', 'oaxaca_centro', 'salina_cruz'.
-  // Permite que la app filtre lo que ve cada cliente segun su ubicacion.
+  // Ciudad/zona donde opera el negocio.
   ciudad: {
     type: DataTypes.STRING(50),
     allowNull: false,
@@ -57,12 +65,24 @@ const Negocio = sequelize.define('Negocio', {
   telefono: { type: DataTypes.STRING(15), allowNull: true },
   // Horarios (JSON): {"lun":{"abre":"09:00","cierra":"21:00"}, ...}
   horarios: { type: DataTypes.JSONB, allowNull: true },
-  // Estado
+  // ─── Estado de verificacion (nuevo, espejo del repartidor) ─────
+  // pendiente   → wizard sin terminar
+  // en_revision → ya envio, esperando aprobacion del admin
+  // aprobado    → activo y operando
+  // rechazado   → admin pidio correcciones
+  verificacion_estado: {
+    type: DataTypes.ENUM('pendiente', 'en_revision', 'aprobado', 'rechazado'),
+    defaultValue: 'pendiente',
+  },
+  verificacion_nota: { type: DataTypes.TEXT, allowNull: true },
+  // ─── Estado operativo (admin lo activa cuando aprueba) ─────
+  // 'activo: true' = aprobado y publicado en el feed.
   activo: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // El propio dueño puede abrir/cerrar (estilo Go Online del repartidor).
   abierto_ahora: { type: DataTypes.BOOLEAN, defaultValue: false },
-  tiempo_entrega_min: { type: DataTypes.INTEGER, defaultValue: 20 },  // minutos
+  tiempo_entrega_min: { type: DataTypes.INTEGER, defaultValue: 20 },
   tiempo_entrega_max: { type: DataTypes.INTEGER, defaultValue: 40 },
-  // Cuenta bancaria para recibir pagos
+  // Cuenta bancaria
   clabe_bancaria: { type: DataTypes.STRING(18), allowNull: true },
   banco: { type: DataTypes.STRING(50), allowNull: true },
   // Comisión (% que se lleva VoyCorriendo)
@@ -71,11 +91,6 @@ const Negocio = sequelize.define('Negocio', {
   calificacion_promedio: { type: DataTypes.DECIMAL(3, 2), defaultValue: 0.00 },
   total_pedidos: { type: DataTypes.INTEGER, defaultValue: 0 },
   // ─── Estado operativo de la cuenta (estilo DoorDash/Rappi) ───
-  // 'normal'      → aparece en el feed normalmente
-  // 'observacion' → aparece pero el panel del negocio le muestra mensajes de coaching
-  // 'probation'   → aparece al final del feed, ranking degradado
-  // 'suspendido'  → no aparece en el feed, no recibe pedidos
-  // 'bloqueado'   → cuenta cerrada permanentemente
   estado_cuenta: {
     type: DataTypes.ENUM('normal', 'observacion', 'probation', 'suspendido', 'bloqueado'),
     defaultValue: 'normal',

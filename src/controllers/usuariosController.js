@@ -43,7 +43,8 @@ const obtenerMisRoles = async (req, res) => {
     const negocio = await Negocio.findOne({
       where: { usuario_id: usuarioId },
       attributes: [
-        'id', 'nombre', 'activo', 'estado_cuenta', 'estado_motivo',
+        'id', 'nombre', 'activo', 'verificacion_estado', 'verificacion_nota',
+        'estado_cuenta', 'estado_motivo', 'abierto_ahora',
         'calificacion_promedio', 'total_pedidos', 'destacado_calidad',
       ],
     });
@@ -51,11 +52,17 @@ const obtenerMisRoles = async (req, res) => {
     const rolNegocio = negocio
       ? {
           activo: true,
-          estado: mapearEstadoNegocio(negocio.activo, negocio.estado_cuenta),
+          estado: mapearEstadoNegocio(negocio.verificacion_estado, negocio.activo, negocio.estado_cuenta),
+          verificacion: negocio.verificacion_estado,
           aprobado: negocio.activo,
           estado_cuenta: negocio.estado_cuenta,
-          mensaje: construirMensajeNegocio(negocio.activo, negocio.estado_cuenta, negocio.estado_motivo),
+          mensaje: construirMensajeNegocio(
+            negocio.verificacion_estado, negocio.activo,
+            negocio.estado_cuenta, negocio.estado_motivo,
+            negocio.verificacion_nota
+          ),
           nombre: negocio.nombre,
+          abierto: negocio.abierto_ahora,
           calificacion: parseFloat(negocio.calificacion_promedio),
           total_pedidos: negocio.total_pedidos,
           destacado_calidad: negocio.destacado_calidad,
@@ -117,19 +124,15 @@ const cambiarModo = async (req, res) => {
       }
     }
 
-    // Negocio: solo si esta activo (admin lo aprobo)
+    // Negocio: permitimos entrar si ya activo el modo (aunque este pendiente)
+    // para que vea el dashboard con su estado. La validacion fina ocurre en
+    // cada endpoint operativo.
     if (modo === 'negocio') {
       const negocio = await Negocio.findOne({ where: { usuario_id: usuarioId } });
       if (!negocio) {
         return res.status(403).json({
           ok: false,
-          mensaje: 'Aun no tienes un negocio. Registra uno desde tu perfil.',
-        });
-      }
-      if (!negocio.activo) {
-        return res.status(403).json({
-          ok: false,
-          mensaje: 'Tu negocio aun esta en revision por el equipo de VoyCorriendo.',
+          mensaje: 'Aun no tienes un negocio. Activalo desde tu perfil.',
         });
       }
       if (['suspendido', 'bloqueado'].includes(negocio.estado_cuenta)) {
@@ -161,9 +164,14 @@ function mapearEstadoRol(verificacion, estadoCuenta) {
   return 'inactivo';
 }
 
-function mapearEstadoNegocio(activo, estadoCuenta) {
+function mapearEstadoNegocio(verificacion, activo, estadoCuenta) {
   if (estadoCuenta === 'bloqueado') return 'bloqueado';
   if (estadoCuenta === 'suspendido') return 'suspendido';
+  if (verificacion === 'pendiente')   return 'pendiente';
+  if (verificacion === 'en_revision') return 'pendiente';
+  if (verificacion === 'rechazado')   return 'rechazado';
+  if (verificacion === 'aprobado' && activo) return 'aprobado';
+  // Negocios viejos sin verificacion_estado: usar 'activo'
   if (!activo) return 'pendiente';
   return 'aprobado';
 }
@@ -188,7 +196,7 @@ function construirMensajeRol(verificacion, estadoCuenta, motivo) {
   return null;
 }
 
-function construirMensajeNegocio(activo, estadoCuenta, motivo) {
+function construirMensajeNegocio(verificacion, activo, estadoCuenta, motivo, nota) {
   if (estadoCuenta === 'observacion') {
     return 'Tu negocio esta en observacion. Mejora tus tiempos y calificacion.';
   }
@@ -198,6 +206,10 @@ function construirMensajeNegocio(activo, estadoCuenta, motivo) {
   if (estadoCuenta === 'bloqueado') {
     return motivo || 'Tu negocio fue bloqueado permanentemente.';
   }
+  if (verificacion === 'pendiente')   return 'Completa los datos de tu negocio para enviarlo a revision.';
+  if (verificacion === 'en_revision') return 'Estamos revisando tu negocio. Te avisaremos pronto.';
+  if (verificacion === 'rechazado')   return nota || 'Tu negocio fue rechazado. Corrige los datos y vuelve a enviar.';
+  if (verificacion === 'aprobado' && activo) return null;
   if (!activo) return 'Tu negocio esta en revision por el equipo de VoyCorriendo.';
   return null;
 }

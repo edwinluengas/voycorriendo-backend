@@ -1,17 +1,25 @@
 const { Negocio, Producto, Usuario } = require('../models');
 const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
+const { subirImagen } = require('../services/storage.service');
+
+// ═══════════════════════════════════════════════════════════
+// PUBLIC: feed para clientes
+// ═══════════════════════════════════════════════════════════
 
 // ─── GET /api/negocios ────────────────────────────────────
-// Lista negocios activos, con filtros por categoría y por ciudad
 const listarNegocios = async (req, res) => {
   try {
     const { categoria, buscar, ciudad, pagina = 1, limite = 20 } = req.query;
     const offset = (pagina - 1) * limite;
 
-    // Por defecto solo mostramos negocios de Puerto Escondido (ciudad piloto).
-    // Cuando la app envie ?ciudad=huatulco u otra, filtrara por esa.
-    const where = { activo: true, ciudad: ciudad || 'puerto_escondido' };
+    // Solo aprobados, activos, y NO suspendidos/bloqueados
+    const where = {
+      activo: true,
+      verificacion_estado: 'aprobado',
+      estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
+      ciudad: ciudad || 'puerto_escondido',
+    };
     if (categoria) where.categoria = categoria;
     if (buscar) {
       where.nombre = { [Op.iLike]: `%${buscar}%` };
@@ -21,7 +29,10 @@ const listarNegocios = async (req, res) => {
       where,
       limit: parseInt(limite),
       offset: parseInt(offset),
-      order: [['calificacion_promedio', 'DESC']],
+      order: [
+        ['destacado_calidad', 'DESC'],
+        ['calificacion_promedio', 'DESC'],
+      ],
       attributes: { exclude: ['clabe_bancaria', 'usuario_id'] },
     });
 
@@ -57,15 +68,224 @@ const obtenerNegocio = async (req, res) => {
     if (!negocio) {
       return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
     }
-
     res.json({ ok: true, data: { negocio } });
   } catch (error) {
     res.status(500).json({ ok: false, mensaje: 'Error al obtener el negocio.' });
   }
 };
 
-// ─── POST /api/negocios ───────────────────────────────────
-// Solo un usuario con rol 'negocio' puede crear su negocio
+// ═══════════════════════════════════════════════════════════
+// ONBOARDING: wizard del dueno del negocio
+// ═══════════════════════════════════════════════════════════
+
+// ─── POST /api/negocios/activar ────────────────────────────
+// Click en "Activar modo negocio" en perfil. Crea fila vacia.
+const activarModoNegocio = async (req, res) => {
+  try {
+    const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (yaExiste) {
+      return res.json({
+        ok: true,
+        mensaje: 'Ya tienes un negocio registrado.',
+        data: { negocio: yaExiste },
+      });
+    }
+    const negocio = await Negocio.create({
+      usuario_id: req.usuario.id,
+      verificacion_estado: 'pendiente',
+      activo: false,
+      ciudad: 'puerto_escondido',
+    });
+    res.status(201).json({
+      ok: true,
+      mensaje: 'Modo negocio activado. Completa tus datos para empezar.',
+      data: { negocio },
+    });
+  } catch (error) {
+    console.error('Error en activarModoNegocio:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al activar modo negocio.' });
+  }
+};
+
+// ─── GET /api/negocios/mi-negocio ──────────────────────────
+// El dueno consulta su propio negocio (con todos los campos).
+const obtenerMiNegocio = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) {
+      return res.status(404).json({
+        ok: false,
+        mensaje: 'Aun no tienes negocio. Activalo desde tu perfil.',
+      });
+    }
+    res.json({ ok: true, data: { negocio } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener tu negocio.' });
+  }
+};
+
+// ─── PATCH /api/negocios/mi-negocio ────────────────────────
+// Actualiza datos del wizard. Acepta cualquier subset.
+const actualizarMiPerfil = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) {
+      return res.status(404).json({
+        ok: false,
+        mensaje: 'Activa primero el modo negocio desde tu perfil.',
+      });
+    }
+    if (['suspendido', 'bloqueado'].includes(negocio.estado_cuenta)) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'Tu cuenta esta restringida. Contacta a soporte.',
+      });
+    }
+
+    const camposEditables = [
+      'nombre', 'descripcion', 'categoria',
+      'direccion', 'colonia', 'latitud', 'longitud',
+      'telefono', 'horarios',
+      'tiempo_entrega_min', 'tiempo_entrega_max',
+      'clabe_bancaria', 'banco',
+      // URLs de fotos (las setea /documento, pero permitimos override)
+      'logo', 'foto_portada', 'foto_local',
+      'comprobante_domicilio', 'documento_rfc', 'documento_ine_dueno',
+    ];
+    camposEditables.forEach(c => {
+      if (req.body[c] !== undefined) negocio[c] = req.body[c];
+    });
+    await negocio.save();
+
+    res.json({ ok: true, mensaje: 'Datos guardados.', data: { negocio } });
+  } catch (error) {
+    console.error('Error en actualizarMiPerfil:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al guardar tus datos.' });
+  }
+};
+
+// ─── POST /api/negocios/documento ──────────────────────────
+// Sube documento/foto a Supabase Storage.
+// Body: { tipo, base64, mime }
+//   tipo: 'logo' | 'foto_portada' | 'foto_local' |
+//         'comprobante_domicilio' | 'documento_rfc' | 'documento_ine_dueno'
+const subirDocumento = async (req, res) => {
+  try {
+    const { tipo, base64, mime } = req.body;
+    const tiposValidos = {
+      logo: 'logo',
+      foto_portada: 'foto_portada',
+      foto_local: 'foto_local',
+      comprobante_domicilio: 'comprobante_domicilio',
+      documento_rfc: 'documento_rfc',
+      documento_ine_dueno: 'documento_ine_dueno',
+    };
+    const columna = tiposValidos[tipo];
+    if (!columna) {
+      return res.status(400).json({ ok: false, mensaje: 'Tipo de documento invalido.' });
+    }
+    if (!base64 || !mime) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta base64 o mime.' });
+    }
+
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) {
+      return res.status(404).json({ ok: false, mensaje: 'Activa primero el modo negocio.' });
+    }
+
+    const ext = mime.split('/')[1] || 'jpg';
+    const ruta = `negocios/${negocio.id}/${tipo}_${Date.now()}.${ext}`;
+    const url = await subirImagen('documentos-negocios', ruta, base64, mime);
+
+    negocio[columna] = url;
+    await negocio.save();
+
+    res.json({ ok: true, mensaje: 'Documento subido.', data: { url, tipo } });
+  } catch (error) {
+    console.error('Error en subirDocumento:', error);
+    res.status(500).json({
+      ok: false,
+      mensaje: error.message || 'No se pudo subir el documento.',
+    });
+  }
+};
+
+// ─── POST /api/negocios/enviar-a-revision ──────────────────
+const enviarARevision = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) {
+      return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    }
+    const faltantes = [];
+    if (!negocio.nombre)                 faltantes.push('nombre');
+    if (!negocio.categoria)              faltantes.push('categoria');
+    if (!negocio.direccion)              faltantes.push('direccion');
+    if (!negocio.telefono)               faltantes.push('telefono');
+    if (!negocio.foto_local)             faltantes.push('foto del local');
+    if (!negocio.comprobante_domicilio)  faltantes.push('comprobante de domicilio');
+    if (!negocio.documento_ine_dueno)    faltantes.push('INE del dueno');
+    if (!negocio.clabe_bancaria)         faltantes.push('CLABE');
+    if (faltantes.length) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Faltan datos: ${faltantes.join(', ')}.`,
+      });
+    }
+
+    negocio.verificacion_estado = 'en_revision';
+    await negocio.save();
+
+    res.json({
+      ok: true,
+      mensaje: '¡Listo! Estamos revisando tu negocio. Te avisaremos en menos de 48 horas.',
+      data: { negocio },
+    });
+  } catch (error) {
+    console.error('Error en enviarARevision:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al enviar a revision.' });
+  }
+};
+
+// ─── PATCH /api/negocios/apertura ──────────────────────────
+// "Abrir / cerrar" el negocio (estilo Go Online del repartidor).
+const cambiarApertura = async (req, res) => {
+  try {
+    const { abierto } = req.body;
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) {
+      return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    }
+    if (abierto && negocio.verificacion_estado !== 'aprobado') {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'Tu negocio aun no ha sido aprobado por el equipo.',
+      });
+    }
+    if (abierto && ['suspendido', 'bloqueado'].includes(negocio.estado_cuenta)) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: `Tu negocio esta ${negocio.estado_cuenta}. Contacta a soporte.`,
+      });
+    }
+
+    negocio.abierto_ahora = !!abierto;
+    await negocio.save();
+
+    res.json({
+      ok: true,
+      mensaje: abierto ? 'Negocio abierto. Recibiendo pedidos.' : 'Negocio cerrado.',
+      data: { abierto: negocio.abierto_ahora },
+    });
+  } catch (error) {
+    console.error('Error en cambiarApertura:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al cambiar estado.' });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// LEGACY: crearNegocio en una sola llamada (no se usa en wizard)
+// ═══════════════════════════════════════════════════════════
 const crearNegocio = async (req, res) => {
   const errores = validationResult(req);
   if (!errores.isEmpty()) {
@@ -86,10 +306,11 @@ const crearNegocio = async (req, res) => {
       categoria,
       direccion,
       colonia,
-      ciudad: ciudad || 'puerto_escondido',  // ciudad piloto por defecto
+      ciudad: ciudad || 'puerto_escondido',
       telefono,
       horarios,
-      activo: false,   // Admin debe activarlo
+      activo: false,
+      verificacion_estado: 'en_revision',
     });
 
     res.status(201).json({
@@ -174,8 +395,17 @@ const actualizarProducto = async (req, res) => {
 };
 
 module.exports = {
+  // Public
   listarNegocios,
   obtenerNegocio,
+  // Onboarding wizard
+  activarModoNegocio,
+  obtenerMiNegocio,
+  actualizarMiPerfil,
+  subirDocumento,
+  enviarARevision,
+  cambiarApertura,
+  // Legacy / operacion
   crearNegocio,
   actualizarNegocio,
   agregarProducto,
