@@ -64,16 +64,18 @@ app.set('io', io);
 
 // Middlewares
 // helmet con CSP relajada para que el panel /admin pueda cargar imagenes
-// firmadas de Supabase y hacer fetch a /api desde el navegador.
+// firmadas de Supabase, hacer fetch a /api y usar onclick="" inline.
+// IMPORTANTE: scriptSrcAttr habilita los onclick="" (helmet lo bloquea por default).
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'"],
-      styleSrc:   ["'self'", "'unsafe-inline'"],
-      imgSrc:     ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", 'https:'],
-      fontSrc:    ["'self'", 'data:'],
+      defaultSrc:    ["'self'"],
+      scriptSrc:     ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc:      ["'self'", "'unsafe-inline'"],
+      imgSrc:        ["'self'", 'data:', 'https:'],
+      connectSrc:    ["'self'", 'https:'],
+      fontSrc:       ["'self'", 'data:'],
     },
   },
 }));

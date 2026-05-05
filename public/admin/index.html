@@ -115,10 +115,10 @@
     <div class="marca">🛵</div>
     <h1>VoyCorriendo Admin</h1>
     <p>Panel de operaciones · Puerto Escondido</p>
-    <input id="login-tel"   type="tel" placeholder="Teléfono (10 dígitos)" autocomplete="tel" inputmode="numeric" />
-    <input id="login-pwd"   type="password" placeholder="Contraseña" autocomplete="current-password" />
+    <input id="login-tel" type="tel" placeholder="Teléfono (10 dígitos)" autocomplete="tel" inputmode="numeric" />
+    <input id="login-pwd" type="password" placeholder="Contraseña" autocomplete="current-password" />
     <div id="login-err" class="err"></div>
-    <button id="btn-login" onclick="hacerLogin()">Entrar</button>
+    <button id="btn-login">Entrar</button>
   </div>
 </div>
 
@@ -127,38 +127,35 @@
   <div class="top">
     <div class="logo">🛵 VoyCorriendo Admin</div>
     <nav>
-      <button onclick="irA('dashboard')" id="nav-dashboard"     class="activo">Dashboard</button>
-      <button onclick="irA('repartidores')" id="nav-repartidores">Repartidores</button>
-      <button onclick="irA('negocios')" id="nav-negocios">Negocios</button>
-      <button onclick="irA('usuarios')" id="nav-usuarios">Usuarios</button>
+      <button data-act="ir" data-arg="dashboard" id="nav-dashboard" class="activo">Dashboard</button>
+      <button data-act="ir" data-arg="repartidores" id="nav-repartidores">Repartidores</button>
+      <button data-act="ir" data-arg="negocios" id="nav-negocios">Negocios</button>
+      <button data-act="ir" data-arg="usuarios" id="nav-usuarios">Usuarios</button>
     </nav>
     <span class="yo" id="yo-nombre"></span>
-    <button class="salir" onclick="cerrarSesion()">Salir</button>
+    <button class="salir" data-act="salir">Salir</button>
   </div>
 
   <div class="contenido">
-    <!-- Dashboard -->
     <div id="vista-dashboard"></div>
-    <!-- Repartidores -->
     <div id="vista-repartidores" class="oculto"></div>
-    <!-- Negocios -->
     <div id="vista-negocios" class="oculto"></div>
-    <!-- Usuarios -->
     <div id="vista-usuarios" class="oculto"></div>
   </div>
 </div>
 
 <!-- Modal de detalle -->
-<div id="modal" class="modal oculto" onclick="if(event.target===this)cerrarModal()">
+<div id="modal" class="modal oculto">
   <div class="modal-card" id="modal-card"></div>
 </div>
 
 <!-- Modal imagen grande -->
-<div id="modal-img" class="modal-img-grande oculto" onclick="this.classList.add('oculto')">
+<div id="modal-img" class="modal-img-grande oculto">
   <img id="modal-img-src" alt="documento" />
 </div>
 
 <script>
+(function(){
   // ─── Estado y helpers ───────────────────────────────────
   const API = location.origin + '/api';
   let token = localStorage.getItem('vc_admin_token') || null;
@@ -166,23 +163,30 @@
   let filtroRepartidores = 'pendiente';
   let filtroNegocios     = 'pendiente';
 
-  function toast(msg, tipo='info'){
+  function toast(msg, tipo){
     const t = document.createElement('div');
-    t.className = 'toast ' + tipo;
+    t.className = 'toast ' + (tipo || 'info');
     t.textContent = msg;
     document.body.appendChild(t);
-    setTimeout(() => t.remove(), 3500);
+    setTimeout(function(){ t.remove(); }, 3500);
   }
 
   async function api(metodo, ruta, body){
     const headers = { 'Content-Type':'application/json' };
     if (token) headers.Authorization = 'Bearer ' + token;
-    const opts = { method: metodo, headers };
+    const opts = { method: metodo, headers: headers };
     if (body) opts.body = JSON.stringify(body);
     const r = await fetch(API + ruta, opts);
-    const data = await r.json().catch(() => ({}));
+    const data = await r.json().catch(function(){ return {}; });
     if (!r.ok) throw new Error(data.mensaje || 'Error ' + r.status);
     return data;
+  }
+
+  function esc(s){
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
   }
 
   // ─── Login ──────────────────────────────────────────────
@@ -195,11 +199,11 @@
     if (!telefono || !pwd) { err.textContent = 'Ingresa teléfono y contraseña'; return; }
     btn.disabled = true; btn.textContent = 'Entrando...';
     try {
-      const r = await api('POST', '/auth/login', { telefono, password: pwd });
-      const u = r.data?.usuario || r.usuario;
-      const t = r.data?.token   || r.token;
-      if (!t || !u)              throw new Error('Respuesta inválida del servidor');
-      if (u.rol !== 'admin')     throw new Error('Esta cuenta no es admin');
+      const r = await api('POST', '/auth/login', { telefono: telefono, password: pwd });
+      const u = (r.data && r.data.usuario) || r.usuario;
+      const t = (r.data && r.data.token)   || r.token;
+      if (!t || !u)             throw new Error('Respuesta inválida del servidor');
+      if (u.rol !== 'admin')    throw new Error('Esta cuenta no es admin');
       token = t; yo = u;
       localStorage.setItem('vc_admin_token', token);
       localStorage.setItem('vc_admin_yo', JSON.stringify(yo));
@@ -222,13 +226,13 @@
   function mostrarApp(){
     document.getElementById('vista-login').classList.add('oculto');
     document.getElementById('vista-app').classList.remove('oculto');
-    document.getElementById('yo-nombre').textContent = (yo?.nombre || '') + ' ' + (yo?.apellido || '');
+    document.getElementById('yo-nombre').textContent = ((yo && yo.nombre) || '') + ' ' + ((yo && yo.apellido) || '');
     irA('dashboard');
   }
 
   // ─── Navegación ─────────────────────────────────────────
   function irA(vista){
-    ['dashboard','repartidores','negocios','usuarios'].forEach(v => {
+    ['dashboard','repartidores','negocios','usuarios'].forEach(function(v){
       document.getElementById('vista-' + v).classList.add('oculto');
       document.getElementById('nav-' + v).classList.remove('activo');
     });
@@ -247,49 +251,45 @@
     try {
       const r = await api('GET', '/admin/dashboard');
       const d = r.data;
-      cont.innerHTML = `
-        <h2 style="margin:0 0 16px">Resumen general</h2>
-        <div class="grid">
-          <div class="kpi"><div class="label">Usuarios totales</div><div class="num">${d.totalUsuarios}</div></div>
-          <div class="kpi"><div class="label">Pedidos hoy</div><div class="num">${d.pedidosHoy}</div></div>
-          <div class="kpi"><div class="label">Repartidores conectados</div><div class="num aprobado">${d.repartidores.conectados}</div></div>
-          <div class="kpi"><div class="label">Negocios abiertos</div><div class="num aprobado">${d.negocios.abiertos}</div></div>
-        </div>
-
-        <h2 style="margin:24px 0 16px">Repartidores</h2>
-        <div class="grid">
-          <div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">${d.repartidores.pendientes}</div></div>
-          <div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">${d.repartidores.aprobados}</div></div>
-        </div>
-
-        <h2 style="margin:24px 0 16px">Negocios</h2>
-        <div class="grid">
-          <div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">${d.negocios.pendientes}</div></div>
-          <div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">${d.negocios.aprobados}</div></div>
-        </div>
-      `;
+      cont.innerHTML = ''
+        + '<h2 style="margin:0 0 16px">Resumen general</h2>'
+        + '<div class="grid">'
+        +   '<div class="kpi"><div class="label">Usuarios totales</div><div class="num">' + d.totalUsuarios + '</div></div>'
+        +   '<div class="kpi"><div class="label">Pedidos hoy</div><div class="num">' + d.pedidosHoy + '</div></div>'
+        +   '<div class="kpi"><div class="label">Repartidores conectados</div><div class="num aprobado">' + d.repartidores.conectados + '</div></div>'
+        +   '<div class="kpi"><div class="label">Negocios abiertos</div><div class="num aprobado">' + d.negocios.abiertos + '</div></div>'
+        + '</div>'
+        + '<h2 style="margin:24px 0 16px">Repartidores</h2>'
+        + '<div class="grid">'
+        +   '<div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">' + d.repartidores.pendientes + '</div></div>'
+        +   '<div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">' + d.repartidores.aprobados + '</div></div>'
+        + '</div>'
+        + '<h2 style="margin:24px 0 16px">Negocios</h2>'
+        + '<div class="grid">'
+        +   '<div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">' + d.negocios.pendientes + '</div></div>'
+        +   '<div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">' + d.negocios.aprobados + '</div></div>'
+        + '</div>';
     } catch (e) {
-      cont.innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      cont.innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
 
   // ─── Repartidores ───────────────────────────────────────
   async function cargarRepartidores(){
     const cont = document.getElementById('vista-repartidores');
-    cont.innerHTML = `
-      <div class="seccion">
-        <div class="seccion-h">
-          <h2>Repartidores</h2>
-          <div class="filtros">
-            <button onclick="setFiltroRep('pendiente')"  id="fr-pendiente"  class="${filtroRepartidores==='pendiente'?'activo':''}">Pendientes</button>
-            <button onclick="setFiltroRep('aprobado')"   id="fr-aprobado"   class="${filtroRepartidores==='aprobado'?'activo':''}">Aprobados</button>
-            <button onclick="setFiltroRep('rechazado')"  id="fr-rechazado"  class="${filtroRepartidores==='rechazado'?'activo':''}">Rechazados</button>
-            <button onclick="setFiltroRep('')"           id="fr-todos"      class="${filtroRepartidores===''?'activo':''}">Todos</button>
-          </div>
-        </div>
-        <div id="lista-rep"><div class="cargando">Cargando...</div></div>
-      </div>
-    `;
+    cont.innerHTML =
+      '<div class="seccion">'
+      + '<div class="seccion-h">'
+      +   '<h2>Repartidores</h2>'
+      +   '<div class="filtros">'
+      +     '<button data-act="filtroRep" data-arg="pendiente" class="' + (filtroRepartidores==='pendiente'?'activo':'') + '">Pendientes</button>'
+      +     '<button data-act="filtroRep" data-arg="aprobado"  class="' + (filtroRepartidores==='aprobado'?'activo':'') + '">Aprobados</button>'
+      +     '<button data-act="filtroRep" data-arg="rechazado" class="' + (filtroRepartidores==='rechazado'?'activo':'') + '">Rechazados</button>'
+      +     '<button data-act="filtroRep" data-arg=""          class="' + (filtroRepartidores===''?'activo':'') + '">Todos</button>'
+      +   '</div>'
+      + '</div>'
+      + '<div id="lista-rep"><div class="cargando">Cargando...</div></div>'
+      + '</div>';
     try {
       const q = filtroRepartidores ? '?estado=' + filtroRepartidores : '';
       const r = await api('GET', '/admin/repartidores' + q);
@@ -299,24 +299,23 @@
         lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>No hay repartidores en este filtro</div>';
         return;
       }
-      lista.innerHTML = `<table>
-        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th><th>Cuenta</th><th>Calif.</th><th>Entregas</th></tr></thead>
-        <tbody>${items.map(it => `
-          <tr onclick="verRepartidor('${it.id}')">
-            <td><b>${(it.usuario?.nombre||'')+ ' ' + (it.usuario?.apellido||'')}</b></td>
-            <td>${it.usuario?.telefono||''}</td>
-            <td>${it.tipo_vehiculo||''} ${it.marca_vehiculo||''} ${it.modelo_vehiculo||''}</td>
-            <td><span class="pill ${it.verificacion_estado}">${it.verificacion_estado}</span></td>
-            <td><span class="pill ${it.estado_cuenta}">${it.estado_cuenta}</span></td>
-            <td>⭐ ${parseFloat(it.calificacion_promedio||0).toFixed(1)}</td>
-            <td>${it.total_entregas||0}</td>
-          </tr>`).join('')}</tbody>
-      </table>`;
+      lista.innerHTML = '<table>'
+        + '<thead><tr><th>Nombre</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th><th>Cuenta</th><th>Calif.</th><th>Entregas</th></tr></thead>'
+        + '<tbody>' + items.map(function(it){
+            return '<tr data-act="verRep" data-arg="' + esc(it.id) + '">'
+              + '<td><b>' + esc((it.usuario && it.usuario.nombre) || '') + ' ' + esc((it.usuario && it.usuario.apellido) || '') + '</b></td>'
+              + '<td>' + esc((it.usuario && it.usuario.telefono) || '') + '</td>'
+              + '<td>' + esc(it.tipo_vehiculo || '') + ' ' + esc(it.marca_vehiculo || '') + ' ' + esc(it.modelo_vehiculo || '') + '</td>'
+              + '<td><span class="pill ' + esc(it.verificacion_estado) + '">' + esc(it.verificacion_estado) + '</span></td>'
+              + '<td><span class="pill ' + esc(it.estado_cuenta) + '">' + esc(it.estado_cuenta) + '</span></td>'
+              + '<td>⭐ ' + parseFloat(it.calificacion_promedio || 0).toFixed(1) + '</td>'
+              + '<td>' + (it.total_entregas || 0) + '</td>'
+              + '</tr>';
+          }).join('') + '</tbody></table>';
     } catch (e) {
-      document.getElementById('lista-rep').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      document.getElementById('lista-rep').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
-  function setFiltroRep(f){ filtroRepartidores = f; cargarRepartidores(); }
 
   async function verRepartidor(id){
     abrirModal('<div class="cargando">Cargando...</div>');
@@ -324,38 +323,36 @@
       const r = await api('GET', '/admin/repartidores/' + id);
       const x = r.data.repartidor;
       const docs = x.documentos_firmados || {};
-      const card = document.getElementById('modal-card');
-      card.innerHTML = `
-        <div class="modal-h">
-          <h2>🛵 ${x.usuario?.nombre} ${x.usuario?.apellido} <span class="pill ${x.verificacion_estado}" style="margin-left:8px">${x.verificacion_estado}</span></h2>
-          <button class="cerrar" onclick="cerrarModal()">×</button>
-        </div>
-        <div class="modal-h-info">
-          <div class="info-block"><div class="lab">Teléfono</div><div class="val">${x.usuario?.telefono||'—'}</div></div>
-          <div class="info-block"><div class="lab">Email</div><div class="val">${x.usuario?.email||'—'}</div></div>
-          <div class="info-block"><div class="lab">Vehículo</div><div class="val">${x.tipo_vehiculo||''} · ${x.marca_vehiculo||''} ${x.modelo_vehiculo||''} (${x.anio_vehiculo||''})</div></div>
-          <div class="info-block"><div class="lab">Placa</div><div class="val">${x.placa_vehiculo||'—'}</div></div>
-          <div class="info-block"><div class="lab">Color</div><div class="val">${x.color_vehiculo||'—'}</div></div>
-          <div class="info-block"><div class="lab">Banco / CLABE</div><div class="val">${x.banco||'—'} · ${x.clabe_bancaria||'—'}</div></div>
-        </div>
-        <div class="modal-body">
-          ${x.verificacion_nota ? `<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ${x.verificacion_nota}</div>` : ''}
-          <h3>Documentos</h3>
-          <div class="docs">
-            ${docCard('INE Frente',  docs.ine_frente)}
-            ${docCard('INE Reverso', docs.ine_reverso)}
-            ${docCard('Licencia',    docs.licencia)}
-            ${docCard('Tarjeta de Circulación', docs.tarjeta_circulacion)}
-          </div>
-        </div>
-        <div class="acciones">
-          <button class="btn-aprobar"  onclick="aprobarRep('${x.id}')">✓ Aprobar</button>
-          <button class="btn-rechazar" onclick="rechazarRep('${x.id}')">✕ Rechazar</button>
-          <button class="btn-suspender" onclick="suspenderRep('${x.id}')">⛔ Suspender</button>
-        </div>
-      `;
+      document.getElementById('modal-card').innerHTML = ''
+        + '<div class="modal-h">'
+        +   '<h2>🛵 ' + esc((x.usuario && x.usuario.nombre) || '') + ' ' + esc((x.usuario && x.usuario.apellido) || '') + ' <span class="pill ' + esc(x.verificacion_estado) + '" style="margin-left:8px">' + esc(x.verificacion_estado) + '</span></h2>'
+        +   '<button class="cerrar" data-act="cerrarModal">×</button>'
+        + '</div>'
+        + '<div class="modal-h-info">'
+        +   info('Teléfono', (x.usuario && x.usuario.telefono) || '—')
+        +   info('Email',    (x.usuario && x.usuario.email) || '—')
+        +   info('Vehículo', (x.tipo_vehiculo || '') + ' · ' + (x.marca_vehiculo || '') + ' ' + (x.modelo_vehiculo || '') + ' (' + (x.anio_vehiculo || '') + ')')
+        +   info('Placa',    x.placa_vehiculo || '—')
+        +   info('Color',    x.color_vehiculo || '—')
+        +   info('Banco / CLABE', (x.banco || '—') + ' · ' + (x.clabe_bancaria || '—'))
+        + '</div>'
+        + '<div class="modal-body">'
+        +   (x.verificacion_nota ? '<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ' + esc(x.verificacion_nota) + '</div>' : '')
+        +   '<h3>Documentos</h3>'
+        +   '<div class="docs">'
+        +     docCard('INE Frente',  docs.ine_frente)
+        +     docCard('INE Reverso', docs.ine_reverso)
+        +     docCard('Licencia',    docs.licencia)
+        +     docCard('Tarjeta de Circulación', docs.tarjeta_circulacion)
+        +   '</div>'
+        + '</div>'
+        + '<div class="acciones">'
+        +   '<button class="btn-aprobar"   data-act="aprobarRep"   data-arg="' + esc(x.id) + '">✓ Aprobar</button>'
+        +   '<button class="btn-rechazar"  data-act="rechazarRep"  data-arg="' + esc(x.id) + '">✕ Rechazar</button>'
+        +   '<button class="btn-suspender" data-act="suspenderRep" data-arg="' + esc(x.id) + '">⛔ Suspender</button>'
+        + '</div>';
     } catch (e) {
-      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
 
@@ -367,33 +364,32 @@
   async function rechazarRep(id){
     const motivo = prompt('Motivo del rechazo (mínimo 5 caracteres):');
     if (!motivo) return;
-    try { await api('PATCH','/admin/repartidores/'+id+'/rechazar',{motivo}); toast('Repartidor rechazado','exito'); cerrarModal(); cargarRepartidores(); }
+    try { await api('PATCH','/admin/repartidores/'+id+'/rechazar',{motivo:motivo}); toast('Repartidor rechazado','exito'); cerrarModal(); cargarRepartidores(); }
     catch(e){ toast(e.message,'error'); }
   }
   async function suspenderRep(id){
     const motivo = prompt('Motivo de la suspensión:');
     if (!motivo) return;
-    try { await api('PATCH','/admin/repartidores/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo}); toast('Repartidor suspendido','exito'); cerrarModal(); cargarRepartidores(); }
+    try { await api('PATCH','/admin/repartidores/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo:motivo}); toast('Repartidor suspendido','exito'); cerrarModal(); cargarRepartidores(); }
     catch(e){ toast(e.message,'error'); }
   }
 
   // ─── Negocios ──────────────────────────────────────────
   async function cargarNegocios(){
     const cont = document.getElementById('vista-negocios');
-    cont.innerHTML = `
-      <div class="seccion">
-        <div class="seccion-h">
-          <h2>Negocios</h2>
-          <div class="filtros">
-            <button onclick="setFiltroNeg('pendiente')"  class="${filtroNegocios==='pendiente'?'activo':''}">Pendientes</button>
-            <button onclick="setFiltroNeg('aprobado')"   class="${filtroNegocios==='aprobado'?'activo':''}">Aprobados</button>
-            <button onclick="setFiltroNeg('rechazado')"  class="${filtroNegocios==='rechazado'?'activo':''}">Rechazados</button>
-            <button onclick="setFiltroNeg('')"           class="${filtroNegocios===''?'activo':''}">Todos</button>
-          </div>
-        </div>
-        <div id="lista-neg"><div class="cargando">Cargando...</div></div>
-      </div>
-    `;
+    cont.innerHTML =
+      '<div class="seccion">'
+      + '<div class="seccion-h">'
+      +   '<h2>Negocios</h2>'
+      +   '<div class="filtros">'
+      +     '<button data-act="filtroNeg" data-arg="pendiente" class="' + (filtroNegocios==='pendiente'?'activo':'') + '">Pendientes</button>'
+      +     '<button data-act="filtroNeg" data-arg="aprobado"  class="' + (filtroNegocios==='aprobado'?'activo':'') + '">Aprobados</button>'
+      +     '<button data-act="filtroNeg" data-arg="rechazado" class="' + (filtroNegocios==='rechazado'?'activo':'') + '">Rechazados</button>'
+      +     '<button data-act="filtroNeg" data-arg=""          class="' + (filtroNegocios===''?'activo':'') + '">Todos</button>'
+      +   '</div>'
+      + '</div>'
+      + '<div id="lista-neg"><div class="cargando">Cargando...</div></div>'
+      + '</div>';
     try {
       const q = filtroNegocios ? '?estado=' + filtroNegocios : '';
       const r = await api('GET', '/admin/negocios' + q);
@@ -403,24 +399,23 @@
         lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>No hay negocios en este filtro</div>';
         return;
       }
-      lista.innerHTML = `<table>
-        <thead><tr><th>Nombre</th><th>Categoría</th><th>Dueño</th><th>Teléfono</th><th>Estado</th><th>Cuenta</th><th>Pedidos</th></tr></thead>
-        <tbody>${items.map(it => `
-          <tr onclick="verNegocio('${it.id}')">
-            <td><b>${it.nombre||'(sin nombre)'}</b></td>
-            <td>${it.categoria||'—'}</td>
-            <td>${(it.dueno?.nombre||'')+ ' ' + (it.dueno?.apellido||'')}</td>
-            <td>${it.dueno?.telefono||''}</td>
-            <td><span class="pill ${it.verificacion_estado}">${it.verificacion_estado}</span></td>
-            <td><span class="pill ${it.estado_cuenta}">${it.estado_cuenta}</span></td>
-            <td>${it.total_pedidos||0}</td>
-          </tr>`).join('')}</tbody>
-      </table>`;
+      lista.innerHTML = '<table>'
+        + '<thead><tr><th>Nombre</th><th>Categoría</th><th>Dueño</th><th>Teléfono</th><th>Estado</th><th>Cuenta</th><th>Pedidos</th></tr></thead>'
+        + '<tbody>' + items.map(function(it){
+            return '<tr data-act="verNeg" data-arg="' + esc(it.id) + '">'
+              + '<td><b>' + esc(it.nombre || '(sin nombre)') + '</b></td>'
+              + '<td>' + esc(it.categoria || '—') + '</td>'
+              + '<td>' + esc((it.dueno && it.dueno.nombre) || '') + ' ' + esc((it.dueno && it.dueno.apellido) || '') + '</td>'
+              + '<td>' + esc((it.dueno && it.dueno.telefono) || '') + '</td>'
+              + '<td><span class="pill ' + esc(it.verificacion_estado) + '">' + esc(it.verificacion_estado) + '</span></td>'
+              + '<td><span class="pill ' + esc(it.estado_cuenta) + '">' + esc(it.estado_cuenta) + '</span></td>'
+              + '<td>' + (it.total_pedidos || 0) + '</td>'
+              + '</tr>';
+          }).join('') + '</tbody></table>';
     } catch (e) {
-      document.getElementById('lista-neg').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      document.getElementById('lista-neg').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
-  function setFiltroNeg(f){ filtroNegocios = f; cargarNegocios(); }
 
   async function verNegocio(id){
     abrirModal('<div class="cargando">Cargando...</div>');
@@ -428,40 +423,38 @@
       const r = await api('GET', '/admin/negocios/' + id);
       const x = r.data.negocio;
       const docs = x.documentos_firmados || {};
-      const card = document.getElementById('modal-card');
-      card.innerHTML = `
-        <div class="modal-h">
-          <h2>🏪 ${x.nombre || '(sin nombre)'} <span class="pill ${x.verificacion_estado}" style="margin-left:8px">${x.verificacion_estado}</span></h2>
-          <button class="cerrar" onclick="cerrarModal()">×</button>
-        </div>
-        <div class="modal-h-info">
-          <div class="info-block"><div class="lab">Categoría</div><div class="val">${x.categoria||'—'}</div></div>
-          <div class="info-block"><div class="lab">Dueño</div><div class="val">${x.dueno?.nombre} ${x.dueno?.apellido}</div></div>
-          <div class="info-block"><div class="lab">Tel. dueño</div><div class="val">${x.dueno?.telefono||'—'}</div></div>
-          <div class="info-block"><div class="lab">Email</div><div class="val">${x.dueno?.email||'—'}</div></div>
-          <div class="info-block"><div class="lab">Tel. negocio</div><div class="val">${x.telefono||'—'}</div></div>
-          <div class="info-block"><div class="lab">Dirección</div><div class="val">${x.direccion||'—'}</div></div>
-          <div class="info-block"><div class="lab">Banco / CLABE</div><div class="val">${x.banco||'—'} · ${x.clabe_bancaria||'—'}</div></div>
-          <div class="info-block"><div class="lab">Descripción</div><div class="val">${x.descripcion||'—'}</div></div>
-        </div>
-        <div class="modal-body">
-          ${x.verificacion_nota ? `<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ${x.verificacion_nota}</div>` : ''}
-          <h3>Documentos</h3>
-          <div class="docs">
-            ${docCard('Foto del local',         docs.foto_local)}
-            ${docCard('Comprobante domicilio',  docs.comprobante_domicilio)}
-            ${docCard('INE del dueño',          docs.documento_ine_dueno)}
-            ${docCard('RFC (opcional)',         docs.documento_rfc)}
-          </div>
-        </div>
-        <div class="acciones">
-          <button class="btn-aprobar"  onclick="aprobarNeg('${x.id}')">✓ Aprobar</button>
-          <button class="btn-rechazar" onclick="rechazarNeg('${x.id}')">✕ Rechazar</button>
-          <button class="btn-suspender" onclick="suspenderNeg('${x.id}')">⛔ Suspender</button>
-        </div>
-      `;
+      document.getElementById('modal-card').innerHTML = ''
+        + '<div class="modal-h">'
+        +   '<h2>🏪 ' + esc(x.nombre || '(sin nombre)') + ' <span class="pill ' + esc(x.verificacion_estado) + '" style="margin-left:8px">' + esc(x.verificacion_estado) + '</span></h2>'
+        +   '<button class="cerrar" data-act="cerrarModal">×</button>'
+        + '</div>'
+        + '<div class="modal-h-info">'
+        +   info('Categoría', x.categoria || '—')
+        +   info('Dueño',     ((x.dueno && x.dueno.nombre) || '') + ' ' + ((x.dueno && x.dueno.apellido) || ''))
+        +   info('Tel. dueño', (x.dueno && x.dueno.telefono) || '—')
+        +   info('Email',      (x.dueno && x.dueno.email) || '—')
+        +   info('Tel. negocio', x.telefono || '—')
+        +   info('Dirección', x.direccion || '—')
+        +   info('Banco / CLABE', (x.banco || '—') + ' · ' + (x.clabe_bancaria || '—'))
+        +   info('Descripción', x.descripcion || '—')
+        + '</div>'
+        + '<div class="modal-body">'
+        +   (x.verificacion_nota ? '<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ' + esc(x.verificacion_nota) + '</div>' : '')
+        +   '<h3>Documentos</h3>'
+        +   '<div class="docs">'
+        +     docCard('Foto del local',         docs.foto_local)
+        +     docCard('Comprobante domicilio',  docs.comprobante_domicilio)
+        +     docCard('INE del dueño',          docs.documento_ine_dueno)
+        +     docCard('RFC (opcional)',         docs.documento_rfc)
+        +   '</div>'
+        + '</div>'
+        + '<div class="acciones">'
+        +   '<button class="btn-aprobar"   data-act="aprobarNeg"   data-arg="' + esc(x.id) + '">✓ Aprobar</button>'
+        +   '<button class="btn-rechazar"  data-act="rechazarNeg"  data-arg="' + esc(x.id) + '">✕ Rechazar</button>'
+        +   '<button class="btn-suspender" data-act="suspenderNeg" data-arg="' + esc(x.id) + '">⛔ Suspender</button>'
+        + '</div>';
     } catch (e) {
-      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
 
@@ -473,30 +466,37 @@
   async function rechazarNeg(id){
     const motivo = prompt('Motivo del rechazo (mínimo 5 caracteres):');
     if (!motivo) return;
-    try { await api('PATCH','/admin/negocios/'+id+'/rechazar',{motivo}); toast('Negocio rechazado','exito'); cerrarModal(); cargarNegocios(); }
+    try { await api('PATCH','/admin/negocios/'+id+'/rechazar',{motivo:motivo}); toast('Negocio rechazado','exito'); cerrarModal(); cargarNegocios(); }
     catch(e){ toast(e.message,'error'); }
   }
   async function suspenderNeg(id){
     const motivo = prompt('Motivo de la suspensión:');
     if (!motivo) return;
-    try { await api('PATCH','/admin/negocios/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo}); toast('Negocio suspendido','exito'); cerrarModal(); cargarNegocios(); }
+    try { await api('PATCH','/admin/negocios/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo:motivo}); toast('Negocio suspendido','exito'); cerrarModal(); cargarNegocios(); }
     catch(e){ toast(e.message,'error'); }
   }
 
   // ─── Usuarios ──────────────────────────────────────────
   async function cargarUsuarios(){
     const cont = document.getElementById('vista-usuarios');
-    cont.innerHTML = `
-      <div class="seccion">
-        <div class="seccion-h">
-          <h2>Usuarios</h2>
-          <input id="buscar-usr" type="text" placeholder="Buscar por nombre, tel o email..." style="padding:8px 12px;border:1px solid var(--borde);border-radius:6px;width:280px" onkeyup="if(event.key==='Enter')cargarUsuarios()" />
-        </div>
-        <div id="lista-usr"><div class="cargando">Cargando...</div></div>
-      </div>
-    `;
+    cont.innerHTML =
+      '<div class="seccion">'
+      + '<div class="seccion-h">'
+      +   '<h2>Usuarios</h2>'
+      +   '<input id="buscar-usr" type="text" placeholder="Buscar por nombre, tel o email..." style="padding:8px 12px;border:1px solid var(--borde);border-radius:6px;width:280px" />'
+      + '</div>'
+      + '<div id="lista-usr"><div class="cargando">Cargando...</div></div>'
+      + '</div>';
+    document.getElementById('buscar-usr').addEventListener('keyup', function(e){
+      if (e.key === 'Enter') refrescarUsuarios();
+    });
+    refrescarUsuarios();
+  }
+
+  async function refrescarUsuarios(){
     try {
-      const buscar = document.getElementById('buscar-usr')?.value || '';
+      const buscarEl = document.getElementById('buscar-usr');
+      const buscar = (buscarEl && buscarEl.value) || '';
       const q = buscar ? '?buscar=' + encodeURIComponent(buscar) : '';
       const r = await api('GET','/admin/usuarios' + q);
       const items = r.data.usuarios;
@@ -505,28 +505,31 @@
         lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>Sin resultados</div>';
         return;
       }
-      lista.innerHTML = `<table>
-        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Rol</th><th>Modo activo</th><th>Estado</th><th>Registrado</th></tr></thead>
-        <tbody>${items.map(u => `
-          <tr>
-            <td><b>${u.nombre} ${u.apellido}</b></td>
-            <td>${u.telefono||''}</td>
-            <td>${u.email||'—'}</td>
-            <td><span class="pill ${u.rol==='admin'?'aprobado':'normal'}">${u.rol}</span></td>
-            <td>${u.modo_activo||'—'}</td>
-            <td>${u.estado||'—'}</td>
-            <td>${new Date(u.creado_en).toLocaleDateString('es-MX')}</td>
-          </tr>`).join('')}</tbody>
-      </table>`;
+      lista.innerHTML = '<table>'
+        + '<thead><tr><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Rol</th><th>Modo activo</th><th>Estado</th><th>Registrado</th></tr></thead>'
+        + '<tbody>' + items.map(function(u){
+            return '<tr>'
+              + '<td><b>' + esc(u.nombre) + ' ' + esc(u.apellido) + '</b></td>'
+              + '<td>' + esc(u.telefono || '') + '</td>'
+              + '<td>' + esc(u.email || '—') + '</td>'
+              + '<td><span class="pill ' + (u.rol==='admin'?'aprobado':'normal') + '">' + esc(u.rol) + '</span></td>'
+              + '<td>' + esc(u.modo_activo || '—') + '</td>'
+              + '<td>' + esc(u.estado || '—') + '</td>'
+              + '<td>' + new Date(u.creado_en).toLocaleDateString('es-MX') + '</td>'
+              + '</tr>';
+          }).join('') + '</tbody></table>';
     } catch (e) {
-      document.getElementById('lista-usr').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+      document.getElementById('lista-usr').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+esc(e.message)+'</div>';
     }
   }
 
   // ─── Helpers UI ────────────────────────────────────────
+  function info(lab, val){
+    return '<div class="info-block"><div class="lab">' + esc(lab) + '</div><div class="val">' + esc(val) + '</div></div>';
+  }
   function docCard(label, url){
-    if (!url) return `<div class="doc"><div class="lab">${label}</div><div class="none">— no subido —</div></div>`;
-    return `<div class="doc"><div class="lab">${label}</div><img src="${url}" alt="${label}" onclick="verImg('${url}')" /></div>`;
+    if (!url) return '<div class="doc"><div class="lab">' + esc(label) + '</div><div class="none">— no subido —</div></div>';
+    return '<div class="doc"><div class="lab">' + esc(label) + '</div><img src="' + esc(url) + '" alt="' + esc(label) + '" data-act="verImg" data-arg="' + esc(url) + '" /></div>';
   }
   function verImg(url){
     document.getElementById('modal-img-src').src = url;
@@ -540,12 +543,60 @@
     document.getElementById('modal').classList.add('oculto');
   }
 
+  // ─── Despacho global de clicks (event delegation) ──────
+  // Reemplaza completamente el patron onclick="" para evitar problemas con CSP.
+  const acciones = {
+    hacerLogin: hacerLogin,
+    salir: cerrarSesion,
+    ir: irA,
+    filtroRep: function(v){ filtroRepartidores = v; cargarRepartidores(); },
+    filtroNeg: function(v){ filtroNegocios = v; cargarNegocios(); },
+    verRep: verRepartidor,
+    verNeg: verNegocio,
+    aprobarRep: aprobarRep,
+    rechazarRep: rechazarRep,
+    suspenderRep: suspenderRep,
+    aprobarNeg: aprobarNeg,
+    rechazarNeg: rechazarNeg,
+    suspenderNeg: suspenderNeg,
+    cerrarModal: cerrarModal,
+    verImg: verImg,
+  };
+
+  document.addEventListener('click', function(e){
+    const t = e.target.closest('[data-act]');
+    if (!t) return;
+    const act = t.getAttribute('data-act');
+    const arg = t.getAttribute('data-arg');
+    const fn  = acciones[act];
+    if (!fn) { console.warn('Accion desconocida:', act); return; }
+    fn(arg);
+  });
+
+  // Cerrar modales con click en el backdrop
+  document.getElementById('modal').addEventListener('click', function(e){
+    if (e.target === this) cerrarModal();
+  });
+  document.getElementById('modal-img').addEventListener('click', function(){
+    this.classList.add('oculto');
+  });
+
+  // Boton de login + Enter en los campos
+  document.getElementById('btn-login').addEventListener('click', hacerLogin);
+  document.getElementById('login-tel').addEventListener('keyup', function(e){
+    if (e.key === 'Enter') document.getElementById('login-pwd').focus();
+  });
+  document.getElementById('login-pwd').addEventListener('keyup', function(e){
+    if (e.key === 'Enter') hacerLogin();
+  });
+
   // ─── Bootstrap ─────────────────────────────────────────
   if (token && yo) {
     mostrarApp();
   } else {
     document.getElementById('vista-login').classList.remove('oculto');
   }
+})();
 </script>
 </body>
 </html>
