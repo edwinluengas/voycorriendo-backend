@@ -1,0 +1,370 @@
+/**
+ * Controlador del Panel de Administracion (BACKOFFICE)
+ *
+ * Endpoints que usa el panel web /admin para que el equipo de VoyCorriendo
+ * pueda aprobar/rechazar repartidores y negocios, y administrar cuentas.
+ *
+ * Todas las rutas requieren middleware: proteger + restringirA('admin').
+ */
+const { Op } = require('sequelize');
+const { Usuario, Repartidor, Negocio, Pedido } = require('../models');
+const { obtenerUrlFirmada } = require('../services/storage.service');
+
+const BUCKET_REPARTIDORES = 'documentos-repartidores';
+const BUCKET_NEGOCIOS     = 'documentos-negocios';
+
+// ─── GET /api/admin/dashboard ───────────────────────────────
+// Numeros generales para la pantalla principal del admin.
+const dashboard = async (req, res) => {
+  try {
+    const [
+      totalUsuarios,
+      repartidoresPendientes,
+      repartidoresAprobados,
+      repartidoresConectados,
+      negociosPendientes,
+      negociosAprobados,
+      negociosAbiertos,
+      pedidosHoy,
+    ] = await Promise.all([
+      Usuario.count(),
+      Repartidor.count({ where: { verificacion_estado: { [Op.in]: ['pendiente', 'en_revision'] } } }),
+      Repartidor.count({ where: { verificacion_estado: 'aprobado' } }),
+      Repartidor.count({ where: { conectado: true } }),
+      Negocio.count({ where: { verificacion_estado: { [Op.in]: ['pendiente', 'en_revision'] } } }),
+      Negocio.count({ where: { verificacion_estado: 'aprobado' } }),
+      Negocio.count({ where: { abierto_ahora: true, verificacion_estado: 'aprobado' } }),
+      Pedido.count({
+        where: {
+          creado_en: {
+            [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)),
+          },
+        },
+      }),
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        totalUsuarios,
+        repartidores: {
+          pendientes: repartidoresPendientes,
+          aprobados:  repartidoresAprobados,
+          conectados: repartidoresConectados,
+        },
+        negocios: {
+          pendientes: negociosPendientes,
+          aprobados:  negociosAprobados,
+          abiertos:   negociosAbiertos,
+        },
+        pedidosHoy,
+      },
+    });
+  } catch (e) {
+    console.error('Error dashboard admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al cargar el dashboard.' });
+  }
+};
+
+// ─── GET /api/admin/repartidores?estado=pendiente ────────────
+const listarRepartidores = async (req, res) => {
+  try {
+    const { estado } = req.query;
+    const where = {};
+    if (estado) {
+      if (estado === 'pendiente') {
+        where.verificacion_estado = { [Op.in]: ['pendiente', 'en_revision'] };
+      } else {
+        where.verificacion_estado = estado;
+      }
+    }
+
+    const repartidores = await Repartidor.findAll({
+      where,
+      include: [{
+        model: Usuario,
+        as: 'usuario',
+        attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'],
+      }],
+      order: [['actualizado_en', 'DESC']],
+    });
+
+    res.json({ ok: true, data: { repartidores } });
+  } catch (e) {
+    console.error('Error listar repartidores admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar repartidores.' });
+  }
+};
+
+// ─── GET /api/admin/repartidores/:id ────────────────────────
+// Devuelve el detalle COMPLETO + URLs firmadas (validas 1 hora).
+const obtenerRepartidor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const r = await Repartidor.findByPk(id, {
+      include: [{ model: Usuario, as: 'usuario' }],
+    });
+    if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+
+    // Firmamos las URLs de los documentos para poder verlos en el panel
+    const [ineFrente, ineReverso, licencia, tarjeta] = await Promise.all([
+      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_ine_frente),
+      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_ine_reverso),
+      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_licencia),
+      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_tarjeta_circulacion),
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        repartidor: {
+          ...r.toJSON(),
+          documentos_firmados: {
+            ine_frente: ineFrente,
+            ine_reverso: ineReverso,
+            licencia,
+            tarjeta_circulacion: tarjeta,
+          },
+        },
+      },
+    });
+  } catch (e) {
+    console.error('Error obtener repartidor admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener repartidor.' });
+  }
+};
+
+// ─── PATCH /api/admin/repartidores/:id/aprobar ─────────────
+const aprobarRepartidor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const r = await Repartidor.findByPk(id);
+    if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    r.verificacion_estado = 'aprobado';
+    r.verificacion_nota   = null;
+    r.antecedentes_ok     = true;
+    await r.save();
+    res.json({ ok: true, data: { repartidor: r } });
+  } catch (e) {
+    console.error('Error aprobar repartidor:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al aprobar.' });
+  }
+};
+
+// ─── PATCH /api/admin/repartidores/:id/rechazar ────────────
+const rechazarRepartidor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { motivo } = req.body;
+    if (!motivo || motivo.length < 5) {
+      return res.status(400).json({ ok: false, mensaje: 'Da un motivo claro (minimo 5 caracteres).' });
+    }
+    const r = await Repartidor.findByPk(id);
+    if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    r.verificacion_estado = 'rechazado';
+    r.verificacion_nota   = motivo;
+    await r.save();
+    res.json({ ok: true, data: { repartidor: r } });
+  } catch (e) {
+    console.error('Error rechazar repartidor:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al rechazar.' });
+  }
+};
+
+// ─── PATCH /api/admin/repartidores/:id/cuenta ─────────────
+// Cambia estado_cuenta: normal | observacion | probation | suspendido | bloqueado
+const cambiarEstadoCuentaRepartidor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { estado_cuenta, motivo } = req.body;
+    const validos = ['normal', 'observacion', 'probation', 'suspendido', 'bloqueado'];
+    if (!validos.includes(estado_cuenta)) {
+      return res.status(400).json({ ok: false, mensaje: 'Estado de cuenta invalido.' });
+    }
+    const r = await Repartidor.findByPk(id);
+    if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    r.estado_cuenta = estado_cuenta;
+    r.estado_motivo = motivo || null;
+    if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
+      r.conectado = false;
+      r.disponible = false;
+    }
+    await r.save();
+    res.json({ ok: true, data: { repartidor: r } });
+  } catch (e) {
+    console.error('Error cambiar estado cuenta repartidor:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al cambiar estado.' });
+  }
+};
+
+// ─── GET /api/admin/negocios?estado=pendiente ────────────────
+const listarNegocios = async (req, res) => {
+  try {
+    const { estado } = req.query;
+    const where = {};
+    if (estado) {
+      if (estado === 'pendiente') {
+        where.verificacion_estado = { [Op.in]: ['pendiente', 'en_revision'] };
+      } else {
+        where.verificacion_estado = estado;
+      }
+    }
+
+    const negocios = await Negocio.findAll({
+      where,
+      include: [{
+        model: Usuario,
+        as: 'dueno',
+        attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'],
+      }],
+      order: [['actualizado_en', 'DESC']],
+    });
+
+    res.json({ ok: true, data: { negocios } });
+  } catch (e) {
+    console.error('Error listar negocios admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar negocios.' });
+  }
+};
+
+// ─── GET /api/admin/negocios/:id ────────────────────────────
+const obtenerNegocio = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const n = await Negocio.findByPk(id, {
+      include: [{ model: Usuario, as: 'dueno' }],
+    });
+    if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+
+    const [fotoLocal, comprobante, ine, rfc] = await Promise.all([
+      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.foto_local),
+      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.comprobante_domicilio),
+      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_ine_dueno),
+      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_rfc),
+    ]);
+
+    res.json({
+      ok: true,
+      data: {
+        negocio: {
+          ...n.toJSON(),
+          documentos_firmados: {
+            foto_local: fotoLocal,
+            comprobante_domicilio: comprobante,
+            documento_ine_dueno: ine,
+            documento_rfc: rfc,
+          },
+        },
+      },
+    });
+  } catch (e) {
+    console.error('Error obtener negocio admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener negocio.' });
+  }
+};
+
+// ─── PATCH /api/admin/negocios/:id/aprobar ─────────────────
+const aprobarNegocio = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const n = await Negocio.findByPk(id);
+    if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    n.verificacion_estado = 'aprobado';
+    n.verificacion_nota   = null;
+    n.activo              = true;
+    await n.save();
+    res.json({ ok: true, data: { negocio: n } });
+  } catch (e) {
+    console.error('Error aprobar negocio:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al aprobar.' });
+  }
+};
+
+// ─── PATCH /api/admin/negocios/:id/rechazar ────────────────
+const rechazarNegocio = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { motivo } = req.body;
+    if (!motivo || motivo.length < 5) {
+      return res.status(400).json({ ok: false, mensaje: 'Da un motivo claro (minimo 5 caracteres).' });
+    }
+    const n = await Negocio.findByPk(id);
+    if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    n.verificacion_estado = 'rechazado';
+    n.verificacion_nota   = motivo;
+    n.activo              = false;
+    await n.save();
+    res.json({ ok: true, data: { negocio: n } });
+  } catch (e) {
+    console.error('Error rechazar negocio:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al rechazar.' });
+  }
+};
+
+// ─── PATCH /api/admin/negocios/:id/cuenta ─────────────────
+const cambiarEstadoCuentaNegocio = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { estado_cuenta, motivo } = req.body;
+    const validos = ['normal', 'observacion', 'probation', 'suspendido', 'bloqueado'];
+    if (!validos.includes(estado_cuenta)) {
+      return res.status(400).json({ ok: false, mensaje: 'Estado de cuenta invalido.' });
+    }
+    const n = await Negocio.findByPk(id);
+    if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    n.estado_cuenta = estado_cuenta;
+    n.estado_motivo = motivo || null;
+    if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
+      n.abierto_ahora = false;
+    }
+    await n.save();
+    res.json({ ok: true, data: { negocio: n } });
+  } catch (e) {
+    console.error('Error cambiar estado cuenta negocio:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al cambiar estado.' });
+  }
+};
+
+// ─── GET /api/admin/usuarios ────────────────────────────────
+const listarUsuarios = async (req, res) => {
+  try {
+    const { buscar } = req.query;
+    const where = {};
+    if (buscar) {
+      where[Op.or] = [
+        { nombre:   { [Op.iLike]: `%${buscar}%` } },
+        { apellido: { [Op.iLike]: `%${buscar}%` } },
+        { telefono: { [Op.iLike]: `%${buscar}%` } },
+        { email:    { [Op.iLike]: `%${buscar}%` } },
+      ];
+    }
+    const usuarios = await Usuario.findAll({
+      where,
+      attributes: ['id', 'nombre', 'apellido', 'telefono', 'email', 'rol', 'modo_activo', 'estado', 'creado_en'],
+      order: [['creado_en', 'DESC']],
+      limit: 200,
+    });
+    res.json({ ok: true, data: { usuarios } });
+  } catch (e) {
+    console.error('Error listar usuarios admin:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar usuarios.' });
+  }
+};
+
+module.exports = {
+  dashboard,
+  // Repartidores
+  listarRepartidores,
+  obtenerRepartidor,
+  aprobarRepartidor,
+  rechazarRepartidor,
+  cambiarEstadoCuentaRepartidor,
+  // Negocios
+  listarNegocios,
+  obtenerNegocio,
+  aprobarNegocio,
+  rechazarNegocio,
+  cambiarEstadoCuentaNegocio,
+  // Usuarios
+  listarUsuarios,
+};

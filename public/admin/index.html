@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>VoyCorriendo · Panel Admin</title>
+<style>
+  :root{
+    --primario:#FF6B35; --secundario:#1B7F3A;
+    --fondo:#F4F5F7; --superficie:#FFFFFF; --borde:#E5E7EB;
+    --texto:#1F2937; --suave:#6B7280;
+    --exito:#1B7F3A; --error:#B3261E; --advert:#A66B00;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--fondo);color:var(--texto);}
+  a{color:var(--primario);text-decoration:none}
+  .oculto{display:none!important}
+
+  /* ── Login ── */
+  .login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .login-card{background:#fff;padding:32px;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,.08);max-width:420px;width:100%}
+  .login h1{margin:0 0 8px;font-size:28px}
+  .login p{margin:0 0 24px;color:var(--suave);font-size:14px}
+  .login input{width:100%;padding:14px;font-size:15px;border:1px solid var(--borde);border-radius:10px;margin-bottom:12px}
+  .login button{width:100%;padding:14px;font-size:15px;font-weight:700;border:0;background:var(--primario);color:#fff;border-radius:10px;cursor:pointer}
+  .login button:disabled{opacity:.5;cursor:default}
+  .login .err{color:var(--error);font-size:13px;margin:8px 0;min-height:18px}
+  .login .marca{font-size:36px;text-align:center;margin-bottom:16px}
+
+  /* ── App ── */
+  .top{background:#fff;border-bottom:1px solid var(--borde);padding:14px 24px;display:flex;align-items:center;gap:24px;position:sticky;top:0;z-index:10}
+  .top .logo{font-weight:800;font-size:18px;color:var(--primario)}
+  .top nav{display:flex;gap:6px;flex:1}
+  .top nav button{background:transparent;border:0;padding:8px 14px;font-size:14px;border-radius:8px;color:var(--suave);font-weight:600;cursor:pointer}
+  .top nav button.activo{background:var(--primario);color:#fff}
+  .top .salir{background:transparent;border:1px solid var(--borde);padding:8px 12px;font-size:13px;border-radius:8px;color:var(--texto);cursor:pointer}
+  .top .yo{font-size:13px;color:var(--suave);margin-right:8px}
+
+  .contenido{max-width:1200px;margin:0 auto;padding:24px}
+
+  /* ── Dashboard ── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+  .kpi{background:#fff;border-radius:12px;padding:20px;border:1px solid var(--borde)}
+  .kpi .label{font-size:12px;color:var(--suave);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .kpi .num{font-size:32px;font-weight:800;color:var(--texto)}
+  .kpi .num.pendiente{color:var(--advert)}
+  .kpi .num.aprobado{color:var(--exito)}
+  .kpi .num.error{color:var(--error)}
+
+  /* ── Listas ── */
+  .seccion{background:#fff;border-radius:12px;border:1px solid var(--borde);overflow:hidden;margin-bottom:24px}
+  .seccion-h{padding:16px 20px;border-bottom:1px solid var(--borde);display:flex;justify-content:space-between;align-items:center}
+  .seccion-h h2{margin:0;font-size:16px}
+  .filtros{display:flex;gap:6px}
+  .filtros button{padding:6px 12px;font-size:12px;border:1px solid var(--borde);background:#fff;border-radius:6px;cursor:pointer;color:var(--suave);font-weight:600}
+  .filtros button.activo{background:var(--texto);color:#fff;border-color:var(--texto)}
+
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:12px 20px;font-size:14px;border-bottom:1px solid var(--borde)}
+  th{font-size:12px;color:var(--suave);text-transform:uppercase;font-weight:700;background:#FAFAFA}
+  tr:hover{background:#FAFAFA;cursor:pointer}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700}
+  .pill.pendiente{background:#FFF3D6;color:#A66B00}
+  .pill.en_revision{background:#DBEAFE;color:#1E40AF}
+  .pill.aprobado{background:#E7F7EE;color:#1B7F3A}
+  .pill.rechazado{background:#FFE2E0;color:#B3261E}
+  .pill.suspendido{background:#FFE2E0;color:#B3261E}
+  .pill.bloqueado{background:#3A2A2A;color:#FFFFFF}
+  .pill.normal{background:#E5E7EB;color:#374151}
+
+  .vacio{padding:48px;text-align:center;color:var(--suave)}
+  .vacio .ico{font-size:54px;margin-bottom:12px}
+
+  /* ── Modal de detalle ── */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .modal-card{background:#fff;border-radius:16px;width:100%;max-width:900px;max-height:90vh;overflow-y:auto}
+  .modal-h{padding:20px 24px;border-bottom:1px solid var(--borde);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;z-index:5}
+  .modal-h h2{margin:0;font-size:18px}
+  .modal-h button.cerrar{background:transparent;border:0;font-size:24px;cursor:pointer;color:var(--suave)}
+  .modal-body{padding:24px}
+  .modal-h-info{padding:0 24px 16px;display:flex;flex-wrap:wrap;gap:16px}
+  .info-block{flex:1;min-width:200px}
+  .info-block .lab{font-size:11px;color:var(--suave);text-transform:uppercase;font-weight:700}
+  .info-block .val{font-size:14px;margin-top:2px}
+
+  .docs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
+  .doc{border:1px solid var(--borde);border-radius:10px;padding:12px;background:#FAFAFA}
+  .doc .lab{font-size:12px;color:var(--suave);font-weight:700;margin-bottom:8px;text-transform:uppercase}
+  .doc img{width:100%;height:160px;object-fit:cover;border-radius:8px;background:#EEE;cursor:zoom-in}
+  .doc .none{font-size:12px;color:var(--error);font-style:italic;padding:32px 0;text-align:center}
+
+  .acciones{display:flex;gap:12px;padding:20px 24px;border-top:1px solid var(--borde);background:#FAFAFA;position:sticky;bottom:0}
+  .acciones button{flex:1;padding:14px;font-size:14px;font-weight:700;border:0;border-radius:10px;cursor:pointer}
+  .btn-aprobar{background:var(--exito);color:#fff}
+  .btn-rechazar{background:var(--error);color:#fff}
+  .btn-suspender{background:#374151;color:#fff}
+
+  .modal-img-grande{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:200;display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
+  .modal-img-grande img{max-width:100%;max-height:100%;border-radius:8px}
+
+  .toast{position:fixed;top:20px;right:20px;background:var(--texto);color:#fff;padding:14px 20px;border-radius:10px;z-index:300;font-size:14px;box-shadow:0 8px 32px rgba(0,0,0,.3);animation:slide .3s}
+  .toast.exito{background:var(--exito)}
+  .toast.error{background:var(--error)}
+  @keyframes slide{from{transform:translateX(120%)}to{transform:translateX(0)}}
+
+  .cargando{padding:48px;text-align:center;color:var(--suave)}
+</style>
+</head>
+<body>
+
+<!-- ─────────── LOGIN ─────────── -->
+<div id="vista-login" class="login">
+  <div class="login-card">
+    <div class="marca">🛵</div>
+    <h1>VoyCorriendo Admin</h1>
+    <p>Panel de operaciones · Puerto Escondido</p>
+    <input id="login-tel"   type="tel" placeholder="Teléfono (10 dígitos)" autocomplete="tel" inputmode="numeric" />
+    <input id="login-pwd"   type="password" placeholder="Contraseña" autocomplete="current-password" />
+    <div id="login-err" class="err"></div>
+    <button id="btn-login" onclick="hacerLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- ─────────── APP ─────────── -->
+<div id="vista-app" class="oculto">
+  <div class="top">
+    <div class="logo">🛵 VoyCorriendo Admin</div>
+    <nav>
+      <button onclick="irA('dashboard')" id="nav-dashboard"     class="activo">Dashboard</button>
+      <button onclick="irA('repartidores')" id="nav-repartidores">Repartidores</button>
+      <button onclick="irA('negocios')" id="nav-negocios">Negocios</button>
+      <button onclick="irA('usuarios')" id="nav-usuarios">Usuarios</button>
+    </nav>
+    <span class="yo" id="yo-nombre"></span>
+    <button class="salir" onclick="cerrarSesion()">Salir</button>
+  </div>
+
+  <div class="contenido">
+    <!-- Dashboard -->
+    <div id="vista-dashboard"></div>
+    <!-- Repartidores -->
+    <div id="vista-repartidores" class="oculto"></div>
+    <!-- Negocios -->
+    <div id="vista-negocios" class="oculto"></div>
+    <!-- Usuarios -->
+    <div id="vista-usuarios" class="oculto"></div>
+  </div>
+</div>
+
+<!-- Modal de detalle -->
+<div id="modal" class="modal oculto" onclick="if(event.target===this)cerrarModal()">
+  <div class="modal-card" id="modal-card"></div>
+</div>
+
+<!-- Modal imagen grande -->
+<div id="modal-img" class="modal-img-grande oculto" onclick="this.classList.add('oculto')">
+  <img id="modal-img-src" alt="documento" />
+</div>
+
+<script>
+  // ─── Estado y helpers ───────────────────────────────────
+  const API = location.origin + '/api';
+  let token = localStorage.getItem('vc_admin_token') || null;
+  let yo    = JSON.parse(localStorage.getItem('vc_admin_yo') || 'null');
+  let filtroRepartidores = 'pendiente';
+  let filtroNegocios     = 'pendiente';
+
+  function toast(msg, tipo='info'){
+    const t = document.createElement('div');
+    t.className = 'toast ' + tipo;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  }
+
+  async function api(metodo, ruta, body){
+    const headers = { 'Content-Type':'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const opts = { method: metodo, headers };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(API + ruta, opts);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.mensaje || 'Error ' + r.status);
+    return data;
+  }
+
+  // ─── Login ──────────────────────────────────────────────
+  async function hacerLogin(){
+    const telefono = document.getElementById('login-tel').value.trim();
+    const pwd      = document.getElementById('login-pwd').value;
+    const err      = document.getElementById('login-err');
+    const btn      = document.getElementById('btn-login');
+    err.textContent = '';
+    if (!telefono || !pwd) { err.textContent = 'Ingresa teléfono y contraseña'; return; }
+    btn.disabled = true; btn.textContent = 'Entrando...';
+    try {
+      const r = await api('POST', '/auth/login', { telefono, password: pwd });
+      const u = r.data?.usuario || r.usuario;
+      const t = r.data?.token   || r.token;
+      if (!t || !u)              throw new Error('Respuesta inválida del servidor');
+      if (u.rol !== 'admin')     throw new Error('Esta cuenta no es admin');
+      token = t; yo = u;
+      localStorage.setItem('vc_admin_token', token);
+      localStorage.setItem('vc_admin_yo', JSON.stringify(yo));
+      mostrarApp();
+    } catch (e) {
+      err.textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Entrar';
+    }
+  }
+
+  function cerrarSesion(){
+    localStorage.removeItem('vc_admin_token');
+    localStorage.removeItem('vc_admin_yo');
+    token = null; yo = null;
+    document.getElementById('vista-login').classList.remove('oculto');
+    document.getElementById('vista-app').classList.add('oculto');
+  }
+
+  function mostrarApp(){
+    document.getElementById('vista-login').classList.add('oculto');
+    document.getElementById('vista-app').classList.remove('oculto');
+    document.getElementById('yo-nombre').textContent = (yo?.nombre || '') + ' ' + (yo?.apellido || '');
+    irA('dashboard');
+  }
+
+  // ─── Navegación ─────────────────────────────────────────
+  function irA(vista){
+    ['dashboard','repartidores','negocios','usuarios'].forEach(v => {
+      document.getElementById('vista-' + v).classList.add('oculto');
+      document.getElementById('nav-' + v).classList.remove('activo');
+    });
+    document.getElementById('vista-' + vista).classList.remove('oculto');
+    document.getElementById('nav-' + vista).classList.add('activo');
+    if (vista === 'dashboard')    cargarDashboard();
+    if (vista === 'repartidores') cargarRepartidores();
+    if (vista === 'negocios')     cargarNegocios();
+    if (vista === 'usuarios')     cargarUsuarios();
+  }
+
+  // ─── Dashboard ──────────────────────────────────────────
+  async function cargarDashboard(){
+    const cont = document.getElementById('vista-dashboard');
+    cont.innerHTML = '<div class="cargando">Cargando...</div>';
+    try {
+      const r = await api('GET', '/admin/dashboard');
+      const d = r.data;
+      cont.innerHTML = `
+        <h2 style="margin:0 0 16px">Resumen general</h2>
+        <div class="grid">
+          <div class="kpi"><div class="label">Usuarios totales</div><div class="num">${d.totalUsuarios}</div></div>
+          <div class="kpi"><div class="label">Pedidos hoy</div><div class="num">${d.pedidosHoy}</div></div>
+          <div class="kpi"><div class="label">Repartidores conectados</div><div class="num aprobado">${d.repartidores.conectados}</div></div>
+          <div class="kpi"><div class="label">Negocios abiertos</div><div class="num aprobado">${d.negocios.abiertos}</div></div>
+        </div>
+
+        <h2 style="margin:24px 0 16px">Repartidores</h2>
+        <div class="grid">
+          <div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">${d.repartidores.pendientes}</div></div>
+          <div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">${d.repartidores.aprobados}</div></div>
+        </div>
+
+        <h2 style="margin:24px 0 16px">Negocios</h2>
+        <div class="grid">
+          <div class="kpi"><div class="label">Pendientes de revisar</div><div class="num pendiente">${d.negocios.pendientes}</div></div>
+          <div class="kpi"><div class="label">Aprobados</div><div class="num aprobado">${d.negocios.aprobados}</div></div>
+        </div>
+      `;
+    } catch (e) {
+      cont.innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+
+  // ─── Repartidores ───────────────────────────────────────
+  async function cargarRepartidores(){
+    const cont = document.getElementById('vista-repartidores');
+    cont.innerHTML = `
+      <div class="seccion">
+        <div class="seccion-h">
+          <h2>Repartidores</h2>
+          <div class="filtros">
+            <button onclick="setFiltroRep('pendiente')"  id="fr-pendiente"  class="${filtroRepartidores==='pendiente'?'activo':''}">Pendientes</button>
+            <button onclick="setFiltroRep('aprobado')"   id="fr-aprobado"   class="${filtroRepartidores==='aprobado'?'activo':''}">Aprobados</button>
+            <button onclick="setFiltroRep('rechazado')"  id="fr-rechazado"  class="${filtroRepartidores==='rechazado'?'activo':''}">Rechazados</button>
+            <button onclick="setFiltroRep('')"           id="fr-todos"      class="${filtroRepartidores===''?'activo':''}">Todos</button>
+          </div>
+        </div>
+        <div id="lista-rep"><div class="cargando">Cargando...</div></div>
+      </div>
+    `;
+    try {
+      const q = filtroRepartidores ? '?estado=' + filtroRepartidores : '';
+      const r = await api('GET', '/admin/repartidores' + q);
+      const items = r.data.repartidores;
+      const lista = document.getElementById('lista-rep');
+      if (!items.length) {
+        lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>No hay repartidores en este filtro</div>';
+        return;
+      }
+      lista.innerHTML = `<table>
+        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Vehículo</th><th>Estado</th><th>Cuenta</th><th>Calif.</th><th>Entregas</th></tr></thead>
+        <tbody>${items.map(it => `
+          <tr onclick="verRepartidor('${it.id}')">
+            <td><b>${(it.usuario?.nombre||'')+ ' ' + (it.usuario?.apellido||'')}</b></td>
+            <td>${it.usuario?.telefono||''}</td>
+            <td>${it.tipo_vehiculo||''} ${it.marca_vehiculo||''} ${it.modelo_vehiculo||''}</td>
+            <td><span class="pill ${it.verificacion_estado}">${it.verificacion_estado}</span></td>
+            <td><span class="pill ${it.estado_cuenta}">${it.estado_cuenta}</span></td>
+            <td>⭐ ${parseFloat(it.calificacion_promedio||0).toFixed(1)}</td>
+            <td>${it.total_entregas||0}</td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+    } catch (e) {
+      document.getElementById('lista-rep').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+  function setFiltroRep(f){ filtroRepartidores = f; cargarRepartidores(); }
+
+  async function verRepartidor(id){
+    abrirModal('<div class="cargando">Cargando...</div>');
+    try {
+      const r = await api('GET', '/admin/repartidores/' + id);
+      const x = r.data.repartidor;
+      const docs = x.documentos_firmados || {};
+      const card = document.getElementById('modal-card');
+      card.innerHTML = `
+        <div class="modal-h">
+          <h2>🛵 ${x.usuario?.nombre} ${x.usuario?.apellido} <span class="pill ${x.verificacion_estado}" style="margin-left:8px">${x.verificacion_estado}</span></h2>
+          <button class="cerrar" onclick="cerrarModal()">×</button>
+        </div>
+        <div class="modal-h-info">
+          <div class="info-block"><div class="lab">Teléfono</div><div class="val">${x.usuario?.telefono||'—'}</div></div>
+          <div class="info-block"><div class="lab">Email</div><div class="val">${x.usuario?.email||'—'}</div></div>
+          <div class="info-block"><div class="lab">Vehículo</div><div class="val">${x.tipo_vehiculo||''} · ${x.marca_vehiculo||''} ${x.modelo_vehiculo||''} (${x.anio_vehiculo||''})</div></div>
+          <div class="info-block"><div class="lab">Placa</div><div class="val">${x.placa_vehiculo||'—'}</div></div>
+          <div class="info-block"><div class="lab">Color</div><div class="val">${x.color_vehiculo||'—'}</div></div>
+          <div class="info-block"><div class="lab">Banco / CLABE</div><div class="val">${x.banco||'—'} · ${x.clabe_bancaria||'—'}</div></div>
+        </div>
+        <div class="modal-body">
+          ${x.verificacion_nota ? `<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ${x.verificacion_nota}</div>` : ''}
+          <h3>Documentos</h3>
+          <div class="docs">
+            ${docCard('INE Frente',  docs.ine_frente)}
+            ${docCard('INE Reverso', docs.ine_reverso)}
+            ${docCard('Licencia',    docs.licencia)}
+            ${docCard('Tarjeta de Circulación', docs.tarjeta_circulacion)}
+          </div>
+        </div>
+        <div class="acciones">
+          <button class="btn-aprobar"  onclick="aprobarRep('${x.id}')">✓ Aprobar</button>
+          <button class="btn-rechazar" onclick="rechazarRep('${x.id}')">✕ Rechazar</button>
+          <button class="btn-suspender" onclick="suspenderRep('${x.id}')">⛔ Suspender</button>
+        </div>
+      `;
+    } catch (e) {
+      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+
+  async function aprobarRep(id){
+    if (!confirm('¿Aprobar a este repartidor?')) return;
+    try { await api('PATCH','/admin/repartidores/'+id+'/aprobar'); toast('Repartidor aprobado','exito'); cerrarModal(); cargarRepartidores(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+  async function rechazarRep(id){
+    const motivo = prompt('Motivo del rechazo (mínimo 5 caracteres):');
+    if (!motivo) return;
+    try { await api('PATCH','/admin/repartidores/'+id+'/rechazar',{motivo}); toast('Repartidor rechazado','exito'); cerrarModal(); cargarRepartidores(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+  async function suspenderRep(id){
+    const motivo = prompt('Motivo de la suspensión:');
+    if (!motivo) return;
+    try { await api('PATCH','/admin/repartidores/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo}); toast('Repartidor suspendido','exito'); cerrarModal(); cargarRepartidores(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+
+  // ─── Negocios ──────────────────────────────────────────
+  async function cargarNegocios(){
+    const cont = document.getElementById('vista-negocios');
+    cont.innerHTML = `
+      <div class="seccion">
+        <div class="seccion-h">
+          <h2>Negocios</h2>
+          <div class="filtros">
+            <button onclick="setFiltroNeg('pendiente')"  class="${filtroNegocios==='pendiente'?'activo':''}">Pendientes</button>
+            <button onclick="setFiltroNeg('aprobado')"   class="${filtroNegocios==='aprobado'?'activo':''}">Aprobados</button>
+            <button onclick="setFiltroNeg('rechazado')"  class="${filtroNegocios==='rechazado'?'activo':''}">Rechazados</button>
+            <button onclick="setFiltroNeg('')"           class="${filtroNegocios===''?'activo':''}">Todos</button>
+          </div>
+        </div>
+        <div id="lista-neg"><div class="cargando">Cargando...</div></div>
+      </div>
+    `;
+    try {
+      const q = filtroNegocios ? '?estado=' + filtroNegocios : '';
+      const r = await api('GET', '/admin/negocios' + q);
+      const items = r.data.negocios;
+      const lista = document.getElementById('lista-neg');
+      if (!items.length) {
+        lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>No hay negocios en este filtro</div>';
+        return;
+      }
+      lista.innerHTML = `<table>
+        <thead><tr><th>Nombre</th><th>Categoría</th><th>Dueño</th><th>Teléfono</th><th>Estado</th><th>Cuenta</th><th>Pedidos</th></tr></thead>
+        <tbody>${items.map(it => `
+          <tr onclick="verNegocio('${it.id}')">
+            <td><b>${it.nombre||'(sin nombre)'}</b></td>
+            <td>${it.categoria||'—'}</td>
+            <td>${(it.dueno?.nombre||'')+ ' ' + (it.dueno?.apellido||'')}</td>
+            <td>${it.dueno?.telefono||''}</td>
+            <td><span class="pill ${it.verificacion_estado}">${it.verificacion_estado}</span></td>
+            <td><span class="pill ${it.estado_cuenta}">${it.estado_cuenta}</span></td>
+            <td>${it.total_pedidos||0}</td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+    } catch (e) {
+      document.getElementById('lista-neg').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+  function setFiltroNeg(f){ filtroNegocios = f; cargarNegocios(); }
+
+  async function verNegocio(id){
+    abrirModal('<div class="cargando">Cargando...</div>');
+    try {
+      const r = await api('GET', '/admin/negocios/' + id);
+      const x = r.data.negocio;
+      const docs = x.documentos_firmados || {};
+      const card = document.getElementById('modal-card');
+      card.innerHTML = `
+        <div class="modal-h">
+          <h2>🏪 ${x.nombre || '(sin nombre)'} <span class="pill ${x.verificacion_estado}" style="margin-left:8px">${x.verificacion_estado}</span></h2>
+          <button class="cerrar" onclick="cerrarModal()">×</button>
+        </div>
+        <div class="modal-h-info">
+          <div class="info-block"><div class="lab">Categoría</div><div class="val">${x.categoria||'—'}</div></div>
+          <div class="info-block"><div class="lab">Dueño</div><div class="val">${x.dueno?.nombre} ${x.dueno?.apellido}</div></div>
+          <div class="info-block"><div class="lab">Tel. dueño</div><div class="val">${x.dueno?.telefono||'—'}</div></div>
+          <div class="info-block"><div class="lab">Email</div><div class="val">${x.dueno?.email||'—'}</div></div>
+          <div class="info-block"><div class="lab">Tel. negocio</div><div class="val">${x.telefono||'—'}</div></div>
+          <div class="info-block"><div class="lab">Dirección</div><div class="val">${x.direccion||'—'}</div></div>
+          <div class="info-block"><div class="lab">Banco / CLABE</div><div class="val">${x.banco||'—'} · ${x.clabe_bancaria||'—'}</div></div>
+          <div class="info-block"><div class="lab">Descripción</div><div class="val">${x.descripcion||'—'}</div></div>
+        </div>
+        <div class="modal-body">
+          ${x.verificacion_nota ? `<div style="background:#FFE2E0;color:#B3261E;padding:12px;border-radius:8px;margin-bottom:16px"><b>Nota previa:</b> ${x.verificacion_nota}</div>` : ''}
+          <h3>Documentos</h3>
+          <div class="docs">
+            ${docCard('Foto del local',         docs.foto_local)}
+            ${docCard('Comprobante domicilio',  docs.comprobante_domicilio)}
+            ${docCard('INE del dueño',          docs.documento_ine_dueno)}
+            ${docCard('RFC (opcional)',         docs.documento_rfc)}
+          </div>
+        </div>
+        <div class="acciones">
+          <button class="btn-aprobar"  onclick="aprobarNeg('${x.id}')">✓ Aprobar</button>
+          <button class="btn-rechazar" onclick="rechazarNeg('${x.id}')">✕ Rechazar</button>
+          <button class="btn-suspender" onclick="suspenderNeg('${x.id}')">⛔ Suspender</button>
+        </div>
+      `;
+    } catch (e) {
+      document.getElementById('modal-card').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+
+  async function aprobarNeg(id){
+    if (!confirm('¿Aprobar este negocio?')) return;
+    try { await api('PATCH','/admin/negocios/'+id+'/aprobar'); toast('Negocio aprobado','exito'); cerrarModal(); cargarNegocios(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+  async function rechazarNeg(id){
+    const motivo = prompt('Motivo del rechazo (mínimo 5 caracteres):');
+    if (!motivo) return;
+    try { await api('PATCH','/admin/negocios/'+id+'/rechazar',{motivo}); toast('Negocio rechazado','exito'); cerrarModal(); cargarNegocios(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+  async function suspenderNeg(id){
+    const motivo = prompt('Motivo de la suspensión:');
+    if (!motivo) return;
+    try { await api('PATCH','/admin/negocios/'+id+'/cuenta',{estado_cuenta:'suspendido', motivo}); toast('Negocio suspendido','exito'); cerrarModal(); cargarNegocios(); }
+    catch(e){ toast(e.message,'error'); }
+  }
+
+  // ─── Usuarios ──────────────────────────────────────────
+  async function cargarUsuarios(){
+    const cont = document.getElementById('vista-usuarios');
+    cont.innerHTML = `
+      <div class="seccion">
+        <div class="seccion-h">
+          <h2>Usuarios</h2>
+          <input id="buscar-usr" type="text" placeholder="Buscar por nombre, tel o email..." style="padding:8px 12px;border:1px solid var(--borde);border-radius:6px;width:280px" onkeyup="if(event.key==='Enter')cargarUsuarios()" />
+        </div>
+        <div id="lista-usr"><div class="cargando">Cargando...</div></div>
+      </div>
+    `;
+    try {
+      const buscar = document.getElementById('buscar-usr')?.value || '';
+      const q = buscar ? '?buscar=' + encodeURIComponent(buscar) : '';
+      const r = await api('GET','/admin/usuarios' + q);
+      const items = r.data.usuarios;
+      const lista = document.getElementById('lista-usr');
+      if (!items.length) {
+        lista.innerHTML = '<div class="vacio"><div class="ico">📭</div>Sin resultados</div>';
+        return;
+      }
+      lista.innerHTML = `<table>
+        <thead><tr><th>Nombre</th><th>Teléfono</th><th>Email</th><th>Rol</th><th>Modo activo</th><th>Estado</th><th>Registrado</th></tr></thead>
+        <tbody>${items.map(u => `
+          <tr>
+            <td><b>${u.nombre} ${u.apellido}</b></td>
+            <td>${u.telefono||''}</td>
+            <td>${u.email||'—'}</td>
+            <td><span class="pill ${u.rol==='admin'?'aprobado':'normal'}">${u.rol}</span></td>
+            <td>${u.modo_activo||'—'}</td>
+            <td>${u.estado||'—'}</td>
+            <td>${new Date(u.creado_en).toLocaleDateString('es-MX')}</td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+    } catch (e) {
+      document.getElementById('lista-usr').innerHTML = '<div class="vacio"><div class="ico">⚠️</div>'+e.message+'</div>';
+    }
+  }
+
+  // ─── Helpers UI ────────────────────────────────────────
+  function docCard(label, url){
+    if (!url) return `<div class="doc"><div class="lab">${label}</div><div class="none">— no subido —</div></div>`;
+    return `<div class="doc"><div class="lab">${label}</div><img src="${url}" alt="${label}" onclick="verImg('${url}')" /></div>`;
+  }
+  function verImg(url){
+    document.getElementById('modal-img-src').src = url;
+    document.getElementById('modal-img').classList.remove('oculto');
+  }
+  function abrirModal(html){
+    document.getElementById('modal-card').innerHTML = html;
+    document.getElementById('modal').classList.remove('oculto');
+  }
+  function cerrarModal(){
+    document.getElementById('modal').classList.add('oculto');
+  }
+
+  // ─── Bootstrap ─────────────────────────────────────────
+  if (token && yo) {
+    mostrarApp();
+  } else {
+    document.getElementById('vista-login').classList.remove('oculto');
+  }
+</script>
+</body>
+</html>

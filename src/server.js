@@ -5,6 +5,7 @@ process.on('uncaughtException',  (err) => console.error('[uncaughtException]',  
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
 
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -21,6 +22,7 @@ const negociosRoutes     = require('./routes/negocios.routes');
 const pedidosRoutes      = require('./routes/pedidos.routes');
 const repartidoresRoutes = require('./routes/repartidores.routes');
 const pagosRoutes        = require('./routes/pagos.routes');
+const adminRoutes        = require('./routes/admin.routes');
 
 const app = express();
 const httpServer = createServer(app);
@@ -61,7 +63,20 @@ io.on('connection', (socket) => {
 app.set('io', io);
 
 // Middlewares
-app.use(helmet());
+// helmet con CSP relajada para que el panel /admin pueda cargar imagenes
+// firmadas de Supabase y hacer fetch a /api desde el navegador.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", "'unsafe-inline'"],
+      styleSrc:   ["'self'", "'unsafe-inline'"],
+      imgSrc:     ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", 'https:'],
+      fontSrc:    ["'self'", 'data:'],
+    },
+  },
+}));
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -100,6 +115,12 @@ app.use('/api/negocios',     negociosRoutes);
 app.use('/api/pedidos',      pedidosRoutes);
 app.use('/api/repartidores', repartidoresRoutes);
 app.use('/api/pagos',        pagosRoutes);
+app.use('/api/admin',        adminRoutes);
+
+// ─── Panel web de administracion ───────────────────────────
+// Sirve los archivos estaticos del panel admin en /admin
+// (login.html, dashboard.html, etc.)
+app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 
 // 404
 app.use((req, res) => {
