@@ -2,16 +2,16 @@
  * Script para cargar negocios de prueba en la base de datos
  * Uso: node src/scripts/seed-negocios.js
  *
- * Crea negocios representativos de Santa María Zacatepec, Oaxaca
+ * Crea negocios representativos de Puerto Escondido, Oaxaca
  * + Mi Tienda Ahívoy (mercado online tipo MercadoLibre, envío desde CDMX)
  */
 require('dotenv').config();
 const { sequelize } = require('../config/database');
 const { Usuario, Negocio, Producto } = require('../models');
 
-// Coordenadas aproximadas de Santa María Zacatepec, Oaxaca
-const LAT_BASE = 16.7589;
-const LNG_BASE = -97.9892;
+// Coordenadas aproximadas de Puerto Escondido, Oaxaca
+const LAT_BASE = 15.8603;
+const LNG_BASE = -97.0731;
 
 const HORARIOS_NORMAL = {
   lun: { abre: '08:00', cierra: '22:00' },
@@ -296,9 +296,9 @@ const NEGOCIOS = [
     },
     negocio: {
       nombre: 'Mi Tienda Ahívoy',
-      descripcion: '🛍️ Tu Mercado Libre en Santa María Zacatepec. Productos directo de CDMX a tu puerta. Envío 3-5 días por paquetería.',
+      descripcion: '🛍️ Tu Mercado Libre en Puerto Escondido. Productos directo de CDMX a tu puerta. Envío 3-5 días por paquetería.',
       categoria: 'ahivoy store',
-      direccion: 'Envío desde CDMX — Zona de cobertura: Santa María Zacatepec y alrededores',
+      direccion: 'Envío desde CDMX — Zona de cobertura: Puerto Escondido y alrededores',
       colonia: 'Centro',
       telefono: '9531119999',
       latitud: LAT_BASE, longitud: LNG_BASE,

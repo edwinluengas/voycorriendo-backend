@@ -1,7 +1,7 @@
 {
   "name": "voycorriendo-backend",
   "version": "1.0.0",
-  "description": "API Backend para VoyCorriendo - Plataforma de entregas a domicilio, Santa María Zacatepec, Oaxaca",
+  "description": "API Backend para VoyCorriendo - Plataforma de entregas a domicilio en Oaxaca",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

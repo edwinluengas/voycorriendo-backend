@@ -1,7 +1,7 @@
 # 🛵 Voy Corriendo — Backend API
 
 > **Ganador del nombre:** Voy Corriendo 🏆 — energético, mexicano, perfecto para delivery.
-> Plataforma de entregas a domicilio para Santa María Zacatepec, Oaxaca.
+> Plataforma de entregas a domicilio en Oaxaca — ciudad piloto: Puerto Escondido.
 
 ---
 
