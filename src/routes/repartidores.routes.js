@@ -27,7 +27,9 @@ router.use(proteger);
 
 // ─── Onboarding (wizard multi-paso) ──────────────────────
 router.post ('/activar',           activarModo);
-router.patch('/perfil',            actualizarPerfil);
+router.patch('/perfil', [
+  body('tier').optional().isIn(['daily', 'weekly']).withMessage('tier debe ser daily o weekly'),
+], actualizarPerfil);
 router.post ('/foto',              subirFoto);
 router.post ('/enviar-a-revision', enviarARevision);
 

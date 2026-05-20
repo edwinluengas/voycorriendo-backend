@@ -56,9 +56,9 @@ const actualizarPerfil = async (req, res) => {
       'tipo_vehiculo', 'marca_vehiculo', 'modelo_vehiculo',
       'anio_vehiculo', 'placa_vehiculo', 'color_vehiculo',
       'clabe_bancaria', 'banco',
-      // URLs de fotos (las setea /foto, pero permitimos override)
       'foto_ine_frente', 'foto_ine_reverso',
       'foto_licencia', 'foto_tarjeta_circulacion',
+      'tier',
     ];
     camposEditables.forEach(c => {
       if (req.body[c] !== undefined) repartidor[c] = req.body[c];
