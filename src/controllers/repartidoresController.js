@@ -338,7 +338,7 @@ const pedidosDisponibles = async (req, res) => {
     }
 
     const pedidos = await Pedido.findAll({
-      where: { estado: 'listo', repartidor_id: null },
+      where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad },
       order: [['creado_en', 'ASC']],
       limit: 10,
     });
@@ -363,6 +363,9 @@ const aceptarPedido = async (req, res) => {
     });
     if (!pedido) {
       return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue tomado por otro repartidor.' });
+    }
+    if (pedido.ciudad && pedido.ciudad !== repartidor.ciudad) {
+      return res.status(403).json({ ok: false, mensaje: 'Este pedido no corresponde a tu ciudad de operación.' });
     }
 
     await pedido.update({

@@ -92,6 +92,7 @@ const Pedido = sequelize.define('Pedido', {
   calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   comentario: { type: DataTypes.TEXT, allowNull: true },
+  ciudad: { type: DataTypes.STRING(50), allowNull: true },
 }, {
   tableName: 'pedidos',
   timestamps: true,
