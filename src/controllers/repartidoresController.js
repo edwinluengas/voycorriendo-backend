@@ -1,6 +1,7 @@
-const { Repartidor, Usuario, Pedido } = require('../models');
+const { Repartidor, Usuario, Pedido, DeliveryBatch } = require('../models');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
+const { calcularRuta } = require('../services/routing.service');
 
 // ─── POST /api/repartidores/activar ───────────────────────
 // Cuando el usuario da clic en "Activar modo repartidor" en su
@@ -368,35 +369,107 @@ const aceptarPedido = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no corresponde a tu ciudad de operación.' });
     }
 
+    // Obtener o crear batch activo del repartidor
+    let batch = await DeliveryBatch.findOne({
+      where: { driver_id: repartidor.id, status: 'active' },
+      include: [{ model: Pedido, as: 'pedidos' }],
+    });
+
+    const maxOrders = repartidor.max_pedidos_ruta || 3;
+
+    if (batch && batch.pedidos.length >= maxOrders) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: `Ya tienes ${maxOrders} pedidos en ruta. Entrega primero antes de tomar más.`,
+      });
+    }
+
+    if (!batch) {
+      batch = await DeliveryBatch.create({ driver_id: repartidor.id, max_orders: maxOrders });
+    }
+
+    // Asignar pedido al batch y al repartidor
     await pedido.update({
       repartidor_id: repartidor.id,
+      batch_id: batch.id,
       estado: 'en_camino',
       asignado_en: new Date(),
     });
+
+    // Recalcular ruta con todos los pedidos del batch
+    const pedidosEnBatch = await Pedido.findAll({ where: { batch_id: batch.id } });
+    const origen = repartidor.latitud && repartidor.longitud
+      ? { lat: parseFloat(repartidor.latitud), lng: parseFloat(repartidor.longitud) }
+      : null;
+
+    let rutaData = null;
+    if (origen) {
+      rutaData = await calcularRuta(origen, pedidosEnBatch);
+      await batch.update({
+        waypoints:  rutaData?.waypoints  ?? null,
+        route_data: rutaData?.route_data ?? null,
+      });
+    }
 
     const io = req.app.get('io');
     io.to(`pedido:${pedido.id}`).emit('repartidor_asignado', {
       pedido_id: pedido.id,
       repartidor_id: repartidor.id,
+      batch_id: batch.id,
     });
 
-    res.json({ ok: true, mensaje: '¡Pedido aceptado! Ve a recogerlo.', data: { pedido } });
+    res.json({
+      ok: true,
+      mensaje: '¡Pedido aceptado!',
+      data: {
+        pedido,
+        batch_id: batch.id,
+        total_en_ruta: pedidosEnBatch.length,
+        ruta: rutaData,
+      },
+    });
   } catch (error) {
+    console.error('Error en aceptarPedido:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al aceptar el pedido.' });
   }
 };
 
+// ─── GET /api/repartidores/mi-ruta ────────────────────────
+const miRuta = async (req, res) => {
+  try {
+    const repartidor = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
+
+    const batch = await DeliveryBatch.findOne({
+      where: { driver_id: repartidor.id, status: 'active' },
+      include: [{
+        model: Pedido,
+        as: 'pedidos',
+        attributes: ['id', 'numero', 'tipo_envio', 'direccion_entrega',
+                     'latitud_entrega', 'longitud_entrega', 'estado', 'fee_cliente'],
+      }],
+    });
+
+    if (!batch) {
+      return res.json({ ok: true, data: { batch: null, mensaje: 'Sin ruta activa.' } });
+    }
+
+    res.json({ ok: true, data: { batch } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener la ruta.' });
+  }
+};
+
 module.exports = {
-  // Onboarding nuevo
   activarModo,
   actualizarPerfil,
   subirFoto,
   enviarARevision,
   conectarse,
-  // Operacion
-  crearPerfil,                  // legacy
+  crearPerfil,
   actualizarDisponibilidad,
   misEntregas,
   pedidosDisponibles,
   aceptarPedido,
+  miRuta,
 };

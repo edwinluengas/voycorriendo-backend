@@ -91,8 +91,19 @@ const Pedido = sequelize.define('Pedido', {
   // Calificaciones
   calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
-  comentario: { type: DataTypes.TEXT, allowNull: true },
-  ciudad: { type: DataTypes.STRING(50), allowNull: true },
+  comentario:   { type: DataTypes.TEXT, allowNull: true },
+  ciudad:       { type: DataTypes.STRING(50), allowNull: true },
+  tipo_envio: {
+    type: DataTypes.ENUM('express', 'standard'),
+    defaultValue: 'standard',
+  },
+  fee_cliente:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 25.00 },
+  zona_premium: { type: DataTypes.BOOLEAN, defaultValue: false },
+  batch_id: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: { model: 'delivery_batches', key: 'id' },
+  },
 }, {
   tableName: 'pedidos',
   timestamps: true,

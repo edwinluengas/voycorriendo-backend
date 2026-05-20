@@ -1,10 +1,8 @@
 const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
-const {
-  calcularZona, calcularCostoEnvio, calcularPagoRepartidor,
-  calcularComision, calcularGananciaApp, MAX_DISTANCE_KM,
-} = require('../utils/precios');
+const { MAX_DISTANCE_KM } = require('../utils/precios');
+const { calcularFeeCliente, esZonaPremium, procesarEntrega } = require('../services/economia.service');
 
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
@@ -17,13 +15,14 @@ const crearPedido = async (req, res) => {
   try {
     const {
       negocio_id,
-      items,               // [{ producto_id, cantidad, notas, opcion_elegida }]
+      items,
       direccion_entrega,
       latitud_entrega,
       longitud_entrega,
       notas_entrega,
       metodo_pago,
-      ine_foto_url,        // base64/URL de la foto del INE (si aplica)
+      ine_foto_url,
+      tipo_envio = 'standard',
     } = req.body;
 
     // 1. Verificar negocio existe y está abierto
@@ -80,12 +79,10 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // 3. Calcular distancia entre negocio y dirección de entrega
+    // 3. Calcular distancia y validar cobertura
     let distanciaKm = null;
-    let zona = null;
-    let costo_envio = 0;
 
-    const origen  = negocio.latitud  && negocio.longitud
+    const origen  = negocio.latitud && negocio.longitud
       ? { lat: Number(negocio.latitud), lng: Number(negocio.longitud) }
       : null;
     const destino = latitud_entrega && longitud_entrega
@@ -101,48 +98,28 @@ const crearPedido = async (req, res) => {
       }
     }
 
-    // Si tenemos distancia, aplicamos el modelo económico.
-    // Si no (coordenadas faltantes), usamos zona A por defecto para no bloquear la compra.
-    if (distanciaKm != null) {
-      if (distanciaKm > MAX_DISTANCE_KM) {
-        return res.status(400).json({
-          ok: false,
-          mensaje: `Lo sentimos, tu dirección está a ${distanciaKm.toFixed(1)} km. Por ahora solo entregamos hasta ${MAX_DISTANCE_KM} km del negocio.`,
-        });
-      }
-      const tarifa = calcularCostoEnvio({ distanciaKm, fecha: new Date() });
-      zona = tarifa.zona;
-      costo_envio = tarifa.costo;
-    } else {
-      // Sin coordenadas → zona A como fallback razonable
-      const tarifa = calcularCostoEnvio({ distanciaKm: 1, fecha: new Date() });
-      zona = tarifa.zona;
-      costo_envio = tarifa.costo;
-    }
-
-    const total = subtotal + costo_envio;
-
-    // 4. Validar límite de efectivo
-    if (metodo_pago === 'efectivo' && total > 1000) {
+    if (distanciaKm != null && distanciaKm > MAX_DISTANCE_KM) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Los pagos en efectivo tienen un límite de $1,000 MXN. Tu pedido es de $${total.toFixed(2)}. Por favor elige tarjeta, transferencia o Mercado Pago.`,
+        mensaje: `Tu dirección está a ${distanciaKm.toFixed(1)} km. Solo entregamos hasta ${MAX_DISTANCE_KM} km del negocio.`,
       });
     }
 
-    // 5. Calcular pago al repartidor, comisión al negocio y ganancia de la app
-    const distanciaParaCalc = distanciaKm != null ? distanciaKm : 1;
-    const { pago: pago_repartidor } = calcularPagoRepartidor({ distanciaKm: distanciaParaCalc });
-    const { comision: comision_negocio } = calcularComision({
-      subtotal,
-      categoria: negocio.categoria,
-      comisionOverride: negocio.comision_porcentaje,
+    // 4. Calcular fee de envío (modelo híbrido D)
+    const zona_premium = esZonaPremium({
+      lat: Number(latitud_entrega),
+      lng: Number(longitud_entrega),
     });
-    const ganancia_app = calcularGananciaApp({
-      comision: comision_negocio,
-      costoEnvio: costo_envio,
-      pagoRepartidor: pago_repartidor,
-    });
+    const fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio, zonaPremium: zona_premium });
+    const total = subtotal + fee_cliente;
+
+    // 5. Validar límite de efectivo
+    if (metodo_pago === 'efectivo' && total > 1000) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Pagos en efectivo hasta $1,000 MXN. Tu pedido es $${total.toFixed(2)}.`,
+      });
+    }
 
     // 6. Crear el pedido
     const pedido = await Pedido.create({
@@ -151,16 +128,15 @@ const crearPedido = async (req, res) => {
       negocio_id,
       items: itemsDetallados,
       subtotal,
-      costo_envio,
+      costo_envio: fee_cliente,
       total,
       distancia_km: distanciaKm,
-      zona,
-      pago_repartidor,
-      comision_negocio,
-      ganancia_app,
       metodo_pago,
       pago_estado: 'pendiente',
       ciudad: negocio.ciudad || 'puerto_escondido',
+      tipo_envio,
+      fee_cliente,
+      zona_premium,
       direccion_entrega,
       latitud_entrega,
       longitud_entrega,
@@ -334,6 +310,16 @@ const actualizarEstado = async (req, res) => {
 
     pedido.estado = estado;
     await pedido.save();
+
+    // Al entregar: descontar token del restaurante + registrar pago al repartidor
+    if (estado === 'entregado' && pedido.repartidor_id) {
+      try {
+        const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
+        if (repartidor) await procesarEntrega({ pedido, repartidor });
+      } catch (e) {
+        console.error('Error en procesarEntrega:', e.message);
+      }
+    }
 
     // Notificar a todos los involucrados en tiempo real
     const io = req.app.get('io');

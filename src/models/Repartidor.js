@@ -64,6 +64,11 @@ const Repartidor = sequelize.define('Repartidor', {
     allowNull: false,
     defaultValue: 'puerto_escondido',
   },
+  tier: {
+    type: DataTypes.ENUM('daily', 'weekly'),
+    defaultValue: 'weekly',
+  },
+  max_pedidos_ruta: { type: DataTypes.INTEGER, defaultValue: 3 },
   // Disponibilidad actual
   disponible: { type: DataTypes.BOOLEAN, defaultValue: false },
   latitud: { type: DataTypes.DECIMAL(10, 8), allowNull: true },

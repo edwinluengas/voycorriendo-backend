@@ -13,6 +13,7 @@ const {
   misEntregas,
   pedidosDisponibles,
   aceptarPedido,
+  miRuta,
 } = require('../controllers/repartidoresController');
 const { proteger } = require('../middleware/auth');
 
@@ -44,6 +45,7 @@ router.patch('/disponibilidad', [
 
 router.get ('/mis-entregas',        misEntregas);
 router.get ('/pedidos-disponibles', pedidosDisponibles);
+router.get ('/mi-ruta',             miRuta);
 router.post('/aceptar-pedido', [
   body('pedido_id').isUUID(),
 ], aceptarPedido);
