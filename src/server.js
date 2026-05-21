@@ -14,6 +14,7 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 
 const { conectarDB, sequelize } = require('./config/database');
+const { iniciarJobPagosSemanales } = require('./jobs/pagos-semanales.job');
 
 // Rutas
 const authRoutes         = require('./routes/auth.routes');
@@ -146,6 +147,7 @@ const iniciar = async () => {
   await sequelize.sync({ force: false });
   console.log('Modelos conectados a la base de datos.');
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
+  iniciarJobPagosSemanales();
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\nVOYCORRIENDO API corriendo en puerto ${PORT}`);
     console.log(`Salud: http://localhost:${PORT}/api/salud`);

@@ -7,6 +7,7 @@
 const express = require('express');
 const { proteger, restringirA } = require('../middleware/auth');
 const ctrl = require('../controllers/adminController');
+const speiCtrl = require('../controllers/speiController');
 
 const router = express.Router();
 
@@ -33,5 +34,9 @@ router.patch ('/negocios/:id/cuenta',          ctrl.cambiarEstadoCuentaNegocio);
 
 // ─── Usuarios (busqueda) ────────────────────────────────────
 router.get   ('/usuarios',                     ctrl.listarUsuarios);
+
+// ─── Pagos SPEI ──────────────────────────────────────────────
+router.get  ('/pagos/spei/pendientes', speiCtrl.pendientes);
+router.post ('/pagos/spei/ejecutar',   speiCtrl.ejecutar);
 
 module.exports = router;
