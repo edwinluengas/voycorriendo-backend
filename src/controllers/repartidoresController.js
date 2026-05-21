@@ -283,6 +283,20 @@ const actualizarDisponibilidad = async (req, res) => {
   }
 };
 
+// ─── GET /api/repartidores/mi-perfil ─────────────────────
+const miPerfil = async (req, res) => {
+  try {
+    const repartidor = await Repartidor.findOne({
+      where: { usuario_id: req.usuario.id },
+      attributes: { exclude: ['clabe_bancaria'] },
+    });
+    if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
+    res.json({ ok: true, data: { repartidor } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener perfil.' });
+  }
+};
+
 // ─── GET /api/repartidores/mis-entregas ───────────────────
 const misEntregas = async (req, res) => {
   try {
@@ -463,6 +477,7 @@ const miRuta = async (req, res) => {
 module.exports = {
   activarModo,
   actualizarPerfil,
+  miPerfil,
   subirFoto,
   enviarARevision,
   conectarse,

@@ -14,6 +14,7 @@ const {
   pedidosDisponibles,
   aceptarPedido,
   miRuta,
+  miPerfil,
 } = require('../controllers/repartidoresController');
 const { proteger } = require('../middleware/auth');
 
@@ -45,6 +46,7 @@ router.patch('/disponibilidad', [
   body('longitud').isFloat(),
 ], actualizarDisponibilidad);
 
+router.get ('/mi-perfil',           miPerfil);
 router.get ('/mis-entregas',        misEntregas);
 router.get ('/pedidos-disponibles', pedidosDisponibles);
 router.get ('/mi-ruta',             miRuta);
