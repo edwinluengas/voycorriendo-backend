@@ -10,6 +10,7 @@
 const { DriverPayment, Repartidor, Usuario } = require('../models');
 const { Op } = require('sequelize');
 const axios = require('axios');
+const tg = require('./telegram.service');
 
 // ─── Stub SPEI (reemplazar con STP u OpenPay en producción) ───
 const enviarSPEI = async ({ clabe, banco, monto, concepto, referencia }) => {
@@ -80,6 +81,10 @@ const ejecutarPagosSemanales = async () => {
       for (const p of lista) { p.status = 'failed'; await p.save(); }
       resultados.push({ driver_id, nombre, ok: false, motivo: 'Sin CLABE registrada', total });
       console.warn(`[SPEI] ${nombre}: sin CLABE, marcado como fallido.`);
+      const driverUser = await Usuario.findByPk(repartidor.usuario_id, { attributes: ['telegram_chat_id'] });
+      if (driverUser?.telegram_chat_id) {
+        tg.alertaSPEIFallido(driverUser.telegram_chat_id, nombre, 'Sin CLABE registrada').catch(() => {});
+      }
       continue;
     }
 
@@ -96,6 +101,16 @@ const ejecutarPagosSemanales = async () => {
       p.status  = resultado.ok ? 'paid' : 'failed';
       p.paid_at = resultado.ok ? ahora  : null;
       await p.save();
+    }
+
+    // Notificar al repartidor
+    const driverUser = await Usuario.findByPk(repartidor.usuario_id, { attributes: ['telegram_chat_id'] });
+    if (driverUser?.telegram_chat_id) {
+      if (resultado.ok) {
+        tg.alertaPagoSPEI(driverUser.telegram_chat_id, { total, entregas: lista.length, tracking_id: resultado.tracking_id }).catch(() => {});
+      } else {
+        tg.alertaSPEIFallido(driverUser.telegram_chat_id, nombre, resultado.error || 'Error desconocido').catch(() => {});
+      }
     }
 
     resultados.push({

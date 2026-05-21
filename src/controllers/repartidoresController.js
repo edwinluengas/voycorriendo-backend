@@ -2,6 +2,7 @@ const { Repartidor, Usuario, Pedido, DeliveryBatch } = require('../models');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { calcularRuta } = require('../services/routing.service');
+const tg = require('../services/telegram.service');
 
 // ─── POST /api/repartidores/activar ───────────────────────
 // Cuando el usuario da clic en "Activar modo repartidor" en su
@@ -431,6 +432,11 @@ const aceptarPedido = async (req, res) => {
       repartidor_id: repartidor.id,
       batch_id: batch.id,
     });
+    // Alerta al repartidor vía Telegram
+    const driverUser = await Usuario.findByPk(repartidor.usuario_id, { attributes: ['telegram_chat_id'] });
+    if (driverUser?.telegram_chat_id) {
+      tg.alertaPedidoAsignado(driverUser.telegram_chat_id, pedido).catch(() => {});
+    }
 
     res.json({
       ok: true,

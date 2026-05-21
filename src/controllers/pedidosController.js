@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM } = require('../utils/precios');
 const { calcularFeeCliente, esZonaPremium, procesarEntrega } = require('../services/economia.service');
+const tg = require('../services/telegram.service');
 
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
@@ -145,16 +146,20 @@ const crearPedido = async (req, res) => {
       estado: 'pendiente',
     });
 
-    // 7. Notificar al negocio vía Socket.io en tiempo real
+    // 7. Notificar al negocio vía Socket.io + Telegram
     const io = req.app.get('io');
     io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
       pedido_id: pedido.id,
       numero: pedido.numero,
       total: pedido.total,
       items: itemsDetallados,
-      zona,
+      zona_premium,
       distancia_km: distanciaKm,
     });
+    const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id'] });
+    if (dueno?.telegram_chat_id) {
+      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch(() => {});
+    }
 
     res.status(201).json({
       ok: true,
@@ -319,6 +324,14 @@ const actualizarEstado = async (req, res) => {
       } catch (e) {
         console.error('Error en procesarEntrega:', e.message);
       }
+      // Alertas Telegram: negocio y admin
+      try {
+        const negocioEntregado = await Negocio.findByPk(pedido.negocio_id);
+        const dueno = negocioEntregado
+          ? await Usuario.findByPk(negocioEntregado.usuario_id, { attributes: ['telegram_chat_id'] })
+          : null;
+        if (dueno?.telegram_chat_id) tg.alertaPedidoEntregado(dueno.telegram_chat_id, pedido).catch(() => {});
+      } catch (_) {}
     }
 
     // Notificar a todos los involucrados en tiempo real

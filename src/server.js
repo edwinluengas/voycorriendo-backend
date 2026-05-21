@@ -15,6 +15,7 @@ const { Server } = require('socket.io');
 
 const { conectarDB, sequelize } = require('./config/database');
 const { iniciarJobPagosSemanales } = require('./jobs/pagos-semanales.job');
+const { registrarWebhook } = require('./services/telegram.service');
 
 // Rutas
 const authRoutes         = require('./routes/auth.routes');
@@ -25,6 +26,7 @@ const repartidoresRoutes = require('./routes/repartidores.routes');
 const pagosRoutes        = require('./routes/pagos.routes');
 const adminRoutes        = require('./routes/admin.routes');
 const tokensRoutes       = require('./routes/tokens.routes');
+const telegramRoutes     = require('./routes/telegram.routes');
 
 const app = express();
 const httpServer = createServer(app);
@@ -121,6 +123,7 @@ app.use('/api/repartidores', repartidoresRoutes);
 app.use('/api/pagos',        pagosRoutes);
 app.use('/api/admin',        adminRoutes);
 app.use('/api/tokens',       tokensRoutes);
+app.use('/api/telegram',     telegramRoutes);
 
 // ─── Panel web de administracion ───────────────────────────
 // Sirve los archivos estaticos del panel admin en /admin
@@ -148,6 +151,7 @@ const iniciar = async () => {
   console.log('Modelos conectados a la base de datos.');
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
   iniciarJobPagosSemanales();
+  await registrarWebhook();
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\nVOYCORRIENDO API corriendo en puerto ${PORT}`);
     console.log(`Salud: http://localhost:${PORT}/api/salud`);

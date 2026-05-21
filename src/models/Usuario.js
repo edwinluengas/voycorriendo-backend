@@ -56,8 +56,12 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.STRING,
     allowNull: true,
   },
-  token_push: {   // Firebase FCM token para notificaciones
+  token_push: {
     type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  telegram_chat_id: {
+    type: DataTypes.BIGINT,
     allowNull: true,
   },
   ultima_conexion: {
