@@ -1,5 +1,6 @@
 const { RestaurantToken, Negocio } = require('../models');
 const { Op } = require('sequelize');
+const pagosService = require('../services/pagos.service');
 
 const PACKS = RestaurantToken.PACK_TOKENS;   // { starter:50, pro:200, elite:500 }
 const DIAS  = RestaurantToken.PACK_EXPIRY;   // { starter:60, pro:90, elite:120 }
@@ -44,45 +45,58 @@ const obtenerSaldo = async (req, res) => {
 
 // ─── POST /api/tokens/comprar ─────────────────────────────
 // Body: { pack_type: 'starter'|'pro'|'elite' }
-// En producción este endpoint dispararía el cobro a Mercado Pago
-// y confirmaría en el webhook. Por ahora acredita directo (sandbox).
+// Producción: crea preferencia MP y devuelve link de pago.
+//   Los tokens se acreditan en el webhook cuando MP confirma.
+// Sandbox (sin MP_ACCESS_TOKEN): acredita directo para pruebas.
 const comprarPack = async (req, res) => {
   try {
     const { pack_type } = req.body;
-
     if (!PACKS[pack_type]) {
       return res.status(400).json({ ok: false, mensaje: 'Pack inválido. Usa: starter, pro, elite.' });
     }
 
     const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
-
     if (negocio.verificacion_estado !== 'aprobado') {
-      return res.status(403).json({
-        ok: false,
-        mensaje: 'Tu negocio debe estar aprobado para comprar tokens.',
+      return res.status(403).json({ ok: false, mensaje: 'Tu negocio debe estar aprobado para comprar tokens.' });
+    }
+
+    // ── Sandbox: acreditar directo ──────────────────────────
+    if (!process.env.MERCADOPAGO_ACCESS_TOKEN) {
+      const expires_at = new Date();
+      expires_at.setDate(expires_at.getDate() + DIAS[pack_type]);
+      const token = await RestaurantToken.create({
+        restaurant_id:    negocio.id,
+        tokens_remaining: PACKS[pack_type],
+        pack_type,
+        expires_at,
+      });
+      return res.status(201).json({
+        ok: true,
+        sandbox: true,
+        mensaje: `[Sandbox] Pack ${pack_type} acreditado: ${PACKS[pack_type]} tokens.`,
+        data: { token_id: token.id, pack_type, tokens_acreditados: PACKS[pack_type], expires_at },
       });
     }
 
-    const expires_at = new Date();
-    expires_at.setDate(expires_at.getDate() + DIAS[pack_type]);
-
-    const token = await RestaurantToken.create({
-      restaurant_id:    negocio.id,
-      tokens_remaining: PACKS[pack_type],
+    // ── Producción: crear preferencia MP ───────────────────
+    const pref = await pagosService.crearPreferenciaTokens({
       pack_type,
-      expires_at,
+      negocio,
+      tokens: PACKS[pack_type],
+      precio: PRECIOS[pack_type],
     });
 
-    res.status(201).json({
+    return res.json({
       ok: true,
-      mensaje: `Pack ${pack_type} acreditado: ${PACKS[pack_type]} tokens, vence ${expires_at.toLocaleDateString('es-MX')}.`,
+      mensaje: 'Redirige al link de pago para completar la compra.',
       data: {
-        token_id:         token.id,
         pack_type,
-        tokens_acreditados: PACKS[pack_type],
-        precio_pagado:    PRECIOS[pack_type],
-        expires_at:       token.expires_at,
+        tokens: PACKS[pack_type],
+        precio: PRECIOS[pack_type],
+        preference_id:      pref.preference_id,
+        init_point:         pref.init_point,
+        sandbox_init_point: pref.sandbox_init_point,
       },
     });
   } catch (error) {

@@ -6,7 +6,7 @@
  *   POST   /api/pagos/webhook/mercado-pago (público) → recibe confirmación MP
  */
 
-const { Pedido, Usuario } = require('../models');
+const { Pedido, Usuario, RestaurantToken, Negocio } = require('../models');
 const pagosService = require('../services/pagos.service');
 
 // ─── POST /api/pagos/preferencia ─────────────────────────
@@ -37,22 +37,35 @@ const crearPreferencia = async (req, res) => {
 
 // ─── POST /api/pagos/webhook/mercado-pago (público) ──────
 const webhookMercadoPago = async (req, res) => {
-  // MP envía 200 rápido o reintenta
+  res.sendStatus(200); // MP necesita 200 inmediato o reintenta
+
   const result = await pagosService.procesarWebhookMercadoPago({
-    query: req.query,
-    body: req.body,
+    query:         req.query,
+    body:          req.body,
+    headers:       req.headers,
     Pedido,
+    RestaurantToken,
+    Negocio,
   });
 
-  if (result.ok && result.pedido) {
-    // Notificar a cliente y repartidor vía socket.io
-    const io = req.app.get('io');
+  if (!result.ok) return;
+
+  const io = req.app.get('io');
+
+  if (result.tipo === 'pedido' && result.pedido) {
     io.to(`pedido:${result.pedido.id}`).emit('pago_actualizado', {
       pedido_id: result.pedido.id,
-      estado: result.pedido.pago_estado,
+      estado:    result.pedido.pago_estado,
     });
   }
-  res.sendStatus(200);
+
+  if (result.tipo === 'token' && result.negocio_id) {
+    io.to(`negocio:${result.negocio_id}`).emit('tokens_acreditados', {
+      negocio_id: result.negocio_id,
+      pack_type:  result.token?.pack_type,
+      tokens:     result.token?.tokens_remaining,
+    });
+  }
 };
 
 // ─── POST /api/pagos/efectivo ────────────────────────────

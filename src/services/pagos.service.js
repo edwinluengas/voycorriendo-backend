@@ -6,11 +6,13 @@
  * ──────────────────────────────────────────────────────────────
  */
 
-const axios = require('axios');
+const axios  = require('axios');
+const crypto = require('crypto');
 
-const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
-const MP_BASE_URL     = 'https://api.mercadopago.com';
-const LIMITE_EFECTIVO = parseFloat(process.env.LIMITE_EFECTIVO || 1000);
+const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
+const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+const MP_BASE_URL       = 'https://api.mercadopago.com';
+const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 1000);
 
 // ─── Validación de límite de efectivo ─────────────────────────
 const validarMetodoPago = ({ metodo_pago, total }) => {
@@ -25,6 +27,32 @@ const validarMetodoPago = ({ metodo_pago, total }) => {
     };
   }
   return { ok: true };
+};
+
+// ─── Verificar firma HMAC del webhook de Mercado Pago ─────────
+// Retorna true si no hay MP_WEBHOOK_SECRET configurado (modo dev).
+const verificarFirmaMP = (headers, dataId) => {
+  if (!MP_WEBHOOK_SECRET) return true;
+  const xSignature = headers['x-signature'];
+  const xRequestId = headers['x-request-id'];
+  if (!xSignature || !xRequestId) return false;
+
+  const parts = {};
+  xSignature.split(',').forEach(part => {
+    const [k, v] = part.trim().split('=');
+    if (k && v) parts[k.trim()] = v.trim();
+  });
+
+  const { ts, v1 } = parts;
+  if (!ts || !v1) return false;
+
+  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  const computed  = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(v1));
+  } catch {
+    return false;
+  }
 };
 
 // ─── Crear preferencia de pago en Mercado Pago ────────────────
@@ -80,41 +108,99 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
   };
 };
 
+// ─── Crear preferencia MP para compra de token pack ───────────
+const crearPreferenciaTokens = async ({ pack_type, negocio, tokens, precio }) => {
+  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado.');
+
+  const payload = {
+    items: [{
+      title: `VoyCorriendo – Pack ${pack_type} (${tokens} tokens)`,
+      quantity: 1,
+      unit_price: precio,
+      currency_id: 'MXN',
+    }],
+    external_reference: `token:${pack_type}:${negocio.id}`,
+    notification_url: `${process.env.API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
+    statement_descriptor: 'VOYCORRIENDO',
+    metadata: { pack_type, negocio_id: negocio.id },
+  };
+
+  const { data } = await axios.post(
+    `${MP_BASE_URL}/checkout/preferences`,
+    payload,
+    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+  );
+
+  return {
+    preference_id:       data.id,
+    init_point:          data.init_point,
+    sandbox_init_point:  data.sandbox_init_point,
+  };
+};
+
 // ─── Webhook: confirmar pago Mercado Pago ─────────────────────
-const procesarWebhookMercadoPago = async ({ query, body, Pedido }) => {
+// Maneja dos tipos vía external_reference:
+//   "token:{pack}:{negocio_id}" → compra de tokens
+//   cualquier otro valor         → pago de pedido (external_reference = pedido.numero)
+const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido, RestaurantToken, Negocio }) => {
   try {
-    const topic   = query.topic || body.type;
+    const topic     = query.topic || body.type;
     const paymentId = query.id || body.data?.id;
 
-    if (topic !== 'payment' || !paymentId) {
-      return { ok: true, mensaje: 'Evento ignorado.' };
+    if (topic !== 'payment' || !paymentId) return { ok: true, mensaje: 'Evento ignorado.' };
+
+    if (!verificarFirmaMP(headers || {}, paymentId)) {
+      console.warn('Webhook MP: firma inválida, rechazado.');
+      return { ok: false, mensaje: 'Firma inválida.' };
     }
 
-    // Consultar el pago en la API de MP
     const { data: pago } = await axios.get(
       `${MP_BASE_URL}/v1/payments/${paymentId}`,
       { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
     );
 
-    const numero = pago.external_reference;
-    const pedido = await Pedido.findOne({ where: { numero } });
+    const ref = pago.external_reference || '';
+
+    // ── Compra de token pack ──────────────────────────────────
+    if (ref.startsWith('token:')) {
+      const [, pack_type, negocio_id] = ref.split(':');
+      if (pago.status !== 'approved') return { ok: true, tipo: 'token', mensaje: 'Pago no aprobado aún.' };
+
+      const { RestaurantToken: TokenModel } = RestaurantToken ? { RestaurantToken } : {};
+      const PACKS  = TokenModel?.PACK_TOKENS || { starter: 50, pro: 200, elite: 500 };
+      const EXPIRY = TokenModel?.PACK_EXPIRY || { starter: 60, pro: 90, elite: 120 };
+
+      const expires_at = new Date();
+      expires_at.setDate(expires_at.getDate() + (EXPIRY[pack_type] || 60));
+
+      const token = await RestaurantToken.create({
+        restaurant_id:    negocio_id,
+        tokens_remaining: PACKS[pack_type] || 50,
+        pack_type,
+        expires_at,
+      });
+
+      return { ok: true, tipo: 'token', token, negocio_id };
+    }
+
+    // ── Pago de pedido ────────────────────────────────────────
+    const pedido = await Pedido.findOne({ where: { numero: ref } });
     if (!pedido) return { ok: false, mensaje: 'Pedido no encontrado.' };
 
-    // Mapear estado MP → estado interno
     const mapa = {
-      approved:    'capturado',
-      authorized:  'autorizado',
-      in_process:  'pendiente',
-      rejected:    'fallido',
-      cancelled:   'fallido',
-      refunded:    'reembolsado',
+      approved:   'capturado',
+      authorized: 'autorizado',
+      in_process: 'pendiente',
+      rejected:   'fallido',
+      cancelled:  'fallido',
+      refunded:   'reembolsado',
     };
 
     pedido.pago_estado     = mapa[pago.status] || 'pendiente';
     pedido.pago_referencia = String(paymentId);
     await pedido.save();
 
-    return { ok: true, pedido };
+    return { ok: true, tipo: 'pedido', pedido };
   } catch (error) {
     console.error('Error webhook MP:', error.response?.data || error.message);
     return { ok: false, mensaje: 'Error procesando webhook.' };
@@ -151,6 +237,7 @@ const registrarTransferencia = async ({ pedido, referencia, comprobante_url }) =
 module.exports = {
   validarMetodoPago,
   crearPreferenciaMercadoPago,
+  crearPreferenciaTokens,
   procesarWebhookMercadoPago,
   registrarPagoEfectivo,
   registrarTransferencia,
