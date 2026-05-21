@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revenue · VoyCorriendo Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F3F4F6; color: #111827; }
+    header { background: #F97316; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+    header h1 { color: #fff; font-size: 18px; font-weight: 700; }
+    header a { color: rgba(255,255,255,0.8); font-size: 13px; text-decoration: none; }
+    header a:hover { color: #fff; }
+    .content { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; align-items: center; }
+    .toolbar label { font-size: 13px; color: #6B7280; }
+    .toolbar input[type=date] { border: 1px solid #D1D5DB; border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+    .btn { padding: 7px 16px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #F97316; color: #fff; }
+    .btn-ghost { background: #fff; color: #374151; border: 1px solid #D1D5DB; }
+    .btn-ghost.active { background: #FFF3E8; border-color: #F97316; color: #F97316; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .card { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .card .label { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .card .valor { font-size: 26px; font-weight: 800; color: #111827; }
+    .card .sub { font-size: 12px; color: #9CA3AF; margin-top: 2px; }
+    .card.verde .valor { color: #059669; }
+    .card.naranja .valor { color: #F97316; }
+    .card.rojo .valor { color: #DC2626; }
+
+    .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+    @media(max-width:700px) { .grid2 { grid-template-columns: 1fr; } }
+    .panel { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .panel h2 { font-size: 14px; font-weight: 700; color: #374151; margin-bottom: 14px; }
+    .chart-wrap { position: relative; height: 220px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 10px; background: #F9FAFB; color: #6B7280; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+    td { padding: 9px 10px; border-top: 1px solid #F3F4F6; color: #111827; }
+    tr:hover td { background: #FAFAFA; }
+
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-daily { background: #FEF3C7; color: #92400E; }
+    .badge-weekly { background: #EDE9FE; color: #5B21B6; }
+    .badge-express { background: #FFEDD5; color: #C2410C; }
+    .badge-standard { background: #E0F2FE; color: #0369A1; }
+
+    .desglose { display: flex; flex-direction: column; gap: 10px; }
+    .desglose-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .desglose-row .dk { color: #6B7280; }
+    .desglose-row .dv { font-weight: 700; }
+    .desglose-row.total { border-top: 1px solid #E5E7EB; padding-top: 10px; margin-top: 4px; }
+    .desglose-row.total .dk { color: #111; font-weight: 700; }
+    .desglose-row.total .dv { color: #059669; font-size: 16px; }
+    .desglose-row.negativo .dv { color: #DC2626; }
+
+    #error-msg { display:none; background:#FEE2E2; color:#DC2626; padding:12px 16px; border-radius:8px; margin-bottom:16px; font-size:13px; }
+    .loader { display:none; text-align:center; padding:40px; color:#9CA3AF; font-size:14px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="flex:1">
+    <h1>📊 Revenue Report · VoyCorriendo</h1>
+  </div>
+  <a href="/admin/dashboard.html">← Dashboard</a>
+</header>
+
+<div class="content">
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="btn btn-ghost active" onclick="setPeriodo('hoy')">Hoy</button>
+    <button class="btn btn-ghost" onclick="setPeriodo('semana')">7 días</button>
+    <button class="btn btn-ghost" onclick="setPeriodo('mes')">Mes</button>
+    <label>Desde <input type="date" id="inp-desde"></label>
+    <label>Hasta <input type="date" id="inp-hasta"></label>
+    <button class="btn btn-primary" onclick="cargarRango()">Buscar</button>
+  </div>
+
+  <div id="error-msg"></div>
+  <div class="loader" id="loader">Cargando datos…</div>
+
+  <!-- Tarjetas KPI -->
+  <div class="cards" id="cards" style="display:none">
+    <div class="card verde">
+      <div class="label">Ingresos netos</div>
+      <div class="valor" id="k-neto">—</div>
+      <div class="sub">plataforma</div>
+    </div>
+    <div class="card naranja">
+      <div class="label">GMV entregas</div>
+      <div class="valor" id="k-gmv">—</div>
+      <div class="sub">valor total pedidos</div>
+    </div>
+    <div class="card">
+      <div class="label">Entregas</div>
+      <div class="valor" id="k-entregas">—</div>
+      <div class="sub" id="k-periodo">—</div>
+    </div>
+    <div class="card">
+      <div class="label">Ticket promedio</div>
+      <div class="valor" id="k-ticket">—</div>
+      <div class="sub">neto / entrega</div>
+    </div>
+    <div class="card naranja">
+      <div class="label">Fees cliente</div>
+      <div class="valor" id="k-fees">—</div>
+      <div class="sub">express + standard</div>
+    </div>
+    <div class="card">
+      <div class="label">Tokens cobrados</div>
+      <div class="valor" id="k-tokens">—</div>
+      <div class="sub">valor en MXN</div>
+    </div>
+  </div>
+
+  <!-- Gráfica + Desglose -->
+  <div class="grid2" id="grid" style="display:none">
+    <div class="panel">
+      <h2>Ingresos netos por día</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-dia"></canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Desglose del período</h2>
+      <div class="desglose" id="desglose">—</div>
+    </div>
+  </div>
+
+  <!-- Tablas -->
+  <div class="grid2" id="tablas" style="display:none">
+    <div class="panel">
+      <h2>Por día</h2>
+      <table>
+        <thead><tr><th>Fecha</th><th>Entregas</th><th>Neto</th></tr></thead>
+        <tbody id="tbl-dia"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Por tipo de pago y envío</h2>
+      <table>
+        <thead><tr><th>Tipo</th><th>Pedidos</th><th>GMV</th></tr></thead>
+        <tbody id="tbl-tipo"></tbody>
+      </table>
+      <h2 style="margin-top:20px">Por tier de repartidor</h2>
+      <table>
+        <thead><tr><th>Tier</th><th>Entregas</th><th>Neto</th></tr></thead>
+        <tbody id="tbl-tier"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '/api';
+let token = localStorage.getItem('vc_admin_token') || '';
+let periodo = 'hoy';
+let chartDia = null;
+
+// Pedir token si no existe
+if (!token) {
+  token = prompt('Token de administrador:') || '';
+  if (token) localStorage.setItem('vc_admin_token', token);
+}
+
+function headers() {
+  return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+}
+
+function setPeriodo(p) {
+  periodo = p;
+  document.querySelectorAll('.btn-ghost').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  cargar({ periodo: p });
+}
+
+function cargarRango() {
+  const desde = document.getElementById('inp-desde').value;
+  const hasta = document.getElementById('inp-hasta').value;
+  if (!desde || !hasta) return alert('Selecciona fecha de inicio y fin.');
+  periodo = 'rango';
+  document.querySelectorAll('.btn-ghost').forEach(b => b.classList.remove('active'));
+  cargar({ periodo: 'rango', desde, hasta });
+}
+
+async function cargar(params = { periodo: 'hoy' }) {
+  setLoading(true);
+  const qs = new URLSearchParams(params).toString();
+  try {
+    const r = await fetch(`${API}/admin/revenue?${qs}`, { headers: headers() });
+    if (r.status === 401) { showError('Sesión expirada. Recarga la página.'); return; }
+    const json = await r.json();
+    if (!json.ok) { showError(json.mensaje); return; }
+    renderData(json.data);
+    hideError();
+  } catch(e) {
+    showError('Error de red: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function renderData(d) {
+  const t = d.totales;
+  const gmv = d.por_tipo_envio.reduce((s, x) => s + x.gmv, 0);
+
+  // KPI cards
+  document.getElementById('k-neto').textContent     = fmt(t.neto);
+  document.getElementById('k-gmv').textContent      = fmt(gmv);
+  document.getElementById('k-entregas').textContent = t.entregas;
+  document.getElementById('k-ticket').textContent   = t.entregas ? fmt(t.neto / t.entregas) : '$0';
+  document.getElementById('k-fees').textContent     = fmt(t.fees_cliente);
+  document.getElementById('k-tokens').textContent   = fmt(t.ingresos_tokens);
+  document.getElementById('k-periodo').textContent  = `${fmtFecha(d.periodo.desde)} – ${fmtFecha(d.periodo.hasta)}`;
+
+  // Desglose
+  document.getElementById('desglose').innerHTML = `
+    <div class="desglose-row"><span class="dk">🪙 Tokens (restaurantes)</span><span class="dv">+${fmt(t.ingresos_tokens)}</span></div>
+    <div class="desglose-row"><span class="dk">🚴 Fees de envío (clientes)</span><span class="dv">+${fmt(t.fees_cliente)}</span></div>
+    <div class="desglose-row negativo"><span class="dk">💸 Pagos a repartidores</span><span class="dv">-${fmt(t.pagos_repartidores)}</span></div>
+    <div class="desglose-row negativo"><span class="dk">🏦 Costos de pasarela</span><span class="dv">-${fmt(t.costos_gateway)}</span></div>
+    <div class="desglose-row total"><span class="dk">✅ Ingreso neto plataforma</span><span class="dv">${fmt(t.neto)}</span></div>
+  `;
+
+  // Gráfica por día
+  const labels  = d.por_dia.map(x => x.fecha);
+  const valores  = d.por_dia.map(x => x.neto);
+  if (chartDia) chartDia.destroy();
+  chartDia = new Chart(document.getElementById('chart-dia'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Neto MXN',
+        data: valores,
+        backgroundColor: '#F97316',
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { ticks: { callback: v => '$' + v } },
+        x: { ticks: { font: { size: 11 } } },
+      },
+    },
+  });
+
+  // Tabla por día
+  document.getElementById('tbl-dia').innerHTML = d.por_dia.length
+    ? d.por_dia.map(x => `<tr><td>${x.fecha}</td><td>${x.entregas}</td><td><b>${fmt(x.neto)}</b></td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:#9CA3AF;text-align:center">Sin datos</td></tr>';
+
+  // Tabla por tipo de envío
+  document.getElementById('tbl-tipo').innerHTML = d.por_tipo_envio.length
+    ? d.por_tipo_envio.map(x => `<tr>
+        <td><span class="badge badge-${x.tipo}">${x.tipo}</span></td>
+        <td>${x.total}</td>
+        <td>${fmt(x.gmv)}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" style="color:#9CA3AF;text-align:center">Sin datos</td></tr>';
+
+  // Tabla por tier
+  document.getElementById('tbl-tier').innerHTML = d.por_tier.length
+    ? d.por_tier.map(x => `<tr>
+        <td><span class="badge badge-${x.tier}">${x.tier}</span></td>
+        <td>${x.entregas}</td>
+        <td><b>${fmt(x.neto)}</b></td>
+      </tr>`).join('')
+    : '<tr><td colspan="3" style="color:#9CA3AF;text-align:center">Sin datos</td></tr>';
+
+  // Mostrar secciones
+  document.getElementById('cards').style.display  = '';
+  document.getElementById('grid').style.display   = '';
+  document.getElementById('tablas').style.display = '';
+}
+
+function fmt(n) { return '$' + parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtFecha(s) { return s ? new Date(s).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : ''; }
+function setLoading(v) { document.getElementById('loader').style.display = v ? 'block' : 'none'; }
+function showError(m) { const el = document.getElementById('error-msg'); el.textContent = m; el.style.display = 'block'; }
+function hideError() { document.getElementById('error-msg').style.display = 'none'; }
+
+// Fechas default para rango
+const hoy = new Date().toISOString().slice(0, 10);
+document.getElementById('inp-hasta').value = hoy;
+const hace7 = new Date(); hace7.setDate(hace7.getDate() - 6);
+document.getElementById('inp-desde').value = hace7.toISOString().slice(0, 10);
+
+cargar({ periodo: 'hoy' });
+</script>
+</body>
+</html>

@@ -39,4 +39,7 @@ router.get   ('/usuarios',                     ctrl.listarUsuarios);
 router.get  ('/pagos/spei/pendientes', speiCtrl.pendientes);
 router.post ('/pagos/spei/ejecutar',   speiCtrl.ejecutar);
 
+// ─── Revenue reporting ───────────────────────────────────────
+router.get  ('/revenue', ctrl.revenueReport);
+
 module.exports = router;

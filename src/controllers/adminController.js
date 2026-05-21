@@ -6,8 +6,8 @@
  *
  * Todas las rutas requieren middleware: proteger + restringirA('admin').
  */
-const { Op } = require('sequelize');
-const { Usuario, Repartidor, Negocio, Pedido } = require('../models');
+const { Op, fn, col, literal } = require('sequelize');
+const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, RestaurantToken } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
@@ -367,4 +367,119 @@ module.exports = {
   cambiarEstadoCuentaNegocio,
   // Usuarios
   listarUsuarios,
+  // Revenue
+  revenueReport,
 };
+
+// ─── GET /api/admin/revenue ─────────────────────────────────────
+// Query params: periodo=hoy|semana|mes|rango  desde=YYYY-MM-DD  hasta=YYYY-MM-DD
+async function revenueReport(req, res) {
+  try {
+    const { periodo = 'semana', desde, hasta } = req.query;
+
+    const ahora = new Date();
+    let fechaDesde, fechaHasta;
+
+    if (periodo === 'hoy') {
+      fechaDesde = new Date(ahora); fechaDesde.setHours(0, 0, 0, 0);
+      fechaHasta = new Date(ahora); fechaHasta.setHours(23, 59, 59, 999);
+    } else if (periodo === 'mes') {
+      fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+      fechaHasta = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 23, 59, 59);
+    } else if (periodo === 'rango' && desde && hasta) {
+      fechaDesde = new Date(desde);
+      fechaHasta = new Date(hasta); fechaHasta.setHours(23, 59, 59, 999);
+    } else {
+      // semana (default)
+      fechaDesde = new Date(ahora); fechaDesde.setDate(ahora.getDate() - 6); fechaDesde.setHours(0, 0, 0, 0);
+      fechaHasta = new Date(ahora); fechaHasta.setHours(23, 59, 59, 999);
+    }
+
+    const where = { created_at: { [Op.between]: [fechaDesde, fechaHasta] } };
+
+    // ── Totales del período ──────────────────────────────────
+    const [filas, porTier, pedidosMeta] = await Promise.all([
+      PlatformRevenue.findAll({
+        where,
+        attributes: [
+          [fn('SUM', col('token_value')),      'total_tokens'],
+          [fn('SUM', col('client_fee')),        'total_fees'],
+          [fn('SUM', col('driver_payout')),     'total_payouts'],
+          [fn('SUM', col('transaction_cost')),  'total_transacciones'],
+          [fn('SUM', col('gateway_fee')),       'total_gateway'],
+          [fn('SUM', col('net_revenue')),       'total_neto'],
+          [fn('COUNT', col('id')),              'total_entregas'],
+        ],
+      }),
+
+      // Desglose por tier
+      PlatformRevenue.findAll({
+        where,
+        attributes: [
+          'tier',
+          [fn('SUM', col('net_revenue')), 'neto'],
+          [fn('COUNT', col('id')),        'entregas'],
+        ],
+        group: ['tier'],
+      }),
+
+      // Pedidos del período (para express vs standard)
+      Pedido.findAll({
+        where: { creado_en: { [Op.between]: [fechaDesde, fechaHasta] } },
+        attributes: [
+          'tipo_envio',
+          [fn('COUNT', col('id')), 'total'],
+          [fn('SUM', col('total')), 'gmv'],
+        ],
+        group: ['tipo_envio'],
+      }),
+    ]);
+
+    // ── Revenue por día (para gráfica) ───────────────────────
+    const porDia = await PlatformRevenue.findAll({
+      where,
+      attributes: [
+        [fn('DATE', col('created_at')), 'fecha'],
+        [fn('SUM', col('net_revenue')), 'neto'],
+        [fn('COUNT', col('id')),        'entregas'],
+      ],
+      group: [fn('DATE', col('created_at'))],
+      order: [[fn('DATE', col('created_at')), 'ASC']],
+    });
+
+    const totales = filas[0]?.dataValues || {};
+
+    res.json({
+      ok: true,
+      data: {
+        periodo: { desde: fechaDesde, hasta: fechaHasta, tipo: periodo },
+        totales: {
+          ingresos_tokens:    parseFloat(totales.total_tokens || 0),
+          fees_cliente:       parseFloat(totales.total_fees || 0),
+          pagos_repartidores: parseFloat(totales.total_payouts || 0),
+          costos_gateway:     parseFloat(totales.total_gateway || 0) + parseFloat(totales.total_transacciones || 0),
+          neto:               parseFloat(totales.total_neto || 0),
+          entregas:           parseInt(totales.total_entregas || 0),
+        },
+        por_tier: porTier.map(t => ({
+          tier:     t.tier || 'sin_tier',
+          neto:     parseFloat(t.dataValues.neto || 0),
+          entregas: parseInt(t.dataValues.entregas || 0),
+        })),
+        por_tipo_envio: pedidosMeta.map(p => ({
+          tipo:     p.tipo_envio || 'standard',
+          total:    parseInt(p.dataValues.total || 0),
+          gmv:      parseFloat(p.dataValues.gmv || 0),
+        })),
+        por_dia: porDia.map(d => ({
+          fecha:    d.dataValues.fecha,
+          neto:     parseFloat(d.dataValues.neto || 0),
+          entregas: parseInt(d.dataValues.entregas || 0),
+        })),
+      },
+    });
+  } catch (e) {
+    console.error('Error revenue report:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al generar reporte.' });
+  }
+}
