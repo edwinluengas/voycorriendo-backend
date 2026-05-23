@@ -438,7 +438,10 @@ const cotizarEnvio = async (req, res) => {
     });
   } catch (error) {
     console.error('Error al cotizar envío:', error);
-    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa.', _debug: error.message });
+    const _debug = error instanceof Error
+      ? `${error.constructor.name}: ${error.message}`
+      : String(error);
+    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa [v2].', _debug });
   }
 };
 
