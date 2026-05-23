@@ -1,7 +1,7 @@
 const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
-const { MAX_DISTANCE_KM } = require('../utils/precios');
+const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
 const { calcularFeeCliente, esZonaPremium, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 
