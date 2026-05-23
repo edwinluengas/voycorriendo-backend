@@ -125,7 +125,6 @@ const login = async (req, res) => {
     const { telefono, password } = req.body;
     const usuario = await Usuario.findOne({
       where: { telefono },
-      attributes: { include: ['password'] },
     });
 
     if (!usuario || !(await usuario.verificarPassword(password))) {

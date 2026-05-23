@@ -60,10 +60,6 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.TEXT,
     allowNull: true,
   },
-  telegram_chat_id: {
-    type: DataTypes.BIGINT,
-    allowNull: true,
-  },
   ultima_conexion: {
     type: DataTypes.DATE,
     allowNull: true,
