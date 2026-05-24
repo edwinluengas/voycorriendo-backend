@@ -386,7 +386,7 @@ const actualizarProducto = async (req, res) => {
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
 
-    const campos = ['nombre', 'descripcion', 'precio', 'categoria', 'disponible', 'destacado', 'opciones'];
+    const campos = ['nombre', 'descripcion', 'precio', 'categoria', 'disponible', 'destacado', 'opciones', 'foto_url', 'requiere_id'];
     campos.forEach(c => { if (req.body[c] !== undefined) producto[c] = req.body[c]; });
     await producto.save();
 
