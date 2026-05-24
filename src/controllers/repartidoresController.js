@@ -140,6 +140,7 @@ const enviarARevision = async (req, res) => {
       });
     }
     repartidor.verificacion_estado = 'en_revision';
+    repartidor.enviado_revision_en = new Date();
     await repartidor.save();
 
     res.json({

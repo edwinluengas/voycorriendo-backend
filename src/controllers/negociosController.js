@@ -234,6 +234,7 @@ const enviarARevision = async (req, res) => {
     }
 
     negocio.verificacion_estado = 'en_revision';
+    negocio.enviado_revision_en = new Date();
     await negocio.save();
 
     res.json({

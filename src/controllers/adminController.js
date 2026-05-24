@@ -17,29 +17,43 @@ const BUCKET_NEGOCIOS     = 'documentos-negocios';
 // Numeros generales para la pantalla principal del admin.
 const dashboard = async (req, res) => {
   try {
+    const estadosPendientes = { [Op.in]: ['pendiente', 'en_revision'] };
+    const hoy = new Date(new Date().setHours(0, 0, 0, 0));
+
     const [
       totalUsuarios,
-      repartidoresPendientes,
       repartidoresAprobados,
       repartidoresConectados,
-      negociosPendientes,
       negociosAprobados,
       negociosAbiertos,
       pedidosHoy,
+      negocios_pendientes,
+      repartidores_pendientes,
     ] = await Promise.all([
       Usuario.count(),
-      Repartidor.count({ where: { verificacion_estado: { [Op.in]: ['pendiente', 'en_revision'] } } }),
       Repartidor.count({ where: { verificacion_estado: 'aprobado' } }),
       Repartidor.count({ where: { conectado: true } }),
-      Negocio.count({ where: { verificacion_estado: { [Op.in]: ['pendiente', 'en_revision'] } } }),
       Negocio.count({ where: { verificacion_estado: 'aprobado' } }),
       Negocio.count({ where: { abierto_ahora: true, verificacion_estado: 'aprobado' } }),
-      Pedido.count({
-        where: {
-          creado_en: {
-            [Op.gte]: new Date(new Date().setHours(0, 0, 0, 0)),
-          },
-        },
+      Pedido.count({ where: { creado_en: { [Op.gte]: hoy } } }),
+      Negocio.findAll({
+        where: { verificacion_estado: estadosPendientes },
+        include: [{ model: Usuario, as: 'dueno', attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'] }],
+        order: [['enviado_revision_en', 'ASC NULLS LAST']],
+        attributes: [
+          'id', 'nombre', 'categoria', 'telefono', 'direccion',
+          'verificacion_estado', 'verificacion_nota',
+          'enviado_revision_en', 'resolucion_en', 'creado_en',
+        ],
+      }),
+      Repartidor.findAll({
+        where: { verificacion_estado: estadosPendientes },
+        include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'] }],
+        order: [['enviado_revision_en', 'ASC NULLS LAST']],
+        attributes: [
+          'id', 'tipo_vehiculo', 'placa_vehiculo', 'verificacion_estado', 'verificacion_nota',
+          'enviado_revision_en', 'resolucion_en', 'creado_en',
+        ],
       }),
     ]);
 
@@ -48,16 +62,18 @@ const dashboard = async (req, res) => {
       data: {
         totalUsuarios,
         repartidores: {
-          pendientes: repartidoresPendientes,
+          pendientes: repartidores_pendientes.length,
           aprobados:  repartidoresAprobados,
           conectados: repartidoresConectados,
         },
         negocios: {
-          pendientes: negociosPendientes,
+          pendientes: negocios_pendientes.length,
           aprobados:  negociosAprobados,
           abiertos:   negociosAbiertos,
         },
         pedidosHoy,
+        negocios_pendientes,
+        repartidores_pendientes,
       },
     });
   } catch (e) {
@@ -143,6 +159,7 @@ const aprobarRepartidor = async (req, res) => {
     r.verificacion_estado = 'aprobado';
     r.verificacion_nota   = null;
     r.antecedentes_ok     = true;
+    r.resolucion_en       = new Date();
     await r.save();
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
@@ -163,6 +180,7 @@ const rechazarRepartidor = async (req, res) => {
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
     r.verificacion_estado = 'rechazado';
     r.verificacion_nota   = motivo;
+    r.resolucion_en       = new Date();
     await r.save();
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
@@ -272,6 +290,7 @@ const aprobarNegocio = async (req, res) => {
     n.verificacion_estado = 'aprobado';
     n.verificacion_nota   = null;
     n.activo              = true;
+    n.resolucion_en       = new Date();
     await n.save();
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {
@@ -293,6 +312,7 @@ const rechazarNegocio = async (req, res) => {
     n.verificacion_estado = 'rechazado';
     n.verificacion_nota   = motivo;
     n.activo              = false;
+    n.resolucion_en       = new Date();
     await n.save();
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {

@@ -74,7 +74,9 @@ const Negocio = sequelize.define('Negocio', {
     type: DataTypes.ENUM('pendiente', 'en_revision', 'aprobado', 'rechazado'),
     defaultValue: 'pendiente',
   },
-  verificacion_nota: { type: DataTypes.TEXT, allowNull: true },
+  verificacion_nota:    { type: DataTypes.TEXT, allowNull: true },
+  enviado_revision_en:  { type: DataTypes.DATE, allowNull: true },
+  resolucion_en:        { type: DataTypes.DATE, allowNull: true },
   // ─── Estado operativo (admin lo activa cuando aprueba) ─────
   // 'activo: true' = aprobado y publicado en el feed.
   activo: { type: DataTypes.BOOLEAN, defaultValue: false },

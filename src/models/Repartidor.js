@@ -35,7 +35,9 @@ const Repartidor = sequelize.define('Repartidor', {
     type: DataTypes.ENUM('pendiente', 'en_revision', 'aprobado', 'rechazado'),
     defaultValue: 'pendiente',
   },
-  verificacion_nota: { type: DataTypes.TEXT, allowNull: true },
+  verificacion_nota:   { type: DataTypes.TEXT, allowNull: true },
+  enviado_revision_en: { type: DataTypes.DATE, allowNull: true },
+  resolucion_en:       { type: DataTypes.DATE, allowNull: true },
   antecedentes_ok: { type: DataTypes.BOOLEAN, defaultValue: false },
   // ─── Estado operativo de la cuenta (estilo Uber) ────────────
   // 'normal'      → recibe pedidos sin restriccion
