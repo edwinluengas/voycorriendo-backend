@@ -385,13 +385,17 @@ const calificarPedido = async (req, res) => {
 const cotizarEnvio = async (req, res) => {
   try {
     const { negocio_id, lat, lng } = req.query;
+    console.log('[cotizar] negocio_id:', negocio_id, 'lat:', lat, 'lng:', lng);
+
     if (!negocio_id) return res.status(400).json({ ok: false, mensaje: 'Falta negocio_id.' });
 
     const negocio = await Negocio.findByPk(negocio_id);
+    console.log('[cotizar] negocio:', negocio ? `lat=${negocio.latitud} lng=${negocio.longitud}` : 'null');
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
     if (!negocio.latitud || !negocio.longitud || lat == null || lng == null) {
       // Sin coordenadas → estimamos zona A
+      console.log('[cotizar] sin coords, tarifa default');
       const tarifa = calcularCostoEnvio({ distanciaKm: 1, fecha: new Date() });
       return res.json({
         ok: true,
@@ -406,10 +410,12 @@ const cotizarEnvio = async (req, res) => {
       });
     }
 
+    console.log('[cotizar] calculando distancia...');
     const { km } = await calcularDistanciaKm(
       { lat: Number(negocio.latitud), lng: Number(negocio.longitud) },
       { lat: Number(lat), lng: Number(lng) },
     );
+    console.log('[cotizar] km:', km);
     const distanciaKm = Number(km.toFixed(2));
 
     if (distanciaKm > MAX_DISTANCE_KM) {
@@ -426,6 +432,7 @@ const cotizarEnvio = async (req, res) => {
     }
 
     const tarifa = calcularCostoEnvio({ distanciaKm, fecha: new Date() });
+    console.log('[cotizar] tarifa:', tarifa.zona, tarifa.costo);
     res.json({
       ok: true,
       data: {
@@ -437,11 +444,12 @@ const cotizarEnvio = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Error al cotizar envío:', error);
+    console.error('[cotizar] CATCH tipo:', Object.prototype.toString.call(error));
+    console.error('[cotizar] CATCH:', error);
     const _debug = error instanceof Error
       ? `${error.constructor.name}: ${error.message}`
       : String(error);
-    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa [v2].', _debug });
+    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa [v3].', _debug });
   }
 };
 

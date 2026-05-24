@@ -292,7 +292,7 @@ const crearNegocio = async (req, res) => {
     return res.status(400).json({ ok: false, errores: errores.array() });
   }
   try {
-    const { nombre, descripcion, categoria, direccion, colonia, ciudad, telefono, horarios } = req.body;
+    const { nombre, descripcion, categoria, direccion, colonia, ciudad, telefono, horarios, latitud, longitud } = req.body;
 
     const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (yaExiste) {
@@ -309,6 +309,8 @@ const crearNegocio = async (req, res) => {
       ciudad: ciudad || 'puerto_escondido',
       telefono,
       horarios,
+      latitud:  latitud  != null ? latitud  : null,
+      longitud: longitud != null ? longitud : null,
       activo: false,
       verificacion_estado: 'en_revision',
     });
