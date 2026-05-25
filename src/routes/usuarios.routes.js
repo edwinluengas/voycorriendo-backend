@@ -3,6 +3,7 @@ const { proteger } = require('../middleware/auth');
 const {
   obtenerMisRoles,
   cambiarModo,
+  guardarPushToken,
 } = require('../controllers/usuariosController');
 
 const router = express.Router();
@@ -13,5 +14,8 @@ router.use(proteger);
 // Multi-rol (estilo Uber/Rappi)
 router.get('/mis-roles', obtenerMisRoles);
 router.post('/cambiar-modo', cambiarModo);
+
+// Push notifications
+router.patch('/push-token', guardarPushToken);
 
 module.exports = router;

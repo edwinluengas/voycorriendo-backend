@@ -214,7 +214,24 @@ function construirMensajeNegocio(verificacion, activo, estadoCuenta, motivo, not
   return null;
 }
 
+// ─── PATCH /api/usuarios/push-token ──────────────────────────
+const guardarPushToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token || !token.startsWith('ExponentPushToken')) {
+      return res.status(400).json({ ok: false, mensaje: 'Token inválido.' });
+    }
+    req.usuario.token_push = token;
+    await req.usuario.save();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Error al guardar push token:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al guardar token.' });
+  }
+};
+
 module.exports = {
   obtenerMisRoles,
   cambiarModo,
+  guardarPushToken,
 };

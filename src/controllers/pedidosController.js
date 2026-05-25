@@ -4,6 +4,7 @@ const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
 const { calcularFeeCliente, esZonaPremium, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
+const push = require('../services/notificaciones.service');
 
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
@@ -146,7 +147,7 @@ const crearPedido = async (req, res) => {
       estado: 'pendiente',
     });
 
-    // 7. Notificar al negocio vía Socket.io + Telegram
+    // 7. Notificar al negocio vía Socket.io + Telegram + Push
     const io = req.app.get('io');
     io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
       pedido_id: pedido.id,
@@ -156,9 +157,23 @@ const crearPedido = async (req, res) => {
       zona_premium,
       distancia_km: distanciaKm,
     });
-    const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id'] });
+    const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
     if (dueno?.telegram_chat_id) {
       tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch(() => {});
+    }
+    if (dueno?.token_push) {
+      push.notificarNuevoPedido(dueno.token_push, pedido).catch(() => {});
+    }
+    // Notificar a repartidores disponibles
+    const repartidoresDisponibles = await Repartidor.findAll({
+      where: { conectado: true, disponible: true, verificacion_estado: 'aprobado' },
+      include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
+    });
+    const tokensRepartidores = repartidoresDisponibles
+      .map((r) => r.usuario?.token_push)
+      .filter(Boolean);
+    if (tokensRepartidores.length > 0) {
+      push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch(() => {});
     }
 
     res.status(201).json({
@@ -343,10 +358,16 @@ const actualizarEstado = async (req, res) => {
       actualizado_en: new Date(),
     };
     io.to(`pedido:${pedido.id}`).emit('estado_pedido', payloadEstado);
-    // También el dashboard del negocio debe refrescarse cuando cambia un estado
     if (pedido.negocio_id) {
       io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payloadEstado);
     }
+    // Push al cliente cuando cambia el estado de su pedido
+    try {
+      const clientePush = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
+      if (clientePush?.token_push) {
+        push.notificarEstadoPedido(clientePush.token_push, pedido, estado).catch(() => {});
+      }
+    } catch (_) {}
 
     res.json({ ok: true, mensaje: `Pedido actualizado a: ${estado}`, data: { pedido } });
   } catch (error) {
