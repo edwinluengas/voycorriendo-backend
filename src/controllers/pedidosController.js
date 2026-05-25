@@ -3,7 +3,8 @@ const { Op } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
-const { calcularFeeCliente, esZonaPremium, procesarEntrega } = require('../services/economia.service');
+const { PEDIDO_MINIMO } = require('../config/precios');
+const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 
@@ -108,23 +109,27 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // 4. Calcular fee de envío (modelo híbrido D)
-    const zona_premium = esZonaPremium({
-      lat: Number(latitud_entrega),
-      lng: Number(longitud_entrega),
-    });
-    const fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio, zonaPremium: zona_premium });
-    const total = subtotal + fee_cliente;
-
-    // 5. Validar límite de efectivo
-    if (metodo_pago === 'efectivo' && total > 1000) {
+    // 4. Validar pedido mínimo ($100 en productos)
+    if (subtotal < PEDIDO_MINIMO) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Pagos en efectivo hasta $1,000 MXN. Tu pedido es $${total.toFixed(2)}.`,
+        mensaje: `El pedido mínimo es de $${PEDIDO_MINIMO} MXN en productos. Tu carrito suma $${subtotal.toFixed(2)} MXN.`,
       });
     }
 
-    // 6. Crear el pedido
+    // 5. Calcular fee de envío (modelo flat-rate)
+    const fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio });
+    const total = subtotal + fee_cliente;
+
+    // 6. Validar límite de efectivo
+    if (metodo_pago === 'efectivo' && total > 500) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Pagos en efectivo hasta $500 MXN. Tu pedido es $${total.toFixed(2)}. Elige tarjeta, transferencia o Mercado Pago.`,
+      });
+    }
+
+    // 7. Crear el pedido
     const pedido = await Pedido.create({
       numero: generarNumeroPedido(),
       cliente_id: req.usuario.id,
@@ -139,7 +144,6 @@ const crearPedido = async (req, res) => {
       ciudad: negocio.ciudad || 'puerto_escondido',
       tipo_envio,
       fee_cliente,
-      zona_premium,
       direccion_entrega,
       latitud_entrega,
       longitud_entrega,
@@ -148,14 +152,13 @@ const crearPedido = async (req, res) => {
       estado: 'pendiente',
     });
 
-    // 7. Notificar al negocio vía Socket.io + Telegram + Push
+    // 8. Notificar al negocio vía Socket.io + Telegram + Push
     const io = req.app.get('io');
     io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
       pedido_id: pedido.id,
       numero: pedido.numero,
       total: pedido.total,
       items: itemsDetallados,
-      zona_premium,
       distancia_km: distanciaKm,
     });
     const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
@@ -457,7 +460,7 @@ const cotizarEnvio = async (req, res) => {
     if (!negocio.latitud || !negocio.longitud || lat == null || lng == null) {
       // Sin coordenadas → estimamos zona A
       console.log('[cotizar] sin coords, tarifa default');
-      const tarifa = calcularCostoEnvio({ distanciaKm: 1, fecha: new Date() });
+      const tarifa = calcularCostoEnvio({ distanciaKm: 1 });
       return res.json({
         ok: true,
         data: {
@@ -492,7 +495,7 @@ const cotizarEnvio = async (req, res) => {
       });
     }
 
-    const tarifa = calcularCostoEnvio({ distanciaKm, fecha: new Date() });
+    const tarifa = calcularCostoEnvio({ distanciaKm });
     console.log('[cotizar] tarifa:', tarifa.zona, tarifa.costo);
     res.json({
       ok: true,
