@@ -337,7 +337,7 @@ const subirFotoProducto = async (req, res) => {
     const ext = mime.split('/')[1] || 'jpg';
     const ruta = `negocios/${negocio.id}/productos/${producto.id}_${Date.now()}.${ext}`;
     const url = await subirImagen('documentos-negocios', ruta, base64, mime);
-    producto.foto_url = url;
+    producto.imagen = url;
     await producto.save();
     res.json({ ok: true, data: { url } });
   } catch (error) {
@@ -485,7 +485,7 @@ const actualizarProducto = async (req, res) => {
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
 
-    const campos = ['nombre', 'descripcion', 'precio', 'categoria', 'disponible', 'destacado', 'opciones', 'foto_url', 'requiere_id'];
+    const campos = ['nombre', 'descripcion', 'precio', 'categoria', 'disponible', 'destacado', 'opciones', 'imagen', 'requiere_id'];
     campos.forEach(c => { if (req.body[c] !== undefined) producto[c] = req.body[c]; });
     await producto.save();
 
