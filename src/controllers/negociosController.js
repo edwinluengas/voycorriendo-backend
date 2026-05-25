@@ -82,8 +82,15 @@ const obtenerNegocio = async (req, res) => {
 // Click en "Activar modo negocio" en perfil. Crea fila vacia.
 const activarModoNegocio = async (req, res) => {
   try {
+    const esAdmin = req.usuario.rol === 'admin';
     const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (yaExiste) {
+      // Auto-aprobar negocio del admin si aun no esta aprobado
+      if (esAdmin && yaExiste.verificacion_estado !== 'aprobado') {
+        yaExiste.verificacion_estado = 'aprobado';
+        yaExiste.activo = true;
+        await yaExiste.save();
+      }
       return res.json({
         ok: true,
         mensaje: 'Ya tienes un negocio registrado.',
@@ -92,8 +99,8 @@ const activarModoNegocio = async (req, res) => {
     }
     const negocio = await Negocio.create({
       usuario_id: req.usuario.id,
-      verificacion_estado: 'pendiente',
-      activo: false,
+      verificacion_estado: esAdmin ? 'aprobado' : 'pendiente',
+      activo: esAdmin,
       ciudad: 'puerto_escondido',
     });
     res.status(201).json({
@@ -111,12 +118,21 @@ const activarModoNegocio = async (req, res) => {
 // El dueno consulta su propio negocio (con todos los campos).
 const obtenerMiNegocio = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await Negocio.findOne({
+      where: { usuario_id: req.usuario.id },
+      include: [{ model: Producto, as: 'productos', required: false, order: [['nombre', 'ASC']] }],
+    });
     if (!negocio) {
       return res.status(404).json({
         ok: false,
         mensaje: 'Aun no tienes negocio. Activalo desde tu perfil.',
       });
+    }
+    // Auto-aprobar negocio del admin
+    if (req.usuario.rol === 'admin' && negocio.verificacion_estado !== 'aprobado') {
+      negocio.verificacion_estado = 'aprobado';
+      negocio.activo = true;
+      await negocio.save();
     }
     res.json({ ok: true, data: { negocio } });
   } catch (error) {
@@ -245,6 +261,80 @@ const enviarARevision = async (req, res) => {
   } catch (error) {
     console.error('Error en enviarARevision:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al enviar a revision.' });
+  }
+};
+
+// ─── GET /api/negocios/mi-negocio/productos ────────────────
+const listarMisProductos = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    const productos = await Producto.findAll({
+      where: { negocio_id: negocio.id },
+      order: [['categoria', 'ASC'], ['nombre', 'ASC']],
+    });
+    res.json({ ok: true, data: { productos } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener productos.' });
+  }
+};
+
+// ─── POST /api/negocios/mi-negocio/productos ───────────────
+const crearMiProducto = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    const { nombre, descripcion, precio, categoria, tiempo_preparacion } = req.body;
+    if (!nombre || precio == null) {
+      return res.status(400).json({ ok: false, mensaje: 'Nombre y precio son obligatorios.' });
+    }
+    const producto = await Producto.create({
+      negocio_id: negocio.id,
+      nombre, descripcion, precio: parseFloat(precio),
+      categoria: categoria || 'general',
+      tiempo_preparacion: tiempo_preparacion || 15,
+      disponible: true,
+    });
+    res.status(201).json({ ok: true, data: { producto } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al crear producto.' });
+  }
+};
+
+// ─── PATCH /api/negocios/mi-negocio/productos/:prod_id ─────
+const actualizarMiProducto = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
+    if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
+    const campos = ['nombre', 'descripcion', 'precio', 'categoria', 'disponible', 'destacado', 'tiempo_preparacion', 'requiere_id'];
+    campos.forEach(c => { if (req.body[c] !== undefined) producto[c] = req.body[c]; });
+    await producto.save();
+    res.json({ ok: true, data: { producto } });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al actualizar producto.' });
+  }
+};
+
+// ─── POST /api/negocios/mi-negocio/productos/:prod_id/foto ─
+const subirFotoProducto = async (req, res) => {
+  try {
+    const { base64, mime } = req.body;
+    if (!base64 || !mime) return res.status(400).json({ ok: false, mensaje: 'Falta base64 o mime.' });
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
+    if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
+    const ext = mime.split('/')[1] || 'jpg';
+    const ruta = `negocios/${negocio.id}/productos/${producto.id}_${Date.now()}.${ext}`;
+    const url = await subirImagen('documentos-negocios', ruta, base64, mime);
+    producto.foto_url = url;
+    await producto.save();
+    res.json({ ok: true, data: { url } });
+  } catch (error) {
+    console.error('Error en subirFotoProducto:', error);
+    res.status(500).json({ ok: false, mensaje: error.message || 'No se pudo subir la foto.' });
   }
 };
 
@@ -408,6 +498,11 @@ module.exports = {
   subirDocumento,
   enviarARevision,
   cambiarApertura,
+  // Gestion de productos del dueno
+  listarMisProductos,
+  crearMiProducto,
+  actualizarMiProducto,
+  subirFotoProducto,
   // Legacy / operacion
   crearNegocio,
   actualizarNegocio,

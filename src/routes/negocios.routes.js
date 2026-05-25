@@ -11,6 +11,11 @@ const {
   subirDocumento,
   enviarARevision,
   cambiarApertura,
+  // Gestion de productos del dueno
+  listarMisProductos,
+  crearMiProducto,
+  actualizarMiProducto,
+  subirFotoProducto,
   // Legacy
   crearNegocio,
   actualizarNegocio,
@@ -35,6 +40,12 @@ router.post ('/enviar-a-revision', proteger, enviarARevision);
 router.patch('/apertura', proteger, [
   body('abierto').isBoolean(),
 ], cambiarApertura);
+
+// ─── Gestion de productos del dueno ──────────────────────────
+router.get ('/mi-negocio/productos',                    proteger, listarMisProductos);
+router.post('/mi-negocio/productos',                    proteger, crearMiProducto);
+router.patch('/mi-negocio/productos/:prod_id',          proteger, actualizarMiProducto);
+router.post('/mi-negocio/productos/:prod_id/foto',      proteger, subirFotoProducto);
 
 // ─── Detalle publico (debe ir DESPUES de las rutas con nombre) ─
 router.get('/:id', obtenerNegocio);
