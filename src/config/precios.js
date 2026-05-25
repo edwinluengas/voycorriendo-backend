@@ -41,7 +41,7 @@ const PAGO_REPARTIDOR = {
 
 // ─── 4. Reglas de negocio ───────────────────────────────────
 const PEDIDO_MINIMO = num('PEDIDO_MINIMO', 100);  // mínimo en productos (MXN)
-const MAX_DISTANCE_KM = num('MAX_DISTANCE_KM', 10);
+const MAX_DISTANCE_KM = num('MAX_DISTANCE_KM', 6);
 
 // ─── 5. VoyTokens — Programa de lealtad para clientes ───────
 // 1 token por cada $10 gastados en productos

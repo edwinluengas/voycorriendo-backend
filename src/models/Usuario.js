@@ -68,6 +68,11 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.DATE,
     allowNull: true,
   },
+  voytokens: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    allowNull: false,
+  },
   telefono_verificado: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,

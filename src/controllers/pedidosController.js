@@ -347,13 +347,29 @@ const actualizarEstado = async (req, res) => {
     pedido.estado = estado;
     await pedido.save();
 
-    // Al entregar: descontar token del restaurante + registrar pago al repartidor
-    if (estado === 'entregado' && pedido.repartidor_id) {
+    // Al entregar: registrar economía flat + sumar VoyTokens al cliente
+    if (estado === 'entregado') {
+      // Pago al repartidor (log flat-rate)
+      if (pedido.repartidor_id) {
+        try {
+          const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
+          if (repartidor) await procesarEntrega({ pedido, repartidor });
+        } catch (e) {
+          console.error('Error en procesarEntrega:', e.message);
+        }
+      }
+      // VoyTokens: 1 token por cada $10 en productos
       try {
-        const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
-        if (repartidor) await procesarEntrega({ pedido, repartidor });
+        const tokensGanados = Math.floor(parseFloat(pedido.subtotal || 0) / 10);
+        if (tokensGanados > 0) {
+          await Usuario.increment('voytokens', {
+            by: tokensGanados,
+            where: { id: pedido.cliente_id },
+          });
+          console.log(`[tokens] +${tokensGanados} VoyTokens → cliente ${pedido.cliente_id}`);
+        }
       } catch (e) {
-        console.error('Error en procesarEntrega:', e.message);
+        console.error('Error sumando VoyTokens:', e.message);
       }
       // Alertas Telegram: negocio y admin
       try {
