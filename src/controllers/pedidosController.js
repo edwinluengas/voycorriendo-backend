@@ -3,7 +3,7 @@ const { Op } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
-const { PEDIDO_MINIMO } = require('../config/precios');
+const { PEDIDO_MINIMO, VOYTOKENS } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
@@ -27,6 +27,7 @@ const crearPedido = async (req, res) => {
       metodo_pago,
       ine_foto_url,
       tipo_envio = 'standard',
+      usa_tokens = false,
     } = req.body;
 
     // 1. Verificar negocio existe y está abierto
@@ -118,7 +119,23 @@ const crearPedido = async (req, res) => {
     }
 
     // 5. Calcular fee de envío (modelo flat-rate)
-    const fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio });
+    let fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio });
+    let tokens_canjeados = 0;
+
+    // 5b. Canjear VoyTokens → envío gratis
+    if (usa_tokens) {
+      const clienteDB = await Usuario.findByPk(req.usuario.id, { attributes: ['voytokens'] });
+      const tokensActuales = clienteDB?.voytokens || 0;
+      if (tokensActuales < VOYTOKENS.ENVIO_GRATIS) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Necesitas ${VOYTOKENS.ENVIO_GRATIS} VoyTokens para envío gratis. Tienes ${tokensActuales}.`,
+        });
+      }
+      fee_cliente = 0;
+      tokens_canjeados = VOYTOKENS.ENVIO_GRATIS;
+    }
+
     const total = subtotal + fee_cliente;
 
     // 6. Validar límite de efectivo
@@ -151,6 +168,15 @@ const crearPedido = async (req, res) => {
       ine_foto_url: requiereINE ? ine_foto_url : null,
       estado: 'pendiente',
     });
+
+    // 7b. Descontar VoyTokens canjeados
+    if (tokens_canjeados > 0) {
+      await Usuario.decrement('voytokens', {
+        by: tokens_canjeados,
+        where: { id: req.usuario.id },
+      });
+      console.log(`[tokens] -${tokens_canjeados} VoyTokens (envío gratis) → cliente ${req.usuario.id}`);
+    }
 
     // 8. Notificar al negocio vía Socket.io + Telegram + Push
     const io = req.app.get('io');

@@ -45,11 +45,11 @@ const MAX_DISTANCE_KM = num('MAX_DISTANCE_KM', 6);
 
 // ─── 5. VoyTokens — Programa de lealtad para clientes ───────
 // 1 token por cada $10 gastados en productos
-// 35 tokens = 1 envío gratis ($35)
-// Aproximadamente cada 3-4 pedidos de $100 = 1 envío gratis
+// 50 tokens = 1 envío gratis ($35) — equivale a $500 en compras → 7% cashback efectivo
+// Aproximadamente 4-5 pedidos promedio para obtener envío gratis
 const VOYTOKENS = {
-  POR_PESO:   num('TOKENS_POR_PESO', 10),   // cada $10 → 1 token
-  ENVIO_GRATIS: num('TOKENS_ENVIO', 35),    // tokens para canjear envío gratis
+  POR_PESO:     num('TOKENS_POR_PESO', 10),  // cada $10 → 1 token
+  ENVIO_GRATIS: num('TOKENS_ENVIO', 50),     // tokens para canjear envío gratis
 };
 
 // ─── 6. VoyPass — Suscripción mensual (próximamente) ────────
