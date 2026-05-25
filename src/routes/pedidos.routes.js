@@ -27,7 +27,7 @@ router.patch('/:id/estado', [
   body('estado').notEmpty().withMessage('El estado es obligatorio'),
 ], actualizarEstado);
 router.post('/:id/calificar', [
-  body('calificacion_repartidor').isInt({ min: 1, max: 5 }).withMessage('Calificación entre 1 y 5'),
+  body('calificacion_repartidor').optional().isInt({ min: 1, max: 5 }).withMessage('Calificación entre 1 y 5'),
   body('calificacion_negocio').isInt({ min: 1, max: 5 }).withMessage('Calificación entre 1 y 5'),
 ], calificarPedido);
 

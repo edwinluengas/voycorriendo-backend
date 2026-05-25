@@ -1,4 +1,5 @@
 const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
+const { Op } = require('sequelize');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
@@ -213,7 +214,7 @@ const obtenerPedido = async (req, res) => {
   try {
     const pedido = await Pedido.findByPk(req.params.id, {
       include: [
-        { model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'logo', 'telefono', 'direccion', 'latitud', 'longitud', 'categoria', 'usuario_id'] },
+        { model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'logo', 'telefono', 'direccion', 'latitud', 'longitud', 'categoria', 'tipo_entrega', 'usuario_id'] },
         { model: Repartidor, as: 'repartidor',
           attributes: ['id', 'calificacion_promedio', 'latitud', 'longitud', 'marca_vehiculo', 'color_vehiculo'],
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'foto_perfil', 'telefono'] }],
@@ -302,9 +303,15 @@ const actualizarEstado = async (req, res) => {
 
     // Máquina de estados permitidos según rol
     const transicionesPermitidas = {
-      negocio:     { pendiente: ['confirmado', 'rechazado'], confirmado: ['preparando'], preparando: ['listo'] },
+      negocio:    {
+        pendiente:  ['confirmado', 'rechazado'],
+        confirmado: ['preparando'],
+        preparando: ['listo'],
+        listo:      ['en_envio'],      // paquetería: negocio marca como enviado
+        en_envio:   ['entregado'],     // paquetería: negocio confirma recepción
+      },
       repartidor:  { listo: ['en_camino'], en_camino: ['entregado'] },
-      admin:       '*',   // Admin puede hacer cualquier transición
+      admin:       '*',
       cliente:     { pendiente: ['cancelado'] },
     };
 
@@ -323,10 +330,16 @@ const actualizarEstado = async (req, res) => {
     const timestamps = {
       confirmado: 'confirmado_en',
       en_camino:  'asignado_en',
+      en_envio:   'enviado_en',
       entregado:  'entregado_en',
       cancelado:  'cancelado_en',
     };
     if (timestamps[estado]) pedido[timestamps[estado]] = new Date();
+
+    // Guardar número de guía al marcar en_envio
+    if (estado === 'en_envio' && req.body.numero_guia) {
+      pedido.numero_guia = req.body.numero_guia;
+    }
 
     pedido.estado = estado;
     await pedido.save();
@@ -386,13 +399,40 @@ const calificarPedido = async (req, res) => {
     if (!pedido) {
       return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado o aún no entregado.' });
     }
-    if (pedido.calificacion_repartidor) {
+    if (pedido.calificacion_negocio !== null) {
       return res.status(400).json({ ok: false, mensaje: 'Ya calificaste este pedido.' });
     }
 
-    await pedido.update({ calificacion_repartidor, calificacion_negocio, comentario });
+    await pedido.update({ calificacion_repartidor: calificacion_repartidor || null, calificacion_negocio, comentario });
 
-    // TODO: Recalcular promedio del repartidor y negocio
+    // Recalcular promedio del negocio
+    if (calificacion_negocio) {
+      const negocio = await Negocio.findByPk(pedido.negocio_id);
+      if (negocio) {
+        const califs = await Pedido.findAll({
+          where: { negocio_id: pedido.negocio_id, calificacion_negocio: { [Op.not]: null } },
+          attributes: ['calificacion_negocio'],
+        });
+        const suma = califs.reduce((acc, p) => acc + p.calificacion_negocio, 0);
+        await negocio.update({
+          calificacion_promedio: (suma / califs.length).toFixed(2),
+          total_pedidos: negocio.total_pedidos + 1,
+        });
+      }
+    }
+
+    // Recalcular promedio del repartidor si aplica
+    if (calificacion_repartidor && pedido.repartidor_id) {
+      const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
+      if (repartidor) {
+        const califsRep = await Pedido.findAll({
+          where: { repartidor_id: pedido.repartidor_id, calificacion_repartidor: { [Op.not]: null } },
+          attributes: ['calificacion_repartidor'],
+        });
+        const sumaRep = califsRep.reduce((acc, p) => acc + p.calificacion_repartidor, 0);
+        await repartidor.update({ calificacion_promedio: (sumaRep / califsRep.length).toFixed(2) });
+      }
+    }
 
     res.json({ ok: true, mensaje: '¡Gracias por tu calificación! 🌟', data: { pedido } });
   } catch (error) {

@@ -65,14 +65,17 @@ const Pedido = sequelize.define('Pedido', {
       'pendiente',        // recién creado, esperando confirmación negocio
       'confirmado',       // negocio confirmó
       'preparando',       // negocio está preparando
-      'listo',            // listo para recoger
-      'en_camino',        // repartidor lo recogió
+      'listo',            // listo para recoger / enviar
+      'en_camino',        // repartidor local lo recogió
+      'en_envio',         // paquetería: negocio lo mandó por mensajería
       'entregado',        // entregado al cliente
       'cancelado',        // cancelado
       'rechazado'         // rechazado por negocio
     ),
     defaultValue: 'pendiente',
   },
+  // Número de guía para pedidos de paquetería
+  numero_guia: { type: DataTypes.STRING(100), allowNull: true },
   // Dirección de entrega
   direccion_entrega: { type: DataTypes.STRING(250), allowNull: false },
   latitud_entrega: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
@@ -84,10 +87,11 @@ const Pedido = sequelize.define('Pedido', {
   ine_foto_url: { type: DataTypes.TEXT, allowNull: true },
   // Tiempos
   confirmado_en: { type: DataTypes.DATE, allowNull: true },
-  asignado_en: { type: DataTypes.DATE, allowNull: true },
-  recogido_en: { type: DataTypes.DATE, allowNull: true },
-  entregado_en: { type: DataTypes.DATE, allowNull: true },
-  cancelado_en: { type: DataTypes.DATE, allowNull: true },
+  asignado_en:   { type: DataTypes.DATE, allowNull: true },
+  recogido_en:   { type: DataTypes.DATE, allowNull: true },
+  enviado_en:    { type: DataTypes.DATE, allowNull: true },
+  entregado_en:  { type: DataTypes.DATE, allowNull: true },
+  cancelado_en:  { type: DataTypes.DATE, allowNull: true },
   // Calificaciones
   calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
