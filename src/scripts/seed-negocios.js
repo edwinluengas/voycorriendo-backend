@@ -288,15 +288,15 @@ const NEGOCIOS = [
     ],
   },
 
-  // ─── 🌟 MI TIENDA AHÍVOY (Mercado online, envío desde CDMX) ───
+  // ─── 🌟 TIENDA VOYCORRIENDO (Mercado online, envío desde México) ───
   {
     dueno: {
-      nombre: 'Edwin', apellido: 'Rojas Luengas (Ahívoy)',
-      telefono: '9531119999', email: 'mitienda.ahivoy@example.com', password: 'ahivoy123',
+      nombre: 'Edwin', apellido: 'Luengas',
+      telefono: '9531119999', email: 'tienda.voycorriendo@example.com', password: 'voycorriendo123',
     },
     negocio: {
-      nombre: 'Mi Tienda Ahívoy',
-      descripcion: '🛍️ Tu Mercado Libre en Puerto Escondido. Productos directo de CDMX a tu puerta. Envío 3-5 días por paquetería.',
+      nombre: 'Tienda VoyCorriendo',
+      descripcion: '🛍️ La tienda oficial de VoyCorriendo. Productos seleccionados desde México a tu puerta en Puerto Escondido. Envío 3-5 días por paquetería.',
       categoria: 'ahivoy store',
       direccion: 'Envío desde CDMX — Zona de cobertura: Puerto Escondido y alrededores',
       colonia: 'Centro',
