@@ -188,22 +188,24 @@ const crearPedido = async (req, res) => {
       distancia_km: distanciaKm,
     });
     const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
+    console.log(`[notif] dueño negocio ${negocio.usuario_id}: token_push=${dueno?.token_push ? 'OK' : 'NULL'}, tg=${dueno?.telegram_chat_id ? 'OK' : 'NULL'}`);
     if (dueno?.telegram_chat_id) {
-      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch(() => {});
+      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram negocio error:', e.message));
     }
     if (dueno?.token_push) {
-      push.notificarNuevoPedido(dueno.token_push, pedido).catch(() => {});
+      push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push negocio error:', e.message));
     }
-    // Notificar a repartidores disponibles
-    const repartidoresDisponibles = await Repartidor.findAll({
-      where: { conectado: true, disponible: true, verificacion_estado: 'aprobado' },
+    // Notificar a todos los repartidores aprobados (conectados o no) para que puedan aceptar
+    const repartidoresAprobados = await Repartidor.findAll({
+      where: { verificacion_estado: 'aprobado' },
       include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
     });
-    const tokensRepartidores = repartidoresDisponibles
+    const tokensRepartidores = repartidoresAprobados
       .map((r) => r.usuario?.token_push)
       .filter(Boolean);
+    console.log(`[notif] repartidores aprobados: ${repartidoresAprobados.length}, con token: ${tokensRepartidores.length}`);
     if (tokensRepartidores.length > 0) {
-      push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch(() => {});
+      push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch((e) => console.warn('[notif] Push repartidores error:', e.message));
     }
 
     res.status(201).json({

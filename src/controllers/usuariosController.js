@@ -221,11 +221,11 @@ const guardarPushToken = async (req, res) => {
     if (!token || !token.startsWith('ExponentPushToken')) {
       return res.status(400).json({ ok: false, mensaje: 'Token inválido.' });
     }
-    req.usuario.token_push = token;
-    await req.usuario.save();
+    await req.usuario.update({ token_push: token });
+    console.log(`[push] token guardado para usuario ${req.usuario.id} (${req.usuario.telefono}): ${token.slice(0, 30)}...`);
     res.json({ ok: true });
   } catch (e) {
-    console.error('Error al guardar push token:', e);
+    console.error('[push] Error al guardar push token:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al guardar token.' });
   }
 };
