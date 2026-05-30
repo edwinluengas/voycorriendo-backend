@@ -195,19 +195,6 @@ const crearPedido = async (req, res) => {
     if (dueno?.token_push) {
       push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push negocio error:', e.message));
     }
-    // Notificar a todos los repartidores aprobados (conectados o no) para que puedan aceptar
-    const repartidoresAprobados = await Repartidor.findAll({
-      where: { verificacion_estado: 'aprobado' },
-      include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
-    });
-    const tokensRepartidores = repartidoresAprobados
-      .map((r) => r.usuario?.token_push)
-      .filter(Boolean);
-    console.log(`[notif] repartidores aprobados: ${repartidoresAprobados.length}, con token: ${tokensRepartidores.length}`);
-    if (tokensRepartidores.length > 0) {
-      push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch((e) => console.warn('[notif] Push repartidores error:', e.message));
-    }
-
     res.status(201).json({
       ok: true,
       mensaje: '¡Pedido creado! Esperando confirmación del negocio.',
@@ -324,15 +311,18 @@ const actualizarEstado = async (req, res) => {
     });
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
-    // Verificar ownership según rol
-    if (req.usuario.rol === 'negocio' && pedido.negocio?.usuario_id !== req.usuario.id) {
+    // Rol efectivo: modo_activo tiene prioridad sobre rol (sistema multi-rol)
+    const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
+
+    // Verificar ownership según rol efectivo
+    if (rolEfectivo === 'negocio' && pedido.negocio?.usuario_id !== req.usuario.id) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no pertenece a tu negocio.' });
     }
-    if (req.usuario.rol === 'cliente' && pedido.cliente_id !== req.usuario.id) {
+    if (rolEfectivo === 'cliente' && pedido.cliente_id !== req.usuario.id) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no es tuyo.' });
     }
 
-    // Máquina de estados permitidos según rol
+    // Máquina de estados permitidos según rol efectivo
     const transicionesPermitidas = {
       negocio:    {
         pendiente:  ['confirmado', 'rechazado'],
@@ -341,12 +331,12 @@ const actualizarEstado = async (req, res) => {
         listo:      ['en_envio'],      // paquetería: negocio marca como enviado
         en_envio:   ['entregado'],     // paquetería: negocio confirma recepción
       },
-      repartidor:  { listo: ['en_camino'], en_camino: ['entregado'] },
+      repartidor:  { en_camino: ['entregado'] },
       admin:       '*',
       cliente:     { pendiente: ['cancelado'] },
     };
 
-    const permitidos = transicionesPermitidas[req.usuario.rol];
+    const permitidos = transicionesPermitidas[rolEfectivo];
     if (permitidos !== '*') {
       const desde = pedido.estado;
       if (!permitidos[desde]?.includes(estado)) {
@@ -428,6 +418,25 @@ const actualizarEstado = async (req, res) => {
         push.notificarEstadoPedido(clientePush.token_push, pedido, estado).catch(() => {});
       }
     } catch (_) {}
+
+    // Cuando el pedido está listo: notificar a todos los repartidores aprobados (como Uber Eats)
+    if (estado === 'listo') {
+      try {
+        const repartidoresAprobados = await Repartidor.findAll({
+          where: { verificacion_estado: 'aprobado' },
+          include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
+        });
+        const tokensRepartidores = repartidoresAprobados
+          .map((r) => r.usuario?.token_push)
+          .filter(Boolean);
+        console.log(`[notif] pedido listo → repartidores aprobados: ${repartidoresAprobados.length}, con token: ${tokensRepartidores.length}`);
+        if (tokensRepartidores.length > 0) {
+          push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch((e) => console.warn('[notif] Push repartidores error:', e.message));
+        }
+      } catch (e) {
+        console.warn('[notif] Error notificando repartidores en listo:', e.message);
+      }
+    }
 
     res.json({ ok: true, mensaje: `Pedido actualizado a: ${estado}`, data: { pedido } });
   } catch (error) {
