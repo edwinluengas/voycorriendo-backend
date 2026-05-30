@@ -3,6 +3,7 @@ const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { calcularRuta } = require('../services/routing.service');
 const tg = require('../services/telegram.service');
+const push = require('../services/notificaciones.service');
 
 // ─── POST /api/repartidores/activar ───────────────────────
 // Cuando el usuario da clic en "Activar modo repartidor" en su
@@ -404,12 +405,16 @@ const aceptarPedido = async (req, res) => {
       batch = await DeliveryBatch.create({ driver_id: repartidor.id, max_orders: maxOrders });
     }
 
+    // Generar código de entrega de 4 dígitos
+    const codigo_entrega = Math.floor(1000 + Math.random() * 9000).toString();
+
     // Asignar pedido al batch y al repartidor
     await pedido.update({
       repartidor_id: repartidor.id,
       batch_id: batch.id,
       estado: 'en_camino',
       asignado_en: new Date(),
+      codigo_entrega,
     });
 
     // Recalcular ruta con todos los pedidos del batch
@@ -433,6 +438,13 @@ const aceptarPedido = async (req, res) => {
       repartidor_id: repartidor.id,
       batch_id: batch.id,
     });
+    // Push al cliente con su código de entrega
+    try {
+      const clientePush = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
+      if (clientePush?.token_push) {
+        push.notificarCodigoEntrega(clientePush.token_push, pedido).catch(() => {});
+      }
+    } catch (_) {}
     // Alerta al repartidor vía Telegram
     const driverUser = await Usuario.findByPk(repartidor.usuario_id, { attributes: ['telegram_chat_id'] });
     if (driverUser?.telegram_chat_id) {

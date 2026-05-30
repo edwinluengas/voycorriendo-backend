@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(railway logs *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build -p android --profile preview --non-interactive)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build --platform android --profile preview --non-interactive)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build:list --platform android --limit 3)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build:list --platform android --limit 3 --json)",
+      "Bash(psql *)",
+      "Bash(node -e ' *)",
+      "Bash(railway --version)",
+      "Bash(railway status *)",
+      "Bash(node -e \"const QRCode = require\\('qrcode'\\); QRCode.toString\\('https://expo.dev/artifacts/eas/uZ4escvvfsuuB24YYFsGWj.apk', {type:'terminal', small:true}, \\(e,s\\)=>console.log\\(s\\)\\)\")",
+      "Bash(npx qrcode-terminal *)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build:list --platform android --limit 2 --json)",
+      "Bash(NODE_OPTIONS=--use-system-ca eas build:view 5b081f09-554f-4031-98d3-68563bdde3d6)",
+      "Bash(npm install *)",
+      "Bash(qrcode \"https://expo.dev/artifacts/eas/ceYF8nwknT7dRjyr4atNuw.apk\" -o \"C:/Users/edwin/qr-v116.png\")",
+      "Bash(node *)",
+      "Bash(NODE_OPTIONS=--use-system-ca npm install qrcode --no-save)",
+      "Bash(npm run *)"
+    ]
+  }
+}

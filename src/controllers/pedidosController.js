@@ -7,6 +7,7 @@ const { PEDIDO_MINIMO, VOYTOKENS } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
+const { subirImagen } = require('../services/storage.service');
 
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
@@ -360,6 +361,28 @@ const actualizarEstado = async (req, res) => {
     // Guardar número de guía al marcar en_envio
     if (estado === 'en_envio' && req.body.numero_guia) {
       pedido.numero_guia = req.body.numero_guia;
+    }
+
+    // Validar código de entrega o foto al entregar (solo repartidor)
+    if (estado === 'entregado' && rolEfectivo === 'repartidor') {
+      const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
+      if (foto_entrega) {
+        try {
+          const ruta = `entregas/${pedido.id}_${Date.now()}.jpg`;
+          const url = await subirImagen('documentos-negocios', ruta, foto_entrega, 'image/jpeg');
+          pedido.foto_entrega = url;
+        } catch (e) {
+          console.warn('[entrega] Error subiendo foto:', e.message);
+          return res.status(400).json({ ok: false, mensaje: 'No se pudo procesar la foto. Usa el código de entrega.' });
+        }
+      } else {
+        if (!codigoProvisto) {
+          return res.status(400).json({ ok: false, mensaje: 'Ingresa el código de entrega del cliente para confirmar.' });
+        }
+        if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
+          return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídelo al cliente.' });
+        }
+      }
     }
 
     pedido.estado = estado;

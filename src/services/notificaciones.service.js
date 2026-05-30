@@ -79,4 +79,13 @@ async function notificarRepartidoresDisponibles(tokens, pedido) {
   );
 }
 
-module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles };
+async function notificarCodigoEntrega(tokenCliente, pedido) {
+  await enviarPush(
+    tokenCliente,
+    `🔐 Tu código de entrega: ${pedido.codigo_entrega}`,
+    `Dáselo al repartidor para confirmar la entrega del pedido #${pedido.numero}`,
+    { tipo: 'codigo_entrega', pedidoId: pedido.id, codigo: pedido.codigo_entrega },
+  );
+}
+
+module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles, notificarCodigoEntrega };
