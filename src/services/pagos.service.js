@@ -2,7 +2,7 @@
  * ──────────────────────────────────────────────────────────────
  *  Servicio de Pagos - VoyCorriendo
  *  Métodos soportados: efectivo, tarjeta, transferencia, mercado_pago
- *  Regla de negocio: pagos en efectivo ≤ $1,000 MXN.
+ *  Regla de negocio: pagos en efectivo ≤ $500 MXN.
  * ──────────────────────────────────────────────────────────────
  */
 
@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const MP_BASE_URL       = 'https://api.mercadopago.com';
-const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 1000);
+const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 500);
 
 // ─── Validación de límite de efectivo ─────────────────────────
 const validarMetodoPago = ({ metodo_pago, total }) => {
