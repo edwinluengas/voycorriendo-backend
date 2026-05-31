@@ -88,4 +88,13 @@ async function notificarCodigoEntrega(tokenCliente, pedido) {
   );
 }
 
-module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles, notificarCodigoEntrega };
+async function notificarPagoConfirmado(tokenCliente, pedido) {
+  await enviarPush(
+    tokenCliente,
+    '✅ ¡Pago confirmado!',
+    `Tu pago del pedido #${pedido.numero} fue procesado. ¡Ya lo están preparando!`,
+    { tipo: 'pago_confirmado', pedidoId: pedido.id },
+  );
+}
+
+module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles, notificarCodigoEntrega, notificarPagoConfirmado };

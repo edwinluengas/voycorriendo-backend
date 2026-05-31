@@ -1,4 +1,5 @@
 const { Repartidor, Usuario, Pedido, DeliveryBatch } = require('../models');
+const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { calcularRuta } = require('../services/routing.service');
@@ -300,16 +301,30 @@ const miPerfil = async (req, res) => {
   }
 };
 
-// ─── GET /api/repartidores/mis-entregas ───────────────────
+// ─── GET /api/repartidores/mis-entregas?periodo=hoy|semana|mes ───────────────
 const misEntregas = async (req, res) => {
   try {
     const repartidor = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
     if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
 
+    const { periodo = 'semana' } = req.query;
+    const ahora = new Date();
+    let desde;
+    if (periodo === 'hoy') {
+      desde = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+    } else if (periodo === 'mes') {
+      desde = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+    } else {
+      desde = new Date(ahora - 7 * 24 * 60 * 60 * 1000);
+    }
+
     const entregas = await Pedido.findAll({
-      where: { repartidor_id: repartidor.id },
+      where: {
+        repartidor_id: repartidor.id,
+        creado_en: { [Op.gte]: desde },
+      },
       order: [['creado_en', 'DESC']],
-      limit: 50,
+      limit: 100,
     });
 
     const entregadas = entregas.filter(p => p.estado === 'entregado');
@@ -320,6 +335,7 @@ const misEntregas = async (req, res) => {
       data: {
         entregas,
         resumen: {
+          periodo,
           total_entregas: entregadas.length,
           ganancias_estimadas: ganancias.toFixed(2),
           calificacion_promedio: repartidor.calificacion_promedio,

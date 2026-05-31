@@ -8,6 +8,7 @@
 
 const { Pedido, Usuario, RestaurantToken, Negocio } = require('../models');
 const pagosService = require('../services/pagos.service');
+const push = require('../services/notificaciones.service');
 
 // ─── POST /api/pagos/preferencia ─────────────────────────
 const crearPreferencia = async (req, res) => {
@@ -57,6 +58,12 @@ const webhookMercadoPago = async (req, res) => {
       pedido_id: result.pedido.id,
       estado:    result.pedido.pago_estado,
     });
+    if (result.pedido.pago_estado === 'capturado') {
+      try {
+        const cliente = await Usuario.findByPk(result.pedido.cliente_id, { attributes: ['token_push'] });
+        if (cliente?.token_push) push.notificarPagoConfirmado(cliente.token_push, result.pedido).catch(() => {});
+      } catch (_) {}
+    }
   }
 
   if (result.tipo === 'token' && result.negocio_id) {

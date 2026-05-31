@@ -22,7 +22,12 @@
       "Bash(qrcode \"https://expo.dev/artifacts/eas/ceYF8nwknT7dRjyr4atNuw.apk\" -o \"C:/Users/edwin/qr-v116.png\")",
       "Bash(node *)",
       "Bash(NODE_OPTIONS=--use-system-ca npm install qrcode --no-save)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(NODE_OPTIONS=--use-system-ca npx eas *)",
+      "Bash(railway whoami *)",
+      "Bash(RAILWAY_TOKEN=888d17c3-b7ed-43fc-a0f6-662ae4aa242e railway whoami)",
+      "Bash(curl *)",
+      "Bash(NODE_OPTIONS=--use-system-ca node *)"
     ]
   }
 }

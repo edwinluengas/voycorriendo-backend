@@ -15,6 +15,7 @@ const { Server } = require('socket.io');
 
 const { conectarDB, sequelize } = require('./config/database');
 const { iniciarJobPagosSemanales } = require('./jobs/pagos-semanales.job');
+const { iniciarJobPedidoTimeout } = require('./jobs/pedidoTimeout.job');
 const { registrarWebhook } = require('./services/telegram.service');
 
 // Rutas
@@ -151,6 +152,7 @@ const iniciar = async () => {
   console.log('Modelos conectados a la base de datos.');
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
   iniciarJobPagosSemanales();
+  iniciarJobPedidoTimeout();
   await registrarWebhook();
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\nVOYCORRIENDO API corriendo en puerto ${PORT}`);
