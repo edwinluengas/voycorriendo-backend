@@ -55,10 +55,15 @@ async function notificarNuevoPedido(tokenNegocio, pedido) {
 }
 
 async function notificarEstadoPedido(tokenCliente, pedido, estado) {
+  const esPickup = pedido.tipo_envio === 'pickup';
+  const negocioNombre = pedido.negocio?.nombre || 'el negocio';
+
   const mensajes = {
     confirmado:  { titulo: '✅ Pedido confirmado',     cuerpo: `Tu pedido #${pedido.numero} fue aceptado. ¡Ya lo están preparando!` },
-    preparando:  { titulo: '🍳 Preparando tu pedido',  cuerpo: `#${pedido.numero} está en preparación. Pronto saldrá.` },
-    listo:       { titulo: '📦 Pedido listo',           cuerpo: `#${pedido.numero} está listo. El repartidor lo recogerá en breve.` },
+    preparando:  { titulo: '🍳 Preparando tu pedido',  cuerpo: `#${pedido.numero} está en preparación. Pronto estará listo.` },
+    listo:       esPickup
+      ? { titulo: '🏪 ¡Listo para recoger!',           cuerpo: `#${pedido.numero} te espera en ${negocioNombre}. ¡Ve a recogerlo!` }
+      : { titulo: '📦 Pedido listo',                   cuerpo: `#${pedido.numero} está listo. El repartidor lo recogerá en breve.` },
     en_camino:   { titulo: '🛵 ¡Va en camino!',         cuerpo: `Tu repartidor ya recogió #${pedido.numero} y va hacia ti.` },
     entregado:   { titulo: '🎉 ¡Pedido entregado!',     cuerpo: `#${pedido.numero} fue entregado. ¡Buen provecho!` },
     cancelado:   { titulo: '❌ Pedido cancelado',       cuerpo: `Tu pedido #${pedido.numero} fue cancelado.` },

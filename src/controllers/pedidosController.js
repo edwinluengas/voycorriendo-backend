@@ -308,7 +308,7 @@ const actualizarEstado = async (req, res) => {
   try {
     const { estado, nota } = req.body;
     const pedido = await Pedido.findByPk(req.params.id, {
-      include: [{ model: Negocio, as: 'negocio', attributes: ['id', 'usuario_id'] }],
+      include: [{ model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'usuario_id'] }],
     });
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
@@ -329,8 +329,8 @@ const actualizarEstado = async (req, res) => {
         pendiente:  ['confirmado', 'rechazado'],
         confirmado: ['preparando'],
         preparando: ['listo'],
-        listo:      ['en_envio'],      // paquetería: negocio marca como enviado
-        en_envio:   ['entregado'],     // paquetería: negocio confirma recepción
+        listo:      ['en_envio', 'entregado'], // entregado solo para pickup
+        en_envio:   ['entregado'],
       },
       repartidor:  { en_camino: ['entregado'] },
       admin:       '*',
@@ -346,6 +346,11 @@ const actualizarEstado = async (req, res) => {
           mensaje: `No puedes cambiar el pedido de "${desde}" a "${estado}".`,
         });
       }
+    }
+
+    // Pickup: negocio puede ir listo→entregado; en órdenes normales no
+    if (estado === 'entregado' && pedido.estado === 'listo' && rolEfectivo === 'negocio' && pedido.tipo_envio !== 'pickup') {
+      return res.status(400).json({ ok: false, mensaje: 'Solo pedidos de recogida en tienda pueden marcarse entregados desde listo.' });
     }
 
     // Registrar timestamp según el estado
@@ -442,8 +447,8 @@ const actualizarEstado = async (req, res) => {
       }
     } catch (_) {}
 
-    // Cuando el pedido está listo: notificar a todos los repartidores aprobados (como Uber Eats)
-    if (estado === 'listo') {
+    // Cuando el pedido está listo: notificar a todos los repartidores aprobados (no aplica para pickup)
+    if (estado === 'listo' && pedido.tipo_envio !== 'pickup') {
       try {
         const repartidoresAprobados = await Repartidor.findAll({
           where: { verificacion_estado: 'aprobado' },

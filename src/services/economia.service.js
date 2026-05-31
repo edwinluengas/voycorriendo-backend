@@ -3,8 +3,11 @@ const {
 } = require('../config/precios');
 
 // ─── Flat-rate fee al cliente ─────────────────────────────
-const calcularFeeCliente = ({ tipoEnvio }) =>
-  tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
+const calcularFeeCliente = ({ tipoEnvio }) => {
+  if (tipoEnvio === 'express') return TARIFAS_CLIENTE.EXPRESS;
+  if (tipoEnvio === 'pickup')  return 0;
+  return TARIFAS_CLIENTE.STANDARD;
+};
 
 // ─── Flat-rate pago al repartidor ─────────────────────────
 const calcularPagoRepartidor = ({ tipoEnvio }) =>
