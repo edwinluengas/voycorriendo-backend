@@ -131,6 +131,10 @@ app.use('/api/telegram',     telegramRoutes);
 // (login.html, dashboard.html, etc.)
 app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 
+// Páginas legales
+app.get('/terminos',   (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'terminos.html')));
+app.get('/privacidad', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'privacidad.html')));
+
 // 404
 app.use((req, res) => {
   res.status(404).json({ ok: false, mensaje: 'Ruta no encontrada.' });
