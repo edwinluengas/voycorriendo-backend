@@ -48,7 +48,7 @@ const registro = async (req, res) => {
     if (esProduccion) {
       // TODO: Enviar OTP por SMS via Twilio
       // await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otp}`);
-      console.log(`[PROD] OTP para ${telefono}: ${otp}`);
+      console.log(`[PROD] OTP generado para ${telefono} (no mostrar valor en logs)`);
       return res.status(201).json({
         ok: true,
         mensaje: 'Registro exitoso. Te enviamos un código por SMS para verificar tu número.',

@@ -1,5 +1,6 @@
 const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
 const { Op } = require('sequelize');
+const { sequelize: dbConn } = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
@@ -14,6 +15,10 @@ const generarNumeroPedido = () => {
   const num = Math.floor(1000 + Math.random() * 899000).toString().padStart(6, '0');
   return `MND-${num}`;
 };
+
+// Genera código de entrega de 4 dígitos que el cliente muestra al repartidor
+const generarCodigoEntrega = () =>
+  Math.floor(1000 + Math.random() * 9000).toString();
 
 // ─── POST /api/pedidos ────────────────────────────────────
 const crearPedido = async (req, res) => {
@@ -147,37 +152,42 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // 7. Crear el pedido
-    const pedido = await Pedido.create({
-      numero: generarNumeroPedido(),
-      cliente_id: req.usuario.id,
-      negocio_id,
-      items: itemsDetallados,
-      subtotal,
-      costo_envio: fee_cliente,
-      total,
-      distancia_km: distanciaKm,
-      metodo_pago,
-      pago_estado: 'pendiente',
-      ciudad: negocio.ciudad || 'puerto_escondido',
-      tipo_envio,
-      fee_cliente,
-      direccion_entrega,
-      latitud_entrega,
-      longitud_entrega,
-      notas_entrega,
-      ine_foto_url: requiereINE ? ine_foto_url : null,
-      estado: 'pendiente',
-    });
+    // 7. Crear el pedido + descontar tokens en una sola transacción atómica
+    const pedido = await dbConn.transaction(async (t) => {
+      const nuevoPedido = await Pedido.create({
+        numero: generarNumeroPedido(),
+        cliente_id: req.usuario.id,
+        negocio_id,
+        items: itemsDetallados,
+        subtotal,
+        costo_envio: fee_cliente,
+        total,
+        distancia_km: distanciaKm,
+        metodo_pago,
+        pago_estado: 'pendiente',
+        ciudad: negocio.ciudad || 'puerto_escondido',
+        tipo_envio,
+        fee_cliente,
+        direccion_entrega,
+        latitud_entrega,
+        longitud_entrega,
+        notas_entrega,
+        ine_foto_url: requiereINE ? ine_foto_url : null,
+        estado: 'pendiente',
+        codigo_entrega: generarCodigoEntrega(),
+      }, { transaction: t });
 
-    // 7b. Descontar VoyTokens canjeados
-    if (tokens_canjeados > 0) {
-      await Usuario.decrement('voytokens', {
-        by: tokens_canjeados,
-        where: { id: req.usuario.id },
-      });
-      console.log(`[tokens] -${tokens_canjeados} VoyTokens (envío gratis) → cliente ${req.usuario.id}`);
-    }
+      if (tokens_canjeados > 0) {
+        await Usuario.decrement('voytokens', {
+          by: tokens_canjeados,
+          where: { id: req.usuario.id },
+          transaction: t,
+        });
+        console.log(`[tokens] -${tokens_canjeados} VoyTokens (envío gratis) → cliente ${req.usuario.id}`);
+      }
+
+      return nuevoPedido;
+    });
 
     // 8. Notificar al negocio vía Socket.io + Telegram + Push
     const io = req.app.get('io');

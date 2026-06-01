@@ -30,9 +30,14 @@ const validarMetodoPago = ({ metodo_pago, total }) => {
 };
 
 // ─── Verificar firma HMAC del webhook de Mercado Pago ─────────
-// Retorna true si no hay MP_WEBHOOK_SECRET configurado (modo dev).
 const verificarFirmaMP = (headers, dataId) => {
-  if (!MP_WEBHOOK_SECRET) return true;
+  if (!MP_WEBHOOK_SECRET) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[webhook] MERCADOPAGO_WEBHOOK_SECRET no configurado — rechazando webhook en producción');
+      return false;
+    }
+    return true; // dev: aceptar sin verificar firma
+  }
   const xSignature = headers['x-signature'];
   const xRequestId = headers['x-request-id'];
   if (!xSignature || !xRequestId) return false;

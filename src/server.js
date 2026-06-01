@@ -10,6 +10,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
@@ -37,26 +38,50 @@ const io = new Server(httpServer, {
   cors: { origin: process.env.ALLOWED_ORIGINS?.split(',') || '*', methods: ['GET', 'POST'] },
 });
 
+// Requiere JWT válido para toda conexión socket
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token
+    || socket.handshake.headers?.authorization?.replace('Bearer ', '');
+  if (!token) return next(new Error('AUTH_REQUIRED'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.id;
+    next();
+  } catch {
+    next(new Error('TOKEN_INVALIDO'));
+  }
+});
+
 io.on('connection', (socket) => {
-  console.log(`Cliente conectado: ${socket.id}`);
+  console.log(`Cliente conectado: ${socket.id} usuario:${socket.userId}`);
 
   socket.on('unirse_pedido', (pedido_id) => {
     socket.join(`pedido:${pedido_id}`);
-    console.log(`Socket ${socket.id} se unio al pedido ${pedido_id}`);
   });
 
   // El dueño del negocio se une a su sala para recibir 'nuevo_pedido' en tiempo real
   socket.on('unirse_negocio', (negocio_id) => {
     socket.join(`negocio:${negocio_id}`);
-    console.log(`Socket ${socket.id} se unio al negocio ${negocio_id}`);
   });
 
-  socket.on('actualizar_ubicacion', (data) => {
-    // Repartidor emite su ubicacion -> cliente la recibe en tiempo real
-    io.to(`pedido:${data.pedido_id}`).emit('ubicacion_repartidor', {
-      lat: data.lat,
-      lng: data.lng,
-    });
+  socket.on('actualizar_ubicacion', async (data) => {
+    const { pedido_id, lat, lng } = data || {};
+    if (!pedido_id || lat === undefined || lng === undefined) return;
+
+    // Verificar que este socket pertenece al repartidor asignado
+    try {
+      const Pedido = require('./models/Pedido');
+      const Repartidor = require('./models/Repartidor');
+      const rep = await Repartidor.findOne({ where: { usuario_id: socket.userId } });
+      if (!rep) return;
+      const pedido = await Pedido.findByPk(pedido_id, { attributes: ['repartidor_id'] });
+      if (!pedido || String(pedido.repartidor_id) !== String(rep.id)) return;
+    } catch (e) {
+      console.warn('[socket] Error validando ubicacion:', e.message);
+      return;
+    }
+
+    io.to(`pedido:${pedido_id}`).emit('ubicacion_repartidor', { lat, lng });
   });
 
   socket.on('disconnect', () => {

@@ -74,6 +74,10 @@ const Pedido = sequelize.define('Pedido', {
     ),
     defaultValue: 'pendiente',
   },
+  // Código de 4 dígitos que el cliente muestra al repartidor para confirmar entrega
+  codigo_entrega: { type: DataTypes.STRING(6), allowNull: true },
+  // Foto de confirmación de entrega (URL Supabase Storage)
+  foto_entrega: { type: DataTypes.TEXT, allowNull: true },
   // Número de guía para pedidos de paquetería
   numero_guia: { type: DataTypes.STRING(100), allowNull: true },
   // Dirección de entrega
