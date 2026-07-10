@@ -1,6 +1,7 @@
 const {
   TARIFAS_CLIENTE, COMISION_FLAT, PAGO_REPARTIDOR,
 } = require('../config/precios');
+const PlatformRevenue = require('../models/PlatformRevenue');
 
 // ─── Flat-rate fee al cliente ─────────────────────────────
 const calcularFeeCliente = ({ tipoEnvio }) => {
@@ -20,18 +21,26 @@ const calcularGananciaApp = ({ feeCliente, pagoRepartidor }) =>
   Math.round((COMISION_FLAT + feeCliente - pagoRepartidor) * 100) / 100;
 
 // ─── Procesar entrega (modelo flat-rate) ──────────────────
-// Se llama cuando un pedido pasa a 'entregado'.
-// No consume tokens — solo registra los números para auditoría.
 const procesarEntrega = async ({ pedido, repartidor }) => {
   const tipoEnvio  = pedido.tipo_envio || 'standard';
   const feeCliente = parseFloat(pedido.fee_cliente || 0);
   const pagoRepa   = calcularPagoRepartidor({ tipoEnvio });
   const netRevenue = calcularGananciaApp({ feeCliente, pagoRepartidor: pagoRepa });
 
+  await PlatformRevenue.upsert({
+    order_id:         pedido.id,
+    client_fee:       feeCliente,
+    driver_payout:    pagoRepa,
+    net_revenue:      netRevenue,
+    token_value:      0,
+    transaction_cost: 0,
+    gateway_fee:      0,
+    tier:             tipoEnvio,
+  });
+
   console.log(
     `[economia] Pedido ${pedido.numero} entregado` +
     ` | fee_cliente: $${feeCliente}` +
-    ` | comision_negocio: $${COMISION_FLAT}` +
     ` | pago_repartidor: $${pagoRepa}` +
     ` | ganancia_app: $${netRevenue}`,
   );
