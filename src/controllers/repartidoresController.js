@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { calcularRuta } = require('../services/routing.service');
+const { PAGO_REPARTIDOR } = require('../config/precios');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 
@@ -328,7 +329,10 @@ const misEntregas = async (req, res) => {
     });
 
     const entregadas = entregas.filter(p => p.estado === 'entregado');
-    const ganancias = entregadas.reduce((sum, p) => sum + parseFloat(p.costo_envio || 0) * 0.8, 0);
+    const ganancias = entregadas.reduce((sum, p) => {
+      const tarifa = p.tipo_envio === 'express' ? PAGO_REPARTIDOR.EXPRESS : PAGO_REPARTIDOR.STANDARD;
+      return sum + tarifa;
+    }, 0);
 
     res.json({
       ok: true,
