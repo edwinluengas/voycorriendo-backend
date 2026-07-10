@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { validationResult } = require('express-validator');
+const twilio = require('twilio');
 const Usuario = require('../models/Usuario');
 
 // Genera JWT
@@ -8,6 +9,22 @@ const generarToken = (id) =>
 
 // Genera OTP de 6 dígitos
 const generarOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// Cliente Twilio (solo si está configurado)
+const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
+
+// Envía OTP por SMS — agrega +52 automáticamente para números mexicanos de 10 dígitos
+const enviarSMS = async (telefono, mensaje) => {
+  if (!twilioClient) return;
+  const destino = /^\+/.test(telefono) ? telefono : `+52${telefono}`;
+  await twilioClient.messages.create({
+    body: mensaje,
+    from: process.env.TWILIO_PHONE_NUMBER,
+    to: destino,
+  });
+};
 
 // ─── POST /api/auth/registro ─────────────────────────────
 const registro = async (req, res) => {
@@ -46,9 +63,13 @@ const registro = async (req, res) => {
     });
 
     if (esProduccion) {
-      // TODO: Enviar OTP por SMS via Twilio
-      // await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otp}`);
-      console.log(`[PROD] OTP generado para ${telefono} (no mostrar valor en logs)`);
+      try {
+        await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otp}. Válido 10 minutos. No lo compartas.`);
+      } catch (smsErr) {
+        console.error(`[SMS] Error enviando OTP a ${telefono}:`, smsErr.message);
+        return res.status(500).json({ ok: false, mensaje: 'No pudimos enviar el código SMS. Intenta de nuevo.' });
+      }
+      console.log(`[PROD] OTP enviado por SMS a ${telefono}`);
       return res.status(201).json({
         ok: true,
         mensaje: 'Registro exitoso. Te enviamos un código por SMS para verificar tu número.',
@@ -189,8 +210,12 @@ const solicitarOTP = async (req, res) => {
       otp_expira: new Date(Date.now() + 10 * 60 * 1000),
     });
 
-    // TODO: await enviarSMS(telefono, `Tu código de acceso VoyCorriendo: ${otp}`);
-    console.log(`[DEV] OTP para ${telefono}: ${otp}`);
+    try {
+      await enviarSMS(telefono, `Tu código de acceso VoyCorriendo: ${otp}. Válido 10 minutos.`);
+    } catch (smsErr) {
+      console.error(`[SMS] Error enviando OTP a ${telefono}:`, smsErr.message);
+    }
+    console.log(`[SMS] OTP solicitado para ${telefono}`);
 
     res.json({ ok: true, mensaje: 'Te enviamos un código por SMS.' });
   } catch (error) {
