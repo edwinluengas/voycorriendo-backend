@@ -64,6 +64,11 @@ io.on('connection', (socket) => {
     socket.join(`negocio:${negocio_id}`);
   });
 
+  // Repartidor aprobado se une a la sala global para recibir 'pedido_disponible' en tiempo real
+  socket.on('unirse_repartidor', (usuario_id) => {
+    socket.join('repartidores_activos');
+  });
+
   socket.on('actualizar_ubicacion', async (data) => {
     const { pedido_id, lat, lng } = data || {};
     if (!pedido_id || lat === undefined || lng === undefined) return;

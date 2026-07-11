@@ -56,7 +56,7 @@ const Pedido = sequelize.define('Pedido', {
   excede_limite_efectivo: {
     type: DataTypes.VIRTUAL,
     get() {
-      return this.metodo_pago === 'efectivo' && this.total > 1000;
+      return this.metodo_pago === 'efectivo' && this.total > 500;
     },
   },
   // Estado del pedido
@@ -119,9 +119,8 @@ const Pedido = sequelize.define('Pedido', {
   updatedAt: 'actualizado_en',
   hooks: {
     beforeCreate: (pedido) => {
-      // Validar límite de efectivo antes de crear
-      if (pedido.metodo_pago === 'efectivo' && pedido.total > 1000) {
-        throw new Error('Los pedidos en efectivo no pueden superar $1,000 MXN. Por favor elige otro método de pago.');
+      if (pedido.metodo_pago === 'efectivo' && pedido.total > 500) {
+        throw new Error('Los pedidos en efectivo no pueden superar $500 MXN. Por favor elige otro método de pago.');
       }
     },
   },

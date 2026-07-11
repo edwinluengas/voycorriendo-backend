@@ -1,4 +1,4 @@
-const { Repartidor, Usuario, Pedido, DeliveryBatch } = require('../models');
+const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch } = require('../models');
 const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
@@ -379,6 +379,11 @@ const pedidosDisponibles = async (req, res) => {
       where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad },
       order: [['creado_en', 'ASC']],
       limit: 10,
+      include: [{
+        model: Negocio,
+        as: 'negocio',
+        attributes: ['id', 'nombre', 'direccion', 'latitud', 'longitud'],
+      }],
     });
 
     res.json({ ok: true, data: { pedidos } });

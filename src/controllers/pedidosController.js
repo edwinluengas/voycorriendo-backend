@@ -460,6 +460,13 @@ const actualizarEstado = async (req, res) => {
     // Cuando el pedido está listo: notificar a todos los repartidores aprobados (no aplica para pickup)
     if (estado === 'listo' && pedido.tipo_envio !== 'pickup') {
       try {
+        // Socket: emitir a sala global de repartidores activos (tiempo real)
+        io.to('repartidores_activos').emit('pedido_disponible', {
+          pedido_id: pedido.id,
+          numero: pedido.numero,
+          ciudad: pedido.ciudad,
+        });
+        // Push: notificar a repartidores aprobados con token
         const repartidoresAprobados = await Repartidor.findAll({
           where: { verificacion_estado: 'aprobado' },
           include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
