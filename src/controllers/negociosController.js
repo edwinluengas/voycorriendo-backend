@@ -3,6 +3,9 @@ const { validationResult } = require('express-validator');
 const { Op } = require('sequelize');
 const { subirImagen } = require('../services/storage.service');
 
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
+
 // ═══════════════════════════════════════════════════════════
 // PUBLIC: feed para clientes
 // ═══════════════════════════════════════════════════════════
@@ -217,7 +220,7 @@ const subirDocumento = async (req, res) => {
       return res.status(404).json({ ok: false, mensaje: 'Activa primero el modo negocio.' });
     }
 
-    const ext = mime.split('/')[1] || 'jpg';
+    const ext = safeExt(mime);
     const ruta = `negocios/${negocio.id}/${tipo}_${Date.now()}.${ext}`;
     const url = await subirImagen('documentos-negocios', ruta, base64, mime);
 

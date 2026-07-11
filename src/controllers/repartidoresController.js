@@ -2,6 +2,9 @@ const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch } = require('../mode
 const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
+
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 const { calcularRuta } = require('../services/routing.service');
 const { PAGO_REPARTIDOR } = require('../config/precios');
 const tg = require('../services/telegram.service');
@@ -103,7 +106,7 @@ const subirFoto = async (req, res) => {
     }
 
     // Subimos a Supabase Storage
-    const ext = mime.split('/')[1] || 'jpg';
+    const ext = safeExt(mime);
     const ruta = `repartidores/${req.usuario.id}/${tipo}_${Date.now()}.${ext}`;
     const url = await subirImagen('documentos-repartidores', ruta, base64, mime);
 

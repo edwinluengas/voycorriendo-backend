@@ -222,7 +222,7 @@ const guardarPushToken = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Token inválido.' });
     }
     await req.usuario.update({ token_push: token });
-    console.log(`[push] token guardado para usuario ${req.usuario.id} (${req.usuario.telefono}): ${token.slice(0, 30)}...`);
+    console.log(`[push] token guardado para usuario ${req.usuario.id}: ${token.slice(0, 20)}...`);
     res.json({ ok: true });
   } catch (e) {
     console.error('[push] Error al guardar push token:', e);

@@ -21,7 +21,7 @@ router.post('/', [
 router.get('/',       misPedidos);
 // IMPORTANTE: las rutas estáticas van ANTES de /:id para que no las absorba
 router.get('/cotizar',             cotizarEnvio);
-router.get('/negocio/mis-pedidos', restringirA('negocio'), pedidosDelNegocio);
+router.get('/negocio/mis-pedidos', pedidosDelNegocio); // proteger ya aplicado, el controller valida propiedad
 router.get('/:id',    obtenerPedido);
 router.patch('/:id/estado', [
   body('estado').notEmpty().withMessage('El estado es obligatorio'),

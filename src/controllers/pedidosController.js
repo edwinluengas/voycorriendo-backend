@@ -1,6 +1,7 @@
 const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
+const { randomInt } = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
@@ -16,9 +17,8 @@ const generarNumeroPedido = () => {
   return `MND-${num}`;
 };
 
-// Genera código de entrega de 4 dígitos que el cliente muestra al repartidor
-const generarCodigoEntrega = () =>
-  Math.floor(1000 + Math.random() * 9000).toString();
+// Genera código de entrega de 4 dígitos con entropía criptográfica
+const generarCodigoEntrega = () => randomInt(1000, 10000).toString();
 
 // ─── POST /api/pedidos ────────────────────────────────────
 const crearPedido = async (req, res) => {
@@ -257,7 +257,7 @@ const obtenerPedido = async (req, res) => {
     // Solo el cliente dueño, el negocio dueño del pedido o el repartidor pueden verlo
     const esCliente    = pedido.cliente_id === req.usuario.id;
     const esRepartidor = pedido.repartidor?.usuario_id === req.usuario.id;
-    const esNegocio    = req.usuario.rol === 'negocio' && pedido.negocio?.usuario_id === req.usuario.id;
+    const esNegocio    = pedido.negocio?.usuario_id === req.usuario.id; // sin filtrar por rol — multi-rol
     const esAdmin      = req.usuario.rol === 'admin';
 
     if (!esCliente && !esRepartidor && !esNegocio && !esAdmin) {

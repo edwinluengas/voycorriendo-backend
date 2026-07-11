@@ -35,7 +35,7 @@ const validarRegistro = [
   body('email').optional().isEmail().withMessage('El correo no es válido'),
   body('password')
     .optional()
-    .isLength({ min: 6 }).withMessage('La contraseña debe tener mínimo 6 caracteres'),
+    .isLength({ min: 8 }).withMessage('La contraseña debe tener mínimo 8 caracteres'),
 ];
 
 router.post('/registro', limiteOTP, validarRegistro, registro);
