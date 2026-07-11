@@ -10,7 +10,7 @@ const { subirImagen } = require('../services/storage.service');
 // ─── GET /api/negocios ────────────────────────────────────
 const listarNegocios = async (req, res) => {
   try {
-    const { categoria, buscar, ciudad, pagina = 1, limite = 20 } = req.query;
+    const { categoria, buscar, ciudad, pagina = 1, limite = 50 } = req.query;
     const offset = (pagina - 1) * limite;
 
     // Solo aprobados, activos, y NO suspendidos/bloqueados
