@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 const Repartidor = sequelize.define('Repartidor', {
   id: {
@@ -27,8 +28,13 @@ const Repartidor = sequelize.define('Repartidor', {
   anio_vehiculo: { type: DataTypes.INTEGER, allowNull: true },
   placa_vehiculo: { type: DataTypes.STRING(10), allowNull: true },
   color_vehiculo: { type: DataTypes.STRING(30), allowNull: true },
-  // Cuenta bancaria (para recibir pagos)
-  clabe_bancaria: { type: DataTypes.STRING(18), allowNull: true },
+  // Cuenta bancaria (para recibir pagos) — cifrada con AES-256-GCM
+  clabe_bancaria: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    get() { return decrypt(this.getDataValue('clabe_bancaria')); },
+    set(val) { this.setDataValue('clabe_bancaria', encrypt(val)); },
+  },
   banco: { type: DataTypes.STRING(50), allowNull: true },
   // Estado de verificación inicial (al subir documentos)
   verificacion_estado: {

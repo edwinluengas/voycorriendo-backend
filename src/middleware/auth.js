@@ -19,6 +19,11 @@ const proteger = async (req, res, next) => {
     if (usuario.estado === 'suspendido') {
       return res.status(403).json({ ok: false, mensaje: 'Tu cuenta ha sido suspendida. Contacta a soporte.' });
     }
+    // Verificar versión del token (revocación via logout o cambio de contraseña)
+    const tokenVersion = decoded.tokenVersion ?? 0;
+    if (tokenVersion !== (usuario.token_version ?? 0)) {
+      return res.status(401).json({ ok: false, mensaje: 'Sesión expirada. Vuelve a iniciar sesión.' });
+    }
     req.usuario = usuario;
     next();
   } catch (error) {

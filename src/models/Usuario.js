@@ -78,12 +78,22 @@ const Usuario = sequelize.define('Usuario', {
     defaultValue: false,
   },
   otp_codigo: {
-    type: DataTypes.STRING(6),
+    type: DataTypes.STRING(100), // bcrypt hash
     allowNull: true,
   },
   otp_expira: {
     type: DataTypes.DATE,
     allowNull: true,
+  },
+  otp_intentos: {
+    type: DataTypes.SMALLINT,
+    defaultValue: 0,
+    allowNull: false,
+  },
+  token_version: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    allowNull: false,
   },
 }, {
   tableName: 'usuarios',
@@ -115,6 +125,8 @@ Usuario.prototype.toJSON = function() {
   delete values.password;
   delete values.otp_codigo;
   delete values.otp_expira;
+  delete values.otp_intentos;
+  delete values.token_version;
   return values;
 };
 

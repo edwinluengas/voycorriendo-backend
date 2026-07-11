@@ -1,12 +1,19 @@
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const { randomInt } = require('crypto');
 const { validationResult } = require('express-validator');
 const twilio = require('twilio');
 const Usuario = require('../models/Usuario');
 
-// Genera JWT
-const generarToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+const MAX_OTP_INTENTOS = 5;
+
+// Genera JWT incluyendo tokenVersion para poder invalidar sesiones
+const generarToken = (usuario) =>
+  jwt.sign(
+    { id: usuario.id, tokenVersion: usuario.token_version ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
 
 // Genera OTP de 6 dígitos con entropía criptográfica
 const generarOTP = () => randomInt(100000, 1000000).toString();
@@ -41,33 +48,33 @@ const registro = async (req, res) => {
       return res.status(409).json({ ok: false, mensaje: 'Ya existe una cuenta con ese número de teléfono.' });
     }
 
-    const otp = generarOTP();
-    const otpExpira = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
-
-    // Solo exigimos OTP cuando Twilio esta realmente configurado.
-    // Mientras no haya credenciales de Twilio, auto-activamos al usuario
-    // sin importar el valor de NODE_ENV (evita quedar bloqueados en Railway).
     const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
     const estadoInicial = esProduccion ? 'pendiente' : 'activo';
 
+    let otpPlano = null;
+    let otpHash = null;
+    let otpExpira = null;
+
+    if (esProduccion) {
+      otpPlano = generarOTP();
+      otpHash  = await bcrypt.hash(otpPlano, 10);
+      otpExpira = new Date(Date.now() + 10 * 60 * 1000);
+    }
+
     const usuario = await Usuario.create({
-      nombre,
-      apellido,
-      telefono,
-      email,
-      password,
+      nombre, apellido, telefono, email, password,
       rol: rol || 'cliente',
       estado: estadoInicial,
       telefono_verificado: !esProduccion,
-      otp_codigo: esProduccion ? otp : null,
-      otp_expira: esProduccion ? otpExpira : null,
+      otp_codigo: otpHash,
+      otp_expira: otpExpira,
     });
 
     if (esProduccion) {
       try {
-        await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otp}. Válido 10 minutos. No lo compartas.`);
+        await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otpPlano}. Válido 10 minutos. No lo compartas.`);
       } catch (smsErr) {
-        console.error(`[SMS] Error enviando OTP a ${telefono}:`, smsErr.message);
+        console.error(`[SMS] Error enviando OTP a ***${telefono.slice(-4)}:`, smsErr.message);
         return res.status(500).json({ ok: false, mensaje: 'No pudimos enviar el código SMS. Intenta de nuevo.' });
       }
       console.log(`[PROD] OTP enviado por SMS a ***${telefono.slice(-4)}`);
@@ -78,9 +85,9 @@ const registro = async (req, res) => {
       });
     }
 
-    // En desarrollo: regresamos JWT directo para entrar sin OTP
-    const token = generarToken(usuario.id);
-    console.log(`[DEV] Usuario registrado y auto-activado: ${telefono} (rol: ${usuario.rol})`);
+    // Desarrollo: JWT directo sin OTP
+    const token = generarToken(usuario);
+    console.log(`[DEV] Usuario registrado y auto-activado: ***${telefono.slice(-4)} (rol: ${usuario.rol})`);
 
     res.status(201).json({
       ok: true,
@@ -88,14 +95,9 @@ const registro = async (req, res) => {
       data: {
         token,
         usuario: {
-          id: usuario.id,
-          nombre: usuario.nombre,
-          apellido: usuario.apellido,
-          telefono: usuario.telefono,
-          email: usuario.email,
-          rol: usuario.rol,
-          modo_activo: usuario.modo_activo,
-          estado: usuario.estado,
+          id: usuario.id, nombre: usuario.nombre, apellido: usuario.apellido,
+          telefono: usuario.telefono, email: usuario.email,
+          rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
         },
       },
     });
@@ -114,11 +116,32 @@ const verificarOTP = async (req, res) => {
     if (!usuario) {
       return res.status(404).json({ ok: false, mensaje: 'Usuario no encontrado.' });
     }
-    if (usuario.otp_codigo !== otp) {
-      return res.status(400).json({ ok: false, mensaje: 'Código incorrecto.' });
-    }
-    if (new Date() > usuario.otp_expira) {
+
+    // Verificar expiración primero (sin revelar si el código existe)
+    if (!usuario.otp_codigo || !usuario.otp_expira || new Date() > usuario.otp_expira) {
       return res.status(400).json({ ok: false, mensaje: 'El código ha expirado. Solicita uno nuevo.' });
+    }
+
+    // Brute force: máximo MAX_OTP_INTENTOS por usuario
+    if ((usuario.otp_intentos || 0) >= MAX_OTP_INTENTOS) {
+      await usuario.update({ otp_codigo: null, otp_expira: null, otp_intentos: 0 });
+      return res.status(429).json({
+        ok: false,
+        mensaje: `Demasiados intentos incorrectos. Solicita un nuevo código.`,
+      });
+    }
+
+    // Comparar con hash bcrypt
+    const esValido = await bcrypt.compare(String(otp), usuario.otp_codigo);
+    if (!esValido) {
+      await usuario.update({ otp_intentos: (usuario.otp_intentos || 0) + 1 });
+      const restantes = MAX_OTP_INTENTOS - (usuario.otp_intentos + 1);
+      return res.status(400).json({
+        ok: false,
+        mensaje: restantes > 0
+          ? `Código incorrecto. Te quedan ${restantes} intento${restantes !== 1 ? 's' : ''}.`
+          : 'Código incorrecto. Solicita un nuevo código.',
+      });
     }
 
     await usuario.update({
@@ -126,9 +149,10 @@ const verificarOTP = async (req, res) => {
       estado: 'activo',
       otp_codigo: null,
       otp_expira: null,
+      otp_intentos: 0,
     });
 
-    const token = generarToken(usuario.id);
+    const token = generarToken(usuario);
     res.json({
       ok: true,
       mensaje: '¡Número verificado! Bienvenido a VoyCorriendo 🎉',
@@ -145,21 +169,17 @@ const verificarOTP = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { telefono, password } = req.body;
-    const usuario = await Usuario.findOne({
-      where: { telefono },
-    });
+    const usuario = await Usuario.findOne({ where: { telefono } });
 
     if (!usuario || !(await usuario.verificarPassword(password))) {
       return res.status(401).json({ ok: false, mensaje: 'Teléfono o contraseña incorrectos.' });
     }
 
-    // Solo bloqueamos por OTP cuando Twilio esta realmente configurado.
     const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
 
-    // Auto-verificamos usuarios de registros viejos (sin OTP) cuando no hay Twilio
     if (!esProduccion && (!usuario.telefono_verificado || usuario.estado !== 'activo')) {
       await usuario.update({ telefono_verificado: true, estado: 'activo' });
-      console.log(`[DEV] Usuario auto-verificado en login: ${telefono}`);
+      console.log(`[DEV] Usuario auto-verificado en login: ***${telefono.slice(-4)}`);
     }
 
     if (esProduccion && !usuario.telefono_verificado) {
@@ -171,21 +191,16 @@ const login = async (req, res) => {
 
     await usuario.update({ ultima_conexion: new Date() });
 
-    const token = generarToken(usuario.id);
+    const token = generarToken(usuario);
     res.json({
       ok: true,
       mensaje: `¡Bienvenido de vuelta, ${usuario.nombre}!`,
       data: {
         token,
         usuario: {
-          id: usuario.id,
-          nombre: usuario.nombre,
-          apellido: usuario.apellido,
-          telefono: usuario.telefono,
-          email: usuario.email,
-          rol: usuario.rol,
-          modo_activo: usuario.modo_activo,
-          estado: usuario.estado,
+          id: usuario.id, nombre: usuario.nombre, apellido: usuario.apellido,
+          telefono: usuario.telefono, email: usuario.email,
+          rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
         },
       },
     });
@@ -196,29 +211,32 @@ const login = async (req, res) => {
 };
 
 // ─── POST /api/auth/solicitar-otp ───────────────────────
-// (Para login sin password o recuperación)
 const solicitarOTP = async (req, res) => {
   try {
     const { telefono } = req.body;
     const usuario = await Usuario.findOne({ where: { telefono } });
     if (!usuario) {
-      return res.status(404).json({ ok: false, mensaje: 'No encontramos una cuenta con ese número.' });
+      // No revelar si el número existe o no
+      return res.json({ ok: true, mensaje: 'Si ese número está registrado, te enviamos un código.' });
     }
 
-    const otp = generarOTP();
+    const otpPlano = generarOTP();
+    const otpHash  = await bcrypt.hash(otpPlano, 10);
+
     await usuario.update({
-      otp_codigo: otp,
+      otp_codigo: otpHash,
       otp_expira: new Date(Date.now() + 10 * 60 * 1000),
+      otp_intentos: 0,
     });
 
     try {
-      await enviarSMS(telefono, `Tu código de acceso VoyCorriendo: ${otp}. Válido 10 minutos.`);
+      await enviarSMS(telefono, `Tu código de acceso VoyCorriendo: ${otpPlano}. Válido 10 minutos.`);
     } catch (smsErr) {
-      console.error(`[SMS] Error enviando OTP a ${telefono}:`, smsErr.message);
+      console.error(`[SMS] Error enviando OTP a ***${telefono.slice(-4)}:`, smsErr.message);
     }
     console.log(`[SMS] OTP solicitado para ***${telefono.slice(-4)}`);
 
-    res.json({ ok: true, mensaje: 'Te enviamos un código por SMS.' });
+    res.json({ ok: true, mensaje: 'Si ese número está registrado, te enviamos un código.' });
   } catch (error) {
     res.status(500).json({ ok: false, mensaje: 'Error al enviar el código.' });
   }
@@ -229,4 +247,17 @@ const obtenerPerfil = async (req, res) => {
   res.json({ ok: true, data: { usuario: req.usuario } });
 };
 
-module.exports = { registro, verificarOTP, login, solicitarOTP, obtenerPerfil };
+// ─── POST /api/auth/logout ───────────────────────────────
+// Invalida el JWT actual incrementando token_version.
+// El cliente debe eliminar su token local.
+const logout = async (req, res) => {
+  try {
+    await req.usuario.update({ token_version: (req.usuario.token_version ?? 0) + 1 });
+    res.json({ ok: true, mensaje: 'Sesión cerrada.' });
+  } catch (error) {
+    console.error('Error en logout:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al cerrar sesión.' });
+  }
+};
+
+module.exports = { registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout };

@@ -179,10 +179,36 @@ app.use((err, req, res, next) => {
 // Arrancar servidor
 const PORT = process.env.PORT || 3000;
 
+// Migraciones incrementales — idempotentes, seguras para correr en cada deploy
+const migrarDB = async () => {
+  const run = async (sql) => {
+    try { await sequelize.query(sql); }
+    catch (e) { console.warn('[migración] skipped:', sql.slice(0, 60), '→', e.message); }
+  };
+  await run(`ALTER TABLE usuarios ALTER COLUMN otp_codigo TYPE VARCHAR(100)`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS otp_intentos SMALLINT NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE repartidores ALTER COLUMN clabe_bancaria TYPE TEXT`);
+  await run(`ALTER TABLE negocios ALTER COLUMN clabe_bancaria TYPE TEXT`);
+  await run(`CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    admin_id UUID NOT NULL,
+    accion VARCHAR(100) NOT NULL,
+    entidad_tipo VARCHAR(50) NOT NULL,
+    entidad_id UUID,
+    estado_antes JSONB,
+    estado_despues JSONB,
+    ip VARCHAR(45),
+    creado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  console.log('[migración] Completada.');
+};
+
 const iniciar = async () => {
   await conectarDB();
   // Las tablas ya fueron creadas con schema.sql - no alterar
   await sequelize.sync({ force: false });
+  await migrarDB();
   console.log('Modelos conectados a la base de datos.');
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
   iniciarJobPagosSemanales();

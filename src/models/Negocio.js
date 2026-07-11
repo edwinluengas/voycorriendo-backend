@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 const Negocio = sequelize.define('Negocio', {
   id: {
@@ -84,8 +85,13 @@ const Negocio = sequelize.define('Negocio', {
   abierto_ahora: { type: DataTypes.BOOLEAN, defaultValue: false },
   tiempo_entrega_min: { type: DataTypes.INTEGER, defaultValue: 20 },
   tiempo_entrega_max: { type: DataTypes.INTEGER, defaultValue: 40 },
-  // Cuenta bancaria
-  clabe_bancaria: { type: DataTypes.STRING(18), allowNull: true },
+  // Cuenta bancaria — cifrada con AES-256-GCM
+  clabe_bancaria: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    get() { return decrypt(this.getDataValue('clabe_bancaria')); },
+    set(val) { this.setDataValue('clabe_bancaria', encrypt(val)); },
+  },
   banco: { type: DataTypes.STRING(50), allowNull: true },
   // Comisión (% que se lleva VoyCorriendo)
   comision_porcentaje: { type: DataTypes.DECIMAL(5, 2), defaultValue: 15.00 },

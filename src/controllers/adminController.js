@@ -9,6 +9,7 @@
 const { Op, fn, col, literal } = require('sequelize');
 const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, RestaurantToken } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
+const { logAdmin } = require('../utils/audit');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
 const BUCKET_NEGOCIOS     = 'documentos-negocios';
@@ -156,11 +157,13 @@ const aprobarRepartidor = async (req, res) => {
     const { id } = req.params;
     const r = await Repartidor.findByPk(id);
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    const estadoAntes = { verificacion_estado: r.verificacion_estado };
     r.verificacion_estado = 'aprobado';
     r.verificacion_nota   = null;
     r.antecedentes_ok     = true;
     r.resolucion_en       = new Date();
     await r.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'aprobar_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { verificacion_estado: 'aprobado' }, ip: req.ip });
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
     console.error('Error aprobar repartidor:', e);
@@ -178,10 +181,12 @@ const rechazarRepartidor = async (req, res) => {
     }
     const r = await Repartidor.findByPk(id);
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    const estadoAntes = { verificacion_estado: r.verificacion_estado };
     r.verificacion_estado = 'rechazado';
     r.verificacion_nota   = motivo;
     r.resolucion_en       = new Date();
     await r.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'rechazar_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { verificacion_estado: 'rechazado', motivo }, ip: req.ip });
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
     console.error('Error rechazar repartidor:', e);
@@ -201,6 +206,7 @@ const cambiarEstadoCuentaRepartidor = async (req, res) => {
     }
     const r = await Repartidor.findByPk(id);
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
+    const estadoAntes = { estado_cuenta: r.estado_cuenta };
     r.estado_cuenta = estado_cuenta;
     r.estado_motivo = motivo || null;
     if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
@@ -208,6 +214,7 @@ const cambiarEstadoCuentaRepartidor = async (req, res) => {
       r.disponible = false;
     }
     await r.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
     console.error('Error cambiar estado cuenta repartidor:', e);
@@ -287,11 +294,13 @@ const aprobarNegocio = async (req, res) => {
     const { id } = req.params;
     const n = await Negocio.findByPk(id);
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    const estadoAntes = { verificacion_estado: n.verificacion_estado, activo: n.activo };
     n.verificacion_estado = 'aprobado';
     n.verificacion_nota   = null;
     n.activo              = true;
     n.resolucion_en       = new Date();
     await n.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'aprobar_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { verificacion_estado: 'aprobado', activo: true }, ip: req.ip });
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {
     console.error('Error aprobar negocio:', e);
@@ -309,11 +318,13 @@ const rechazarNegocio = async (req, res) => {
     }
     const n = await Negocio.findByPk(id);
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    const estadoAntes = { verificacion_estado: n.verificacion_estado, activo: n.activo };
     n.verificacion_estado = 'rechazado';
     n.verificacion_nota   = motivo;
     n.activo              = false;
     n.resolucion_en       = new Date();
     await n.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'rechazar_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { verificacion_estado: 'rechazado', motivo }, ip: req.ip });
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {
     console.error('Error rechazar negocio:', e);
@@ -332,12 +343,14 @@ const cambiarEstadoCuentaNegocio = async (req, res) => {
     }
     const n = await Negocio.findByPk(id);
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    const estadoAntes = { estado_cuenta: n.estado_cuenta };
     n.estado_cuenta = estado_cuenta;
     n.estado_motivo = motivo || null;
     if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
       n.abierto_ahora = false;
     }
     await n.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {
     console.error('Error cambiar estado cuenta negocio:', e);

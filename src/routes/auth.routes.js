@@ -1,7 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const rateLimit = require('express-rate-limit');
-const { registro, verificarOTP, login, solicitarOTP, obtenerPerfil } = require('../controllers/authController');
+const { registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout } = require('../controllers/authController');
 const { proteger } = require('../middleware/auth');
 
 const router = express.Router();
@@ -45,6 +45,7 @@ router.post('/login', limiteAuth, [
   body('telefono').notEmpty().withMessage('El teléfono es obligatorio'),
   body('password').notEmpty().withMessage('La contraseña es obligatoria'),
 ], login);
-router.get('/perfil', proteger, obtenerPerfil);
+router.get ('/perfil', proteger, obtenerPerfil);
+router.post('/logout', proteger, logout);
 
 module.exports = router;
