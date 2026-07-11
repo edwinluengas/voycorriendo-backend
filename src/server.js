@@ -190,6 +190,9 @@ const migrarDB = async () => {
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE repartidores ALTER COLUMN clabe_bancaria TYPE TEXT`);
   await run(`ALTER TABLE negocios ALTER COLUMN clabe_bancaria TYPE TEXT`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acepto_terminos BOOLEAN NOT NULL DEFAULT false`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS terminos_aceptados_en TIMESTAMPTZ`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS acepta_marketing BOOLEAN NOT NULL DEFAULT false`);
   await run(`CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     admin_id UUID NOT NULL,

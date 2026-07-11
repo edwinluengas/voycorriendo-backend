@@ -41,7 +41,14 @@ const registro = async (req, res) => {
     return res.status(400).json({ ok: false, errores: errores.array() });
   }
   try {
-    const { nombre, apellido, telefono, email, password, rol } = req.body;
+    const { nombre, apellido, telefono, email, password, rol, acepto_terminos, acepta_marketing } = req.body;
+
+    if (!acepto_terminos) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Debes aceptar los Términos de Uso y el Aviso de Privacidad para crear tu cuenta.',
+      });
+    }
 
     const existe = await Usuario.findOne({ where: { telefono } });
     if (existe) {
@@ -68,6 +75,9 @@ const registro = async (req, res) => {
       telefono_verificado: !esProduccion,
       otp_codigo: otpHash,
       otp_expira: otpExpira,
+      acepto_terminos: true,
+      terminos_aceptados_en: new Date(),
+      acepta_marketing: !!acepta_marketing,
     });
 
     if (esProduccion) {

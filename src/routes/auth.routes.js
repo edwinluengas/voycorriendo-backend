@@ -36,6 +36,9 @@ const validarRegistro = [
   body('password')
     .optional()
     .isLength({ min: 8 }).withMessage('La contraseña debe tener mínimo 8 caracteres'),
+  body('acepto_terminos')
+    .isBoolean().withMessage('El campo acepto_terminos debe ser booleano')
+    .equals('true').withMessage('Debes aceptar los Términos de Uso y el Aviso de Privacidad'),
 ];
 
 router.post('/registro', limiteOTP, validarRegistro, registro);
