@@ -80,8 +80,9 @@ Nunca usar archivos de migración separados — todo va en `migrarDB()`.
 2. **La tarifa de envío la paga el CLIENTE** y es ingreso del REPARTIDOR, sujeto a comisión de plataforma según método de pago.
 3. **EXPRESS siempre viaja solo** — no se puede combinar en batch con otros pedidos.
 4. **Propina** va 100% al fondo del repartidor, sin comisión de plataforma. Usar `findOrCreate + increment` (no upsert con literal SQL).
-5. **Pedido mínimo:** `PEDIDO_MINIMO` desde `config/precios.js` (actualmente $500 MXN).
-6. **Efectivo:** límite $500 MXN total (validado en `crearPedido`).
+5. **Pedido mínimo:** `PEDIDO_MINIMO` desde `config/precios.js` (actualmente $100 MXN).
+6. **Efectivo:** límite $500 MXN de **subtotal** (el envío se suma encima — validado en `crearPedido`).
+7. **Transferencia SPEI:** solo para negocios con `categoria === 'ahivoy store'` (Voy Store® — marca registrada IMPI).
 
 ---
 
