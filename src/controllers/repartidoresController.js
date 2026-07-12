@@ -433,16 +433,12 @@ const aceptarPedido = async (req, res) => {
       batch = await DeliveryBatch.create({ driver_id: repartidor.id, max_orders: maxOrders });
     }
 
-    // Generar código de entrega de 4 dígitos
-    const codigo_entrega = Math.floor(1000 + Math.random() * 9000).toString();
-
-    // Asignar pedido al batch y al repartidor
+    // Asignar pedido al batch y al repartidor (codigo_entrega ya existe, no sobreescribir)
     await pedido.update({
       repartidor_id: repartidor.id,
       batch_id: batch.id,
       estado: 'en_camino',
       asignado_en: new Date(),
-      codigo_entrega,
     });
 
     // Recalcular ruta con todos los pedidos del batch

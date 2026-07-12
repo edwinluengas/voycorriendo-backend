@@ -267,7 +267,13 @@ const obtenerPedido = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'No tienes acceso a este pedido.' });
     }
 
-    res.json({ ok: true, data: { pedido } });
+    // El repartidor no debe ver el código — lo obtiene verbalmente del cliente al entregar
+    const pedidoData = pedido.toJSON();
+    if (esRepartidor && !esCliente && !esAdmin) {
+      delete pedidoData.codigo_entrega;
+    }
+
+    res.json({ ok: true, data: { pedido: pedidoData } });
   } catch (error) {
     console.error('Error al obtener pedido:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al obtener el pedido.' });
@@ -481,6 +487,25 @@ const actualizarEstado = async (req, res) => {
 const calificarPedido = async (req, res) => {
   try {
     const { calificacion_repartidor, calificacion_negocio, comentario, propina } = req.body;
+
+    // Validar rangos antes de tocar la DB
+    if (calificacion_negocio !== undefined && calificacion_negocio !== null) {
+      const cn = Number(calificacion_negocio);
+      if (!Number.isInteger(cn) || cn < 1 || cn > 5) {
+        return res.status(400).json({ ok: false, mensaje: 'Calificación del negocio debe ser entre 1 y 5.' });
+      }
+    }
+    if (calificacion_repartidor !== undefined && calificacion_repartidor !== null) {
+      const cr = Number(calificacion_repartidor);
+      if (!Number.isInteger(cr) || cr < 1 || cr > 5) {
+        return res.status(400).json({ ok: false, mensaje: 'Calificación del repartidor debe ser entre 1 y 5.' });
+      }
+    }
+    const propinaNum = parseFloat(propina) || 0;
+    if (propinaNum < 0 || propinaNum > 1000) {
+      return res.status(400).json({ ok: false, mensaje: 'Propina no válida (máximo $1,000 MXN).' });
+    }
+
     const pedido = await Pedido.findOne({
       where: { id: req.params.id, cliente_id: req.usuario.id, estado: 'entregado' },
     });
@@ -490,8 +515,6 @@ const calificarPedido = async (req, res) => {
     if (pedido.calificacion_negocio !== null) {
       return res.status(400).json({ ok: false, mensaje: 'Ya calificaste este pedido.' });
     }
-
-    const propinaNum = parseFloat(propina) || 0;
     await pedido.update({
       calificacion_repartidor: calificacion_repartidor || null,
       calificacion_negocio,
