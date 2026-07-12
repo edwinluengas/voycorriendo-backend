@@ -347,6 +347,20 @@ const subirFotoProducto = async (req, res) => {
   }
 };
 
+// ─── DELETE /api/negocios/mi-negocio/productos/:prod_id ────
+const eliminarMiProducto = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
+    const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
+    if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
+    await producto.destroy();
+    res.json({ ok: true, mensaje: 'Producto eliminado.' });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al eliminar producto.' });
+  }
+};
+
 // ─── PATCH /api/negocios/apertura ──────────────────────────
 // "Abrir / cerrar" el negocio (estilo Go Online del repartidor).
 const cambiarApertura = async (req, res) => {
@@ -559,6 +573,7 @@ module.exports = {
   listarMisProductos,
   crearMiProducto,
   actualizarMiProducto,
+  eliminarMiProducto,
   subirFotoProducto,
   gananciasNegocio,
   // Legacy / operacion

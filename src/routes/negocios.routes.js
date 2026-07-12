@@ -15,6 +15,7 @@ const {
   listarMisProductos,
   crearMiProducto,
   actualizarMiProducto,
+  eliminarMiProducto,
   subirFotoProducto,
   gananciasNegocio,
   // Legacy
@@ -43,11 +44,12 @@ router.patch('/apertura', proteger, [
 ], cambiarApertura);
 
 // ─── Gestion de productos del dueno ──────────────────────────
-router.get ('/mi-negocio/productos',                    proteger, listarMisProductos);
-router.post('/mi-negocio/productos',                    proteger, crearMiProducto);
-router.patch('/mi-negocio/productos/:prod_id',          proteger, actualizarMiProducto);
-router.post('/mi-negocio/productos/:prod_id/foto',      proteger, subirFotoProducto);
-router.get ('/mi-negocio/ganancias',                    proteger, gananciasNegocio);
+router.get   ('/mi-negocio/productos',                  proteger, listarMisProductos);
+router.post  ('/mi-negocio/productos',                  proteger, crearMiProducto);
+router.patch ('/mi-negocio/productos/:prod_id',         proteger, actualizarMiProducto);
+router.delete('/mi-negocio/productos/:prod_id',         proteger, eliminarMiProducto);
+router.post  ('/mi-negocio/productos/:prod_id/foto',    proteger, subirFotoProducto);
+router.get   ('/mi-negocio/ganancias',                  proteger, gananciasNegocio);
 
 // ─── Detalle publico (debe ir DESPUES de las rutas con nombre) ─
 router.get('/:id', obtenerNegocio);
