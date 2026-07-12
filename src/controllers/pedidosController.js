@@ -114,7 +114,19 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // 4. Pedido mínimo
+    // 4. Validar método de pago
+    const metodosValidos = ['efectivo', 'tarjeta', 'mercado_pago', 'transferencia'];
+    if (!metodosValidos.includes(metodo_pago)) {
+      return res.status(400).json({ ok: false, mensaje: 'Método de pago no válido.' });
+    }
+    if (metodo_pago === 'transferencia' && negocio.categoria !== 'ahivoy store') {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'La transferencia SPEI solo está disponible para compras en la VoyCorriendo Store.',
+      });
+    }
+
+    // 5. Pedido mínimo
     if (subtotal < PEDIDO_MINIMO) {
       return res.status(400).json({
         ok: false,
