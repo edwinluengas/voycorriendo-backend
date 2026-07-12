@@ -131,9 +131,8 @@ const obtenerMiNegocio = async (req, res) => {
         mensaje: 'Aun no tienes negocio. Activalo desde tu perfil.',
       });
     }
-    // Auto-aprobar negocio del admin O la tienda oficial VoyCorriendo
-    const esOficial = negocio.categoria === 'ahivoy store';
-    if ((req.usuario.rol === 'admin' || esOficial) && negocio.verificacion_estado !== 'aprobado') {
+    // Auto-aprobar negocio del admin
+    if (req.usuario.rol === 'admin' && negocio.verificacion_estado !== 'aprobado') {
       negocio.verificacion_estado = 'aprobado';
       negocio.activo = true;
       await negocio.save();
@@ -176,10 +175,9 @@ const actualizarMiPerfil = async (req, res) => {
       if (req.body[c] !== undefined) negocio[c] = req.body[c];
     });
 
-    // Tienda oficial VoyCorriendo — siempre aprobada sin verificación
-    if (negocio.categoria === 'ahivoy store' && negocio.verificacion_estado !== 'aprobado') {
-      negocio.verificacion_estado = 'aprobado';
-      negocio.activo = true;
+    // Proteger categoría reservada — solo admin puede asignar 'ahivoy store'
+    if (negocio.categoria === 'ahivoy store' && req.usuario.rol !== 'admin') {
+      return res.status(403).json({ ok: false, mensaje: 'Categoría reservada. Contacta a soporte.' });
     }
 
     await negocio.save();

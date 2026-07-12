@@ -422,7 +422,15 @@ const aceptarPedido = async (req, res) => {
 
     const maxOrders = repartidor.max_pedidos_ruta || 3;
 
-    if (batch && batch.pedidos.length >= maxOrders) {
+    // EXPRESS viaja solo — sin batch activo ni compartido
+    if (pedido.tipo_envio === 'express' && batch) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: 'Termina tu ruta actual antes de aceptar un pedido Express. Los pedidos Express son exclusivos.',
+      });
+    }
+
+    if (batch && pedido.tipo_envio !== 'express' && batch.pedidos.length >= maxOrders) {
       return res.status(409).json({
         ok: false,
         mensaje: `Ya tienes ${maxOrders} pedidos en ruta. Entrega primero antes de tomar más.`,
@@ -430,7 +438,10 @@ const aceptarPedido = async (req, res) => {
     }
 
     if (!batch) {
-      batch = await DeliveryBatch.create({ driver_id: repartidor.id, max_orders: maxOrders });
+      batch = await DeliveryBatch.create({
+        driver_id: repartidor.id,
+        max_orders: pedido.tipo_envio === 'express' ? 1 : maxOrders,
+      });
     }
 
     // Asignar pedido al batch y al repartidor (codigo_entrega ya existe, no sobreescribir)
@@ -562,6 +573,10 @@ const solicitarDeposito = async (req, res) => {
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
     const monto = parseFloat(fondo?.monto_disponible || 0);
+
+    if (monto <= 0) {
+      return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
+    }
 
     console.log(`[deposito] Solicitud de ${repartidor.usuario?.nombre} (${repartidor.id}) por $${monto}`);
     // Aquí iría la notificación al admin (Telegram/email) en producción

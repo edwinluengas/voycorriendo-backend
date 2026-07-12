@@ -122,7 +122,7 @@ const crearPedido = async (req, res) => {
     if (metodo_pago === 'transferencia' && negocio.categoria !== 'ahivoy store') {
       return res.status(400).json({
         ok: false,
-        mensaje: 'La transferencia SPEI solo está disponible para compras en la VoyCorriendo Store.',
+        mensaje: 'La transferencia SPEI solo está disponible para compras en Voy Store®.',
       });
     }
 
@@ -554,7 +554,7 @@ const calificarPedido = async (req, res) => {
     if (!pedido) {
       return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado o aún no entregado.' });
     }
-    if (pedido.calificacion_negocio !== null) {
+    if (pedido.calificacion_negocio !== null || pedido.calificacion_repartidor !== null) {
       return res.status(400).json({ ok: false, mensaje: 'Ya calificaste este pedido.' });
     }
     await pedido.update({

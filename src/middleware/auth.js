@@ -31,10 +31,11 @@ const proteger = async (req, res, next) => {
   }
 };
 
-// Restringe acceso por rol
+// Restringe acceso por rol — considera modo_activo (multi-rol)
 const restringirA = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.usuario.rol)) {
+    const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
+    if (!roles.includes(rolEfectivo)) {
       return res.status(403).json({
         ok: false,
         mensaje: `No tienes permiso para realizar esta acción. Rol requerido: ${roles.join(', ')}.`,

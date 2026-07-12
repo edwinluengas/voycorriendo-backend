@@ -106,7 +106,7 @@ const Pedido = sequelize.define('Pedido', {
     type: DataTypes.ENUM('express', 'standard'),
     defaultValue: 'standard',
   },
-  fee_cliente:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 25.00 },
+  fee_cliente:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 35.00 },
   zona_premium: { type: DataTypes.BOOLEAN, defaultValue: false },
   batch_id: {
     type: DataTypes.UUID,
