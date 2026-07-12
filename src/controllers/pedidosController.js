@@ -144,11 +144,11 @@ const crearPedido = async (req, res) => {
 
     const total = subtotal + fee_cliente;
 
-    // 6. Límite efectivo $500
-    if (metodo_pago === 'efectivo' && total > 500) {
+    // 6. Límite efectivo: productos ≤ $500 (el envío se suma encima)
+    if (metodo_pago === 'efectivo' && subtotal > 500) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Pagos en efectivo hasta $500 MXN. Tu pedido es $${total.toFixed(2)}. Elige tarjeta o Mercado Pago.`,
+        mensaje: `Pagos en efectivo solo para pedidos hasta $500 MXN en productos. Tu subtotal es $${subtotal.toFixed(2)}. Elige tarjeta o Mercado Pago.`,
       });
     }
 
@@ -331,18 +331,29 @@ const actualizarEstado = async (req, res) => {
     if (rolEfectivo === 'cliente' && pedido.cliente_id !== req.usuario.id) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no es tuyo.' });
     }
+    if (rolEfectivo === 'repartidor') {
+      const repActual = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
+      if (pedido.repartidor_id && pedido.repartidor_id !== repActual?.id) {
+        return res.status(403).json({ ok: false, mensaje: 'Este pedido no te fue asignado.' });
+      }
+    }
 
     const transicionesPermitidas = {
-      negocio:    {
+      negocio: {
         pendiente:  ['confirmado', 'rechazado'],
         confirmado: ['preparando'],
         preparando: ['listo'],
         listo:      ['en_envio', 'entregado'],
         en_envio:   ['entregado'],
       },
-      repartidor:  { en_camino: ['entregado'] },
-      admin:       '*',
-      cliente:     { pendiente: ['cancelado'] },
+      repartidor: {
+        confirmado: ['preparando'],
+        preparando: ['listo'],
+        listo:      ['en_camino'],
+        en_camino:  ['entregado'],
+      },
+      admin:   '*',
+      cliente: { pendiente: ['cancelado'] },
     };
 
     const permitidos = transicionesPermitidas[rolEfectivo];
