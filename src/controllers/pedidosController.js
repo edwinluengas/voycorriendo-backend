@@ -189,26 +189,33 @@ const crearPedido = async (req, res) => {
       return nuevoPedido;
     });
 
-    // 8. Notificaciones
-    const io = req.app.get('io');
-    io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
-      pedido_id: pedido.id,
-      numero: pedido.numero,
-      total: pedido.total,
-      items: itemsDetallados,
-      distancia_km: distanciaKm,
-    });
-    const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
-    if (dueno?.telegram_chat_id) {
-      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram error:', e.message));
-    }
-    if (dueno?.token_push) {
-      push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push error:', e.message));
+    // 8. Notificaciones al negocio
+    // Pagos digitales (tarjeta/MP): el negocio NO recibe notificación hasta que
+    // el webhook de MP confirme el pago. Evita que confirmen pedidos sin cobrar.
+    const metodoDigital = ['tarjeta', 'mercado_pago'].includes(metodo_pago);
+    if (!metodoDigital) {
+      const io = req.app.get('io');
+      io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
+        pedido_id: pedido.id,
+        numero: pedido.numero,
+        total: pedido.total,
+        items: itemsDetallados,
+        distancia_km: distanciaKm,
+      });
+      const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
+      if (dueno?.telegram_chat_id) {
+        tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram error:', e.message));
+      }
+      if (dueno?.token_push) {
+        push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push error:', e.message));
+      }
     }
 
     res.status(201).json({
       ok: true,
-      mensaje: '¡Pedido creado! Esperando confirmación del negocio.',
+      mensaje: metodoDigital
+        ? '¡Pedido creado! Completa el pago para que el negocio lo reciba.'
+        : '¡Pedido creado! Esperando confirmación del negocio.',
       data: { pedido },
     });
   } catch (error) {
@@ -369,6 +376,18 @@ const actualizarEstado = async (req, res) => {
 
     if (estado === 'entregado' && pedido.estado === 'listo' && rolEfectivo === 'negocio' && pedido.tipo_envio !== 'pickup') {
       return res.status(400).json({ ok: false, mensaje: 'Solo pedidos de recogida en tienda pueden marcarse entregados desde listo.' });
+    }
+
+    // ── Bloquear confirmación si el pago digital no fue capturado ──
+    if (estado === 'confirmado' && rolEfectivo === 'negocio') {
+      const metodoDigital = ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago);
+      if (metodoDigital && pedido.pago_estado !== 'capturado') {
+        return res.status(402).json({
+          ok: false,
+          mensaje: 'El pago con tarjeta aún no ha sido confirmado. Espera la notificación de pago antes de aceptar el pedido.',
+          codigo: 'PAGO_PENDIENTE',
+        });
+      }
     }
 
     // ── Consumir 1 token al confirmar (FIFO) ───────────────

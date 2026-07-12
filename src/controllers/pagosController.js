@@ -9,6 +9,7 @@
 const { Pedido, Usuario, RestaurantToken, Negocio } = require('../models');
 const pagosService = require('../services/pagos.service');
 const push = require('../services/notificaciones.service');
+const tg   = require('../services/telegram.service');
 
 // ─── POST /api/pagos/preferencia ─────────────────────────
 const crearPreferencia = async (req, res) => {
@@ -58,11 +59,32 @@ const webhookMercadoPago = async (req, res) => {
       pedido_id: result.pedido.id,
       estado:    result.pedido.pago_estado,
     });
+
     if (result.pedido.pago_estado === 'capturado') {
+      // Notificar al cliente
       try {
         const cliente = await Usuario.findByPk(result.pedido.cliente_id, { attributes: ['token_push'] });
         if (cliente?.token_push) push.notificarPagoConfirmado(cliente.token_push, result.pedido).catch(() => {});
       } catch (_) {}
+
+      // Pago digital confirmado → ahora SÍ notificar al negocio
+      try {
+        const negocio = await Negocio.findByPk(result.pedido.negocio_id);
+        if (negocio) {
+          io.to(`negocio:${negocio.id}`).emit('nuevo_pedido', {
+            pedido_id:    result.pedido.id,
+            numero:       result.pedido.numero,
+            total:        result.pedido.total,
+            items:        result.pedido.items,
+            pago_estado:  'capturado',
+          });
+          const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
+          if (dueno?.telegram_chat_id) tg.alertaNuevoPedido(dueno.telegram_chat_id, result.pedido).catch(() => {});
+          if (dueno?.token_push) push.notificarNuevoPedido(dueno.token_push, result.pedido).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('[webhook] Error notificando negocio tras pago capturado:', e.message);
+      }
     }
   }
 
