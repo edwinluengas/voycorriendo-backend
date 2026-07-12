@@ -12,7 +12,7 @@ router.use(proteger, restringirA('negocio', 'admin'));
 router.get('/saldo', obtenerSaldo);
 
 router.post('/comprar', [
-  body('pack_type').isIn(['starter', 'pro', 'elite']).withMessage('Pack inválido'),
+  body('pack_type').isString().notEmpty().withMessage('Pack inválido'),
 ], comprarPack);
 
 module.exports = router;

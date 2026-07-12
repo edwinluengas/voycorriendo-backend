@@ -183,8 +183,10 @@ const PORT = process.env.PORT || 3000;
 const migrarDB = async () => {
   const run = async (sql) => {
     try { await sequelize.query(sql); }
-    catch (e) { console.warn('[migración] skipped:', sql.slice(0, 60), '→', e.message); }
+    catch (e) { console.warn('[migración] skipped:', sql.slice(0, 80), '→', e.message); }
   };
+
+  // ─── OWASP audit v1.2.8 ──────────────────────────────────
   await run(`ALTER TABLE usuarios ALTER COLUMN otp_codigo TYPE VARCHAR(100)`);
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS otp_intentos SMALLINT NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0`);
@@ -204,6 +206,133 @@ const migrarDB = async () => {
     ip VARCHAR(45),
     creado_en TIMESTAMPTZ DEFAULT NOW()
   )`);
+
+  // ─── Modelo de negocio V2 ─────────────────────────────────
+  // Token tiers configurables desde DB (Silver / Golden / Diamond)
+  await run(`CREATE TABLE IF NOT EXISTS token_tiers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    label VARCHAR(50) NOT NULL,
+    tokens INTEGER NOT NULL,
+    precio NUMERIC(10,2) NOT NULL,
+    vigencia_dias INTEGER NOT NULL,
+    costo_por_token NUMERIC(10,4) NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    orden INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await run(`INSERT INTO token_tiers (nombre, label, tokens, precio, vigencia_dias, costo_por_token, orden)
+    VALUES
+      ('silver',  'Silver',  50,  1100, 45,  22, 1),
+      ('golden',  'Golden',  200, 4000, 90,  20, 2),
+      ('diamond', 'Diamond', 500, 9500, 120, 19, 3)
+    ON CONFLICT (nombre) DO NOTHING`);
+
+  // Historial FIFO de consumo de tokens por pedido
+  await run(`CREATE TABLE IF NOT EXISTS token_consumos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restaurant_token_id UUID NOT NULL,
+    restaurant_id UUID NOT NULL,
+    pedido_id UUID NOT NULL,
+    tokens_consumidos INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  // Configuración de zonas de entrega por tipo_envio
+  await run(`CREATE TABLE IF NOT EXISTS config_zonas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo_envio VARCHAR(20) NOT NULL UNIQUE,
+    max_km NUMERIC(5,2) NOT NULL,
+    fee_base NUMERIC(10,2) NOT NULL,
+    surcharge_inicio_km NUMERIC(5,2),
+    surcharge_por_km NUMERIC(10,2),
+    activo BOOLEAN NOT NULL DEFAULT true
+  )`);
+  await run(`INSERT INTO config_zonas (tipo_envio, max_km, fee_base, surcharge_inicio_km, surcharge_por_km)
+    VALUES
+      ('standard', 5, 35, 3, 5),
+      ('express',  4, 60, NULL, NULL)
+    ON CONFLICT (tipo_envio) DO NOTHING`);
+
+  // Configuración de comisiones por método de pago y tipo de envío
+  await run(`CREATE TABLE IF NOT EXISTS config_comisiones (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    metodo_pago VARCHAR(50) NOT NULL,
+    tipo_envio VARCHAR(20) NOT NULL,
+    comision_plataforma NUMERIC(10,2) NOT NULL,
+    pago_repartidor NUMERIC(10,2) NOT NULL,
+    UNIQUE(metodo_pago, tipo_envio)
+  )`);
+  await run(`INSERT INTO config_comisiones (metodo_pago, tipo_envio, comision_plataforma, pago_repartidor)
+    VALUES
+      ('digital',  'standard', 5,  30),
+      ('digital',  'express',  10, 50),
+      ('efectivo', 'standard', 5,  30),
+      ('efectivo', 'express',  10, 50)
+    ON CONFLICT (metodo_pago, tipo_envio) DO NOTHING`);
+
+  // Tabla de promociones configurables
+  await run(`CREATE TABLE IF NOT EXISTS promo_config (
+    clave VARCHAR(100) PRIMARY KEY,
+    activo BOOLEAN NOT NULL DEFAULT false,
+    fecha_inicio TIMESTAMPTZ,
+    fecha_fin TIMESTAMPTZ,
+    descripcion TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await run(`INSERT INTO promo_config (clave, activo, fecha_inicio, descripcion)
+    VALUES ('promo_efectivo_sin_comision', true, NOW(),
+      'Pedidos en efectivo: repartidor recibe tarifa completa, sin comisión de plataforma')
+    ON CONFLICT (clave) DO NOTHING`);
+
+  // Ledger de conciliación: lo cobrado vs lo pagado por pedido
+  await run(`CREATE TABLE IF NOT EXISTS ledger_conciliacion (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pedido_id UUID NOT NULL UNIQUE,
+    fee_envio_cobrado NUMERIC(10,2) NOT NULL,
+    subtotal_productos NUMERIC(10,2) NOT NULL,
+    pago_repartidor NUMERIC(10,2) NOT NULL,
+    comision_plataforma NUMERIC(10,2) NOT NULL,
+    metodo_pago VARCHAR(50) NOT NULL,
+    tipo_envio VARCHAR(20) NOT NULL,
+    liquidacion_comida VARCHAR(50),
+    distancia_km NUMERIC(6,2),
+    registrado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  // Fondo del repartidor para pedidos en efectivo
+  await run(`CREATE TABLE IF NOT EXISTS fondo_repartidor (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repartidor_id UUID NOT NULL UNIQUE,
+    monto_disponible NUMERIC(10,2) NOT NULL DEFAULT 0,
+    monto_reservado NUMERIC(10,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  // Caché de rutas Google Maps (evita llamadas redundantes)
+  await run(`CREATE TABLE IF NOT EXISTS route_cache (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    origen_hash VARCHAR(64) NOT NULL,
+    destino_hash VARCHAR(64) NOT NULL,
+    distancia_km NUMERIC(6,2) NOT NULL,
+    duracion_min INTEGER,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(origen_hash, destino_hash)
+  )`);
+
+  // Columnas nuevas en tablas existentes
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS tokens_negativos_permitidos INTEGER NOT NULL DEFAULT -10`);
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS paga_con NUMERIC(10,2)`);
+  await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS precio_pagado NUMERIC(10,2)`);
+  await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS tokens_comprados INTEGER`);
+
+  // Convertir pack_type de ENUM a VARCHAR (permite silver/golden/diamond + valores futuros)
+  await run(`ALTER TABLE restaurant_tokens ALTER COLUMN pack_type TYPE VARCHAR(20) USING pack_type::text`);
+  await run(`DROP TYPE IF EXISTS "enum_restaurant_tokens_pack_type"`);
+
   console.log('[migración] Completada.');
 };
 

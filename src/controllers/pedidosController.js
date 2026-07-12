@@ -2,22 +2,21 @@ const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
-const { v4: uuidv4 } = require('uuid');
 const { calcularDistanciaKm } = require('../utils/distancia');
-const { MAX_DISTANCE_KM, calcularCostoEnvio } = require('../utils/precios');
+const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const { PEDIDO_MINIMO, VOYTOKENS } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
+const { consumirTokensFIFO } = require('./tokensController');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
 
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
-  const num = Math.floor(1000 + Math.random() * 899000).toString().padStart(6, '0');
+  const num = randomInt(1000, 899000 + 1000).toString().padStart(6, '0');
   return `MND-${num}`;
 };
 
-// Genera código de entrega de 4 dígitos con entropía criptográfica
 const generarCodigoEntrega = () => randomInt(1000, 10000).toString();
 
 // ─── POST /api/pedidos ────────────────────────────────────
@@ -34,15 +33,21 @@ const crearPedido = async (req, res) => {
       ine_foto_url,
       tipo_envio = 'standard',
       usa_tokens = false,
+      paga_con = null,
     } = req.body;
 
-    // 1. Verificar negocio existe y está abierto
+    // Express siempre viaja solo — batch_id se ignora para express
+    if (tipo_envio === 'express' && req.body.batch_id) {
+      return res.status(400).json({ ok: false, mensaje: 'Los pedidos Express viajan solos y no pueden combinarse en rutas.' });
+    }
+
+    // 1. Verificar negocio
     const negocio = await Negocio.findByPk(negocio_id);
     if (!negocio || !negocio.activo) {
       return res.status(400).json({ ok: false, mensaje: 'El negocio no está disponible.' });
     }
 
-    // 2. Validar y calcular precios de los items
+    // 2. Validar items
     let subtotal = 0;
     let requiereINE = false;
     const itemsDetallados = [];
@@ -52,47 +57,38 @@ const crearPedido = async (req, res) => {
         where: { id: item.producto_id, negocio_id, disponible: true },
       });
       if (!producto) {
-        return res.status(400).json({
-          ok: false,
-          mensaje: `El producto "${item.producto_id}" no está disponible.`,
-        });
+        return res.status(400).json({ ok: false, mensaje: `El producto "${item.producto_id}" no está disponible.` });
       }
-
-      // Si el producto tiene opciones requeridas, validar que el cliente eligió una
       if (producto.opciones?.requerida && !item.opcion_elegida) {
         return res.status(400).json({
           ok: false,
           mensaje: `El producto "${producto.nombre}" requiere que elijas una opción (${producto.opciones?.titulo || 'opción'}).`,
         });
       }
-
       if (producto.requiere_id) requiereINE = true;
-
       const precioItem = parseFloat(producto.precio) * item.cantidad;
       subtotal += precioItem;
       itemsDetallados.push({
-        producto_id: producto.id,
-        nombre: producto.nombre,
+        producto_id:    producto.id,
+        nombre:         producto.nombre,
         precio_unitario: producto.precio,
-        cantidad: item.cantidad,
-        subtotal: precioItem,
-        notas: item.notas || null,
+        cantidad:       item.cantidad,
+        subtotal:       precioItem,
+        notas:          item.notas || null,
         opcion_elegida: item.opcion_elegida || null,
-        requiere_id: !!producto.requiere_id,
+        requiere_id:    !!producto.requiere_id,
       });
     }
 
-    // 2b. Si algún producto requiere ID, exigir foto del INE
     if (requiereINE && !ine_foto_url) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Tu pedido incluye productos con restricción de edad (alcohol o cigarros). Necesitamos una foto de tu INE para poder entregarlos.',
+        mensaje: 'Tu pedido incluye productos con restricción de edad. Necesitamos una foto de tu INE.',
       });
     }
 
-    // 3. Calcular distancia y validar cobertura
+    // 3. Calcular distancia y validar cobertura por tipo_envio
     let distanciaKm = null;
-
     const origen  = negocio.latitud && negocio.longitud
       ? { lat: Number(negocio.latitud), lng: Number(negocio.longitud) }
       : null;
@@ -109,26 +105,30 @@ const crearPedido = async (req, res) => {
       }
     }
 
-    if (distanciaKm != null && distanciaKm > MAX_DISTANCE_KM) {
+    const maxKm = await getMaxKm(tipo_envio);
+    if (distanciaKm != null && distanciaKm > maxKm) {
+      const tipoLabel = tipo_envio === 'express' ? 'Express' : 'Estándar';
       return res.status(400).json({
         ok: false,
-        mensaje: `Tu dirección está a ${distanciaKm.toFixed(1)} km. Solo entregamos hasta ${MAX_DISTANCE_KM} km del negocio.`,
+        mensaje: `Tu dirección está a ${distanciaKm.toFixed(1)} km. El envío ${tipoLabel} tiene cobertura máxima de ${maxKm} km.`,
       });
     }
 
-    // 4. Validar pedido mínimo ($100 en productos)
+    // 4. Pedido mínimo
     if (subtotal < PEDIDO_MINIMO) {
       return res.status(400).json({
         ok: false,
-        mensaje: `El pedido mínimo es de $${PEDIDO_MINIMO} MXN en productos. Tu carrito suma $${subtotal.toFixed(2)} MXN.`,
+        mensaje: `El pedido mínimo es de $${PEDIDO_MINIMO} MXN. Tu carrito suma $${subtotal.toFixed(2)} MXN.`,
       });
     }
 
-    // 5. Calcular fee de envío (modelo flat-rate)
-    let fee_cliente = calcularFeeCliente({ tipoEnvio: tipo_envio });
-    let tokens_canjeados = 0;
+    // 5. Fee de envío (zone-based desde DB)
+    const tarifaResult = await calcularCostoEnvio({ distanciaKm: distanciaKm ?? 1, tipoEnvio: tipo_envio });
+    let fee_cliente = tarifaResult.fueraDeCobertura
+      ? calcularFeeCliente({ tipoEnvio: tipo_envio })
+      : tarifaResult.costo;
 
-    // 5b. Canjear VoyTokens → envío gratis
+    let tokens_canjeados = 0;
     if (usa_tokens) {
       const clienteDB = await Usuario.findByPk(req.usuario.id, { attributes: ['voytokens'] });
       const tokensActuales = clienteDB?.voytokens || 0;
@@ -144,37 +144,38 @@ const crearPedido = async (req, res) => {
 
     const total = subtotal + fee_cliente;
 
-    // 6. Validar límite de efectivo
+    // 6. Límite efectivo $500
     if (metodo_pago === 'efectivo' && total > 500) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Pagos en efectivo hasta $500 MXN. Tu pedido es $${total.toFixed(2)}. Elige tarjeta, transferencia o Mercado Pago.`,
+        mensaje: `Pagos en efectivo hasta $500 MXN. Tu pedido es $${total.toFixed(2)}. Elige tarjeta o Mercado Pago.`,
       });
     }
 
-    // 7. Crear el pedido + descontar tokens en una sola transacción atómica
+    // 7. Crear pedido + descontar VoyTokens (atómico)
     const pedido = await dbConn.transaction(async (t) => {
       const nuevoPedido = await Pedido.create({
-        numero: generarNumeroPedido(),
-        cliente_id: req.usuario.id,
+        numero:           generarNumeroPedido(),
+        cliente_id:       req.usuario.id,
         negocio_id,
-        items: itemsDetallados,
+        items:            itemsDetallados,
         subtotal,
-        costo_envio: fee_cliente,
+        costo_envio:      fee_cliente,
         total,
-        distancia_km: distanciaKm,
+        distancia_km:     distanciaKm,
         metodo_pago,
-        pago_estado: 'pendiente',
-        ciudad: negocio.ciudad || 'puerto_escondido',
+        pago_estado:      'pendiente',
+        ciudad:           negocio.ciudad || 'puerto_escondido',
         tipo_envio,
         fee_cliente,
+        paga_con:         metodo_pago === 'efectivo' ? (paga_con ? Number(paga_con) : null) : null,
         direccion_entrega,
         latitud_entrega,
         longitud_entrega,
         notas_entrega,
-        ine_foto_url: requiereINE ? ine_foto_url : null,
-        estado: 'pendiente',
-        codigo_entrega: generarCodigoEntrega(),
+        ine_foto_url:     requiereINE ? ine_foto_url : null,
+        estado:           'pendiente',
+        codigo_entrega:   generarCodigoEntrega(),
       }, { transaction: t });
 
       if (tokens_canjeados > 0) {
@@ -183,13 +184,12 @@ const crearPedido = async (req, res) => {
           where: { id: req.usuario.id },
           transaction: t,
         });
-        console.log(`[tokens] -${tokens_canjeados} VoyTokens (envío gratis) → cliente ${req.usuario.id}`);
       }
 
       return nuevoPedido;
     });
 
-    // 8. Notificar al negocio vía Socket.io + Telegram + Push
+    // 8. Notificaciones
     const io = req.app.get('io');
     io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
       pedido_id: pedido.id,
@@ -199,13 +199,13 @@ const crearPedido = async (req, res) => {
       distancia_km: distanciaKm,
     });
     const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
-    console.log(`[notif] dueño negocio ${negocio.usuario_id}: token_push=${dueno?.token_push ? 'OK' : 'NULL'}, tg=${dueno?.telegram_chat_id ? 'OK' : 'NULL'}`);
     if (dueno?.telegram_chat_id) {
-      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram negocio error:', e.message));
+      tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram error:', e.message));
     }
     if (dueno?.token_push) {
-      push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push negocio error:', e.message));
+      push.notificarNuevoPedido(dueno.token_push, pedido).catch((e) => console.warn('[notif] Push error:', e.message));
     }
+
     res.status(201).json({
       ok: true,
       mensaje: '¡Pedido creado! Esperando confirmación del negocio.',
@@ -218,7 +218,6 @@ const crearPedido = async (req, res) => {
 };
 
 // ─── GET /api/pedidos ─────────────────────────────────────
-// Cliente ve su historial de pedidos
 const misPedidos = async (req, res) => {
   try {
     const pedidos = await Pedido.findAll({
@@ -227,7 +226,8 @@ const misPedidos = async (req, res) => {
       limit: 20,
       include: [
         { model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'logo', 'categoria'] },
-        { model: Repartidor, as: 'repartidor',
+        {
+          model: Repartidor, as: 'repartidor',
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'foto_perfil', 'telefono'] }],
         },
       ],
@@ -243,8 +243,12 @@ const obtenerPedido = async (req, res) => {
   try {
     const pedido = await Pedido.findByPk(req.params.id, {
       include: [
-        { model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'logo', 'telefono', 'direccion', 'latitud', 'longitud', 'categoria', 'tipo_entrega', 'usuario_id'] },
-        { model: Repartidor, as: 'repartidor',
+        {
+          model: Negocio, as: 'negocio',
+          attributes: ['id', 'nombre', 'logo', 'telefono', 'direccion', 'latitud', 'longitud', 'categoria', 'tipo_entrega', 'usuario_id'],
+        },
+        {
+          model: Repartidor, as: 'repartidor',
           attributes: ['id', 'calificacion_promedio', 'latitud', 'longitud', 'marca_vehiculo', 'color_vehiculo'],
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'foto_perfil', 'telefono'] }],
         },
@@ -254,10 +258,9 @@ const obtenerPedido = async (req, res) => {
 
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
-    // Solo el cliente dueño, el negocio dueño del pedido o el repartidor pueden verlo
     const esCliente    = pedido.cliente_id === req.usuario.id;
     const esRepartidor = pedido.repartidor?.usuario_id === req.usuario.id;
-    const esNegocio    = pedido.negocio?.usuario_id === req.usuario.id; // sin filtrar por rol — multi-rol
+    const esNegocio    = pedido.negocio?.usuario_id === req.usuario.id;
     const esAdmin      = req.usuario.rol === 'admin';
 
     if (!esCliente && !esRepartidor && !esNegocio && !esAdmin) {
@@ -272,34 +275,27 @@ const obtenerPedido = async (req, res) => {
 };
 
 // ─── GET /api/pedidos/negocio/mis-pedidos ────────────────
-// Lista todos los pedidos del negocio cuyo dueño es el usuario autenticado.
-// Permite filtrar por estado con ?estado=pendiente (o varios: ?estado=pendiente,confirmado).
 const pedidosDelNegocio = async (req, res) => {
   try {
-    // 1. Obtener el negocio del usuario autenticado
     const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (!negocio) {
-      return res.status(404).json({
-        ok: false,
-        mensaje: 'No tienes un negocio asociado a tu cuenta.',
-      });
+      return res.status(404).json({ ok: false, mensaje: 'No tienes un negocio asociado a tu cuenta.' });
     }
 
-    // 2. Construir filtro
     const where = { negocio_id: negocio.id };
     if (req.query.estado) {
       const estados = String(req.query.estado).split(',').map((s) => s.trim());
       where.estado = estados.length === 1 ? estados[0] : estados;
     }
 
-    // 3. Cargar pedidos (últimos 50)
     const pedidos = await Pedido.findAll({
       where,
       order: [['creado_en', 'DESC']],
       limit: 50,
       include: [
         { model: Usuario, as: 'cliente', attributes: ['id', 'nombre', 'telefono', 'foto_perfil'] },
-        { model: Repartidor, as: 'repartidor',
+        {
+          model: Repartidor, as: 'repartidor',
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'telefono'] }],
         },
       ],
@@ -313,7 +309,6 @@ const pedidosDelNegocio = async (req, res) => {
 };
 
 // ─── PATCH /api/pedidos/:id/estado ───────────────────────
-// Negocio confirma / rechaza. Repartidor actualiza a en_camino / entregado.
 const actualizarEstado = async (req, res) => {
   try {
     const { estado, nota } = req.body;
@@ -322,10 +317,8 @@ const actualizarEstado = async (req, res) => {
     });
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
-    // Rol efectivo: modo_activo tiene prioridad sobre rol (sistema multi-rol)
     const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
 
-    // Verificar ownership según rol efectivo
     if (rolEfectivo === 'negocio' && pedido.negocio?.usuario_id !== req.usuario.id) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no pertenece a tu negocio.' });
     }
@@ -333,13 +326,12 @@ const actualizarEstado = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no es tuyo.' });
     }
 
-    // Máquina de estados permitidos según rol efectivo
     const transicionesPermitidas = {
       negocio:    {
         pendiente:  ['confirmado', 'rechazado'],
         confirmado: ['preparando'],
         preparando: ['listo'],
-        listo:      ['en_envio', 'entregado'], // entregado solo para pickup
+        listo:      ['en_envio', 'entregado'],
         en_envio:   ['entregado'],
       },
       repartidor:  { en_camino: ['entregado'] },
@@ -358,12 +350,27 @@ const actualizarEstado = async (req, res) => {
       }
     }
 
-    // Pickup: negocio puede ir listo→entregado; en órdenes normales no
     if (estado === 'entregado' && pedido.estado === 'listo' && rolEfectivo === 'negocio' && pedido.tipo_envio !== 'pickup') {
       return res.status(400).json({ ok: false, mensaje: 'Solo pedidos de recogida en tienda pueden marcarse entregados desde listo.' });
     }
 
-    // Registrar timestamp según el estado
+    // ── Consumir 1 token al confirmar (FIFO) ───────────────
+    if (estado === 'confirmado' && rolEfectivo === 'negocio') {
+      try {
+        await dbConn.transaction(async (t) => {
+          await consumirTokensFIFO(pedido.negocio_id, pedido.id, 1, t);
+        });
+      } catch (tokenErr) {
+        const httpStatus = tokenErr.httpStatus || 402;
+        return res.status(httpStatus).json({
+          ok: false,
+          mensaje: tokenErr.message,
+          codigo: 'TOKENS_INSUFICIENTES',
+        });
+      }
+    }
+
+    // Timestamps
     const timestamps = {
       confirmado: 'confirmado_en',
       en_camino:  'asignado_en',
@@ -373,12 +380,11 @@ const actualizarEstado = async (req, res) => {
     };
     if (timestamps[estado]) pedido[timestamps[estado]] = new Date();
 
-    // Guardar número de guía al marcar en_envio
     if (estado === 'en_envio' && req.body.numero_guia) {
       pedido.numero_guia = req.body.numero_guia;
     }
 
-    // Validar código de entrega o foto al entregar (solo repartidor)
+    // Validar código / foto al entregar (repartidor)
     if (estado === 'entregado' && rolEfectivo === 'repartidor') {
       const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
       if (foto_entrega) {
@@ -387,7 +393,6 @@ const actualizarEstado = async (req, res) => {
           const url = await subirImagen('documentos-negocios', ruta, foto_entrega, 'image/jpeg');
           pedido.foto_entrega = url;
         } catch (e) {
-          console.warn('[entrega] Error subiendo foto:', e.message);
           return res.status(400).json({ ok: false, mensaje: 'No se pudo procesar la foto. Usa el código de entrega.' });
         }
       } else {
@@ -403,9 +408,8 @@ const actualizarEstado = async (req, res) => {
     pedido.estado = estado;
     await pedido.save();
 
-    // Al entregar: registrar economía flat + sumar VoyTokens al cliente
+    // Al entregar: economía + VoyTokens
     if (estado === 'entregado') {
-      // Pago al repartidor (log flat-rate)
       if (pedido.repartidor_id) {
         try {
           const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
@@ -414,7 +418,6 @@ const actualizarEstado = async (req, res) => {
           console.error('Error en procesarEntrega:', e.message);
         }
       }
-      // VoyTokens: 1 token por cada $10 en productos
       try {
         const tokensGanados = Math.floor(parseFloat(pedido.subtotal || 0) / 10);
         if (tokensGanados > 0) {
@@ -422,12 +425,10 @@ const actualizarEstado = async (req, res) => {
             by: tokensGanados,
             where: { id: pedido.cliente_id },
           });
-          console.log(`[tokens] +${tokensGanados} VoyTokens → cliente ${pedido.cliente_id}`);
         }
       } catch (e) {
         console.error('Error sumando VoyTokens:', e.message);
       }
-      // Alertas Telegram: negocio y admin
       try {
         const negocioEntregado = await Negocio.findByPk(pedido.negocio_id);
         const dueno = negocioEntregado
@@ -437,19 +438,12 @@ const actualizarEstado = async (req, res) => {
       } catch (_) {}
     }
 
-    // Notificar a todos los involucrados en tiempo real
+    // Notificaciones en tiempo real
     const io = req.app.get('io');
-    const payloadEstado = {
-      pedido_id: pedido.id,
-      numero: pedido.numero,
-      estado,
-      actualizado_en: new Date(),
-    };
-    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payloadEstado);
-    if (pedido.negocio_id) {
-      io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payloadEstado);
-    }
-    // Push al cliente cuando cambia el estado de su pedido
+    const payload = { pedido_id: pedido.id, numero: pedido.numero, estado, actualizado_en: new Date() };
+    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payload);
+    if (pedido.negocio_id) io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payload);
+
     try {
       const clientePush = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
       if (clientePush?.token_push) {
@@ -457,26 +451,20 @@ const actualizarEstado = async (req, res) => {
       }
     } catch (_) {}
 
-    // Cuando el pedido está listo: notificar a todos los repartidores aprobados (no aplica para pickup)
     if (estado === 'listo' && pedido.tipo_envio !== 'pickup') {
       try {
-        // Socket: emitir a sala global de repartidores activos (tiempo real)
         io.to('repartidores_activos').emit('pedido_disponible', {
           pedido_id: pedido.id,
-          numero: pedido.numero,
-          ciudad: pedido.ciudad,
+          numero:    pedido.numero,
+          ciudad:    pedido.ciudad,
         });
-        // Push: notificar a repartidores aprobados con token
         const repartidoresAprobados = await Repartidor.findAll({
           where: { verificacion_estado: 'aprobado' },
           include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
         });
-        const tokensRepartidores = repartidoresAprobados
-          .map((r) => r.usuario?.token_push)
-          .filter(Boolean);
-        console.log(`[notif] pedido listo → repartidores aprobados: ${repartidoresAprobados.length}, con token: ${tokensRepartidores.length}`);
-        if (tokensRepartidores.length > 0) {
-          push.notificarRepartidoresDisponibles(tokensRepartidores, pedido).catch((e) => console.warn('[notif] Push repartidores error:', e.message));
+        const tokensRep = repartidoresAprobados.map((r) => r.usuario?.token_push).filter(Boolean);
+        if (tokensRep.length > 0) {
+          push.notificarRepartidoresDisponibles(tokensRep, pedido).catch(() => {});
         }
       } catch (e) {
         console.warn('[notif] Error notificando repartidores en listo:', e.message);
@@ -496,7 +484,6 @@ const calificarPedido = async (req, res) => {
     const pedido = await Pedido.findOne({
       where: { id: req.params.id, cliente_id: req.usuario.id, estado: 'entregado' },
     });
-
     if (!pedido) {
       return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado o aún no entregado.' });
     }
@@ -506,7 +493,6 @@ const calificarPedido = async (req, res) => {
 
     await pedido.update({ calificacion_repartidor: calificacion_repartidor || null, calificacion_negocio, comentario });
 
-    // Recalcular promedio del negocio
     if (calificacion_negocio) {
       const negocio = await Negocio.findByPk(pedido.negocio_id);
       if (negocio) {
@@ -522,7 +508,6 @@ const calificarPedido = async (req, res) => {
       }
     }
 
-    // Recalcular promedio del repartidor si aplica
     if (calificacion_repartidor && pedido.repartidor_id) {
       const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
       if (repartidor) {
@@ -535,30 +520,24 @@ const calificarPedido = async (req, res) => {
       }
     }
 
-    res.json({ ok: true, mensaje: '¡Gracias por tu calificación! 🌟', data: { pedido } });
+    res.json({ ok: true, mensaje: '¡Gracias por tu calificación!', data: { pedido } });
   } catch (error) {
     res.status(500).json({ ok: false, mensaje: 'Error al calificar el pedido.' });
   }
 };
 
-// ─── GET /api/pedidos/cotizar?negocio_id=&lat=&lng= ───────
-// Devuelve la tarifa de envío y zona ANTES de crear el pedido,
-// para que el cliente la vea en PagoScreen sin sorpresas.
+// ─── GET /api/pedidos/cotizar ─────────────────────────────
+// Query: negocio_id, lat, lng, tipo_envio (opcional, default 'standard')
 const cotizarEnvio = async (req, res) => {
   try {
-    const { negocio_id, lat, lng } = req.query;
-    console.log('[cotizar] negocio_id:', negocio_id, 'lat:', lat, 'lng:', lng);
-
+    const { negocio_id, lat, lng, tipo_envio = 'standard' } = req.query;
     if (!negocio_id) return res.status(400).json({ ok: false, mensaje: 'Falta negocio_id.' });
 
     const negocio = await Negocio.findByPk(negocio_id);
-    console.log('[cotizar] negocio:', negocio ? `lat=${negocio.latitud} lng=${negocio.longitud}` : 'null');
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
     if (!negocio.latitud || !negocio.longitud || lat == null || lng == null) {
-      // Sin coordenadas → estimamos zona A
-      console.log('[cotizar] sin coords, tarifa default');
-      const tarifa = calcularCostoEnvio({ distanciaKm: 1 });
+      const tarifa = await calcularCostoEnvio({ distanciaKm: 1, tipoEnvio: tipo_envio });
       return res.json({
         ok: true,
         data: {
@@ -566,21 +545,20 @@ const cotizarEnvio = async (req, res) => {
           zona: tarifa.zona,
           costo_envio: tarifa.costo,
           fuera_de_cobertura: false,
-          desglose: tarifa.desglose,
-          aviso: 'No tenemos tu ubicación exacta; usamos tarifa de zona A.',
+          aviso: 'No tenemos tu ubicación exacta; usamos tarifa base.',
         },
       });
     }
 
-    console.log('[cotizar] calculando distancia...');
     const { km } = await calcularDistanciaKm(
       { lat: Number(negocio.latitud), lng: Number(negocio.longitud) },
       { lat: Number(lat), lng: Number(lng) },
     );
-    console.log('[cotizar] km:', km);
     const distanciaKm = Number(km.toFixed(2));
+    const maxKm = await getMaxKm(tipo_envio);
 
-    if (distanciaKm > MAX_DISTANCE_KM) {
+    if (distanciaKm > maxKm) {
+      const tipoLabel = tipo_envio === 'express' ? 'Express' : 'Estándar';
       return res.json({
         ok: true,
         data: {
@@ -588,13 +566,12 @@ const cotizarEnvio = async (req, res) => {
           zona: null,
           costo_envio: 0,
           fuera_de_cobertura: true,
-          aviso: `Tu dirección está a ${distanciaKm.toFixed(1)} km. Solo entregamos hasta ${MAX_DISTANCE_KM} km.`,
+          aviso: `Tu dirección está a ${distanciaKm.toFixed(1)} km. El envío ${tipoLabel} cubre hasta ${maxKm} km.`,
         },
       });
     }
 
-    const tarifa = calcularCostoEnvio({ distanciaKm });
-    console.log('[cotizar] tarifa:', tarifa.zona, tarifa.costo);
+    const tarifa = await calcularCostoEnvio({ distanciaKm, tipoEnvio: tipo_envio });
     res.json({
       ok: true,
       data: {
@@ -606,13 +583,12 @@ const cotizarEnvio = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[cotizar] CATCH tipo:', Object.prototype.toString.call(error));
-    console.error('[cotizar] CATCH:', error);
-    const _debug = error instanceof Error
-      ? `${error.constructor.name}: ${error.message}`
-      : String(error);
-    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa [v3].', _debug });
+    console.error('[cotizar] error:', error);
+    res.status(500).json({ ok: false, mensaje: 'No pudimos calcular la tarifa.' });
   }
 };
 
-module.exports = { crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido, pedidosDelNegocio, cotizarEnvio };
+module.exports = {
+  crearPedido, misPedidos, obtenerPedido, actualizarEstado,
+  calificarPedido, pedidosDelNegocio, cotizarEnvio,
+};

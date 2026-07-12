@@ -1,12 +1,19 @@
-const Usuario        = require('./Usuario');
-const Repartidor     = require('./Repartidor');
-const Negocio        = require('./Negocio');
-const Producto       = require('./Producto');
-const Pedido         = require('./Pedido');
-const DeliveryBatch  = require('./DeliveryBatch');
-const RestaurantToken = require('./RestaurantToken');
-const DriverPayment  = require('./DriverPayment');
-const PlatformRevenue = require('./PlatformRevenue');
+const Usuario          = require('./Usuario');
+const Repartidor       = require('./Repartidor');
+const Negocio          = require('./Negocio');
+const Producto         = require('./Producto');
+const Pedido           = require('./Pedido');
+const DeliveryBatch    = require('./DeliveryBatch');
+const RestaurantToken  = require('./RestaurantToken');
+const DriverPayment    = require('./DriverPayment');
+const PlatformRevenue  = require('./PlatformRevenue');
+const TokenTier        = require('./TokenTier');
+const TokenConsumo     = require('./TokenConsumo');
+const ConfigZona       = require('./ConfigZona');
+const ConfigComision   = require('./ConfigComision');
+const PromoConfig      = require('./PromoConfig');
+const LedgerConciliacion = require('./LedgerConciliacion');
+const FondoRepartidor  = require('./FondoRepartidor');
 
 // ─── Relaciones base ──────────────────────────────────────
 Usuario.hasOne(Repartidor, { foreignKey: 'usuario_id', as: 'perfil_repartidor' });
@@ -49,7 +56,21 @@ DriverPayment.belongsTo(Pedido, { foreignKey: 'order_id', as: 'pedido' });
 Pedido.hasOne(PlatformRevenue, { foreignKey: 'order_id', as: 'revenue' });
 PlatformRevenue.belongsTo(Pedido, { foreignKey: 'order_id', as: 'pedido' });
 
+// ─── Ledger de conciliación ───────────────────────────────
+Pedido.hasOne(LedgerConciliacion, { foreignKey: 'pedido_id', as: 'ledger' });
+LedgerConciliacion.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
+
+// ─── Fondo del repartidor ─────────────────────────────────
+Repartidor.hasOne(FondoRepartidor, { foreignKey: 'repartidor_id', as: 'fondo' });
+FondoRepartidor.belongsTo(Repartidor, { foreignKey: 'repartidor_id', as: 'repartidor' });
+
+// ─── Token consumos ───────────────────────────────────────
+RestaurantToken.hasMany(TokenConsumo, { foreignKey: 'restaurant_token_id', as: 'consumos' });
+TokenConsumo.belongsTo(RestaurantToken, { foreignKey: 'restaurant_token_id', as: 'lote' });
+
 module.exports = {
   Usuario, Repartidor, Negocio, Producto, Pedido,
   DeliveryBatch, RestaurantToken, DriverPayment, PlatformRevenue,
+  TokenTier, TokenConsumo, ConfigZona, ConfigComision,
+  PromoConfig, LedgerConciliacion, FondoRepartidor,
 };

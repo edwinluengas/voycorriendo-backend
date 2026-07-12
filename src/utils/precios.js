@@ -1,82 +1,72 @@
 /**
- * Utilidades de cálculo económico — Modelo Flat Rate VoyCorriendo
- *
- * Tarifa plana: $35 cliente / $35 negocio / $35 repartidor (standard)
- *               $60 cliente / $35 negocio / $50 repartidor (express)
- * Mínimo de pedido: $100 MXN en productos
+ * Cálculo económico — VoyCorriendo
+ * Las tarifas se cargan desde config_zonas y config_comisiones en DB (cache 5 min).
+ * Fallback a valores locales si DB no responde.
  */
 const {
-  TARIFAS_CLIENTE, COMISION_FLAT, PAGO_REPARTIDOR,
-  MAX_DISTANCE_KM, VOYTOKENS, ZONAS, HORA_PICO_RANGOS,
+  TARIFAS_CLIENTE, PAGO_REPARTIDOR, MAX_DISTANCE_KM, VOYTOKENS,
 } = require('../config/precios');
 
 const r2 = (n) => Math.round(n * 100) / 100;
 
-// Compatibilidad legacy: zona según distancia (solo para cobertura)
-const calcularZona = (distanciaKm) => {
-  if (!Number.isFinite(distanciaKm) || distanciaKm < 0) return null;
-  if (distanciaKm > MAX_DISTANCE_KM) return null;
-  if (distanciaKm <= ZONAS.A.hasta) return 'A';
-  if (distanciaKm <= ZONAS.B.hasta) return 'B';
-  if (distanciaKm <= ZONAS.C.hasta) return 'C';
-  return null;
-};
+// ─── Costo de envío al cliente (zona-based) ───────────────
+// Retorna { zona, costo, fueraDeCobertura, desglose }
+const calcularCostoEnvio = async ({ distanciaKm, tipoEnvio = 'standard' }) => {
+  try {
+    const { getZona } = require('../services/config.service');
+    const zona = await getZona(tipoEnvio);
+    if (zona) {
+      const maxKm = Number(zona.max_km);
+      if (distanciaKm == null || distanciaKm > maxKm) {
+        return { zona: null, costo: 0, fueraDeCobertura: true, desglose: {} };
+      }
+      let costo = Number(zona.fee_base);
+      if (zona.surcharge_inicio_km != null && distanciaKm > Number(zona.surcharge_inicio_km)) {
+        const excedente = distanciaKm - Number(zona.surcharge_inicio_km);
+        costo += excedente * Number(zona.surcharge_por_km);
+        costo = r2(costo);
+      }
+      return {
+        zona: distanciaKm <= 2 ? 'A' : distanciaKm <= 3 ? 'B' : 'C',
+        costo,
+        fueraDeCobertura: false,
+        desglose: { base: Number(zona.fee_base), tipoEnvio, distanciaKm },
+      };
+    }
+  } catch (e) {
+    console.warn('[precios] Usando fallback (config.service falló):', e.message);
+  }
 
-const esHoraPico = (fecha = new Date()) => {
-  const h = fecha.getHours();
-  return HORA_PICO_RANGOS.some(({ desde, hasta }) => h >= desde && h < hasta);
-};
-
-// ─── Costo de envío al cliente (FLAT) ────────────────────
-// Sin importar zona ni distancia: $35 standard / $60 express
-const calcularCostoEnvio = ({ distanciaKm, tipoEnvio = 'standard' }) => {
-  const zona = calcularZona(distanciaKm);
-  if (!zona) return { zona: null, costo: 0, desglose: {}, fueraDeCobertura: true };
-  const costo = tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
+  // Fallback a config local
+  const maxFallback = tipoEnvio === 'express' ? 4 : MAX_DISTANCE_KM;
+  if (distanciaKm == null || distanciaKm > maxFallback) {
+    return { zona: null, costo: 0, fueraDeCobertura: true, desglose: {} };
+  }
+  const costoFallback = tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
   return {
-    zona,
-    costo,
+    zona: distanciaKm <= 2 ? 'A' : 'B',
+    costo: costoFallback,
     fueraDeCobertura: false,
-    desglose: { flat: costo, tipoEnvio },
+    desglose: { flat: costoFallback, tipoEnvio },
   };
 };
 
-// ─── Pago al repartidor (FLAT) ────────────────────────────
-const calcularPagoRepartidor = ({ tipoEnvio = 'standard' }) => {
-  const pago = tipoEnvio === 'express' ? PAGO_REPARTIDOR.EXPRESS : PAGO_REPARTIDOR.STANDARD;
-  return { pago, desglose: { flat: pago, tipoEnvio } };
-};
-
-// ─── Comisión al negocio (FLAT) ───────────────────────────
-// Siempre $35 por pedido, sin importar subtotal ni categoría
-const calcularComision = () => {
-  return { comision: COMISION_FLAT, flat: true };
-};
-
-// ─── Ganancia neta de la app ──────────────────────────────
-// standard: $35 (cliente) + $35 (negocio) - $35 (repa) = $35
-// express:  $60 (cliente) + $35 (negocio) - $50 (repa) = $45
-const calcularGananciaApp = ({ costoEnvio, pagoRepartidor }) => {
-  return r2(
-    COMISION_FLAT +
-    (Number(costoEnvio) || 0) -
-    (Number(pagoRepartidor) || 0)
-  );
+// ─── Distancia máxima permitida por tipo de envío ────────
+const getMaxKm = async (tipoEnvio = 'standard') => {
+  try {
+    const { getZona } = require('../services/config.service');
+    const zona = await getZona(tipoEnvio);
+    if (zona) return Number(zona.max_km);
+  } catch (_) {}
+  return tipoEnvio === 'express' ? 4 : MAX_DISTANCE_KM;
 };
 
 // ─── VoyTokens para el cliente ────────────────────────────
-// 1 token por cada $10 en productos. 35 tokens = envío gratis.
-const calcularVoyTokens = (subtotal) => {
-  return Math.floor(subtotal / VOYTOKENS.POR_PESO);
-};
+const calcularVoyTokens = (subtotal) => Math.floor(subtotal / VOYTOKENS.POR_PESO);
 
 module.exports = {
-  calcularZona,
-  esHoraPico,
   calcularCostoEnvio,
-  calcularPagoRepartidor,
-  calcularComision,
-  calcularGananciaApp,
+  getMaxKm,
   calcularVoyTokens,
   MAX_DISTANCE_KM,
 };
