@@ -1,4 +1,4 @@
-const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch } = require('../models');
+const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor } = require('../models');
 const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
@@ -521,6 +521,65 @@ const miRuta = async (req, res) => {
   }
 };
 
+// ─── GET /api/repartidores/ganancias ─────────────────────
+const ganancias = async (req, res) => {
+  try {
+    const repartidor = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
+
+    const entregados = await Pedido.findAll({
+      where: { repartidor_id: repartidor.id, estado: 'entregado' },
+      attributes: ['id', 'numero', 'creado_en', 'pago_repartidor', 'propina', 'metodo_pago', 'total'],
+      order: [['creado_en', 'DESC']],
+    });
+
+    const totalEnvios   = entregados.reduce((s, p) => s + parseFloat(p.pago_repartidor || 0), 0);
+    const totalPropinas = entregados.reduce((s, p) => s + parseFloat(p.propina || 0), 0);
+
+    const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
+
+    res.json({
+      ok: true,
+      data: {
+        pedidos_completados: entregados.length,
+        ganancias_envios:    totalEnvios,
+        propinas_cobradas:   totalPropinas,
+        total_ganado:        totalEnvios + totalPropinas,
+        fondo_efectivo:      parseFloat(fondo?.monto_disponible || 0),
+        pedidos_recientes:   entregados.slice(0, 30),
+      },
+    });
+  } catch (error) {
+    console.error('Error en ganancias repartidor:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener ganancias.' });
+  }
+};
+
+// ─── POST /api/repartidores/solicitar-deposito ────────────
+const solicitarDeposito = async (req, res) => {
+  try {
+    const repartidor = await Repartidor.findOne({
+      where: { usuario_id: req.usuario.id },
+      include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'telefono'] }],
+    });
+    if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
+
+    const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
+    const monto = parseFloat(fondo?.monto_disponible || 0);
+
+    console.log(`[deposito] Solicitud de ${repartidor.usuario?.nombre} (${repartidor.id}) por $${monto}`);
+    // Aquí iría la notificación al admin (Telegram/email) en producción
+
+    res.json({
+      ok: true,
+      mensaje: 'Solicitud enviada. Procesaremos tu depósito en 24-48 horas hábiles.',
+      data: { monto_solicitado: monto },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, mensaje: 'Error al solicitar depósito.' });
+  }
+};
+
 module.exports = {
   activarModo,
   actualizarPerfil,
@@ -534,4 +593,6 @@ module.exports = {
   pedidosDisponibles,
   aceptarPedido,
   miRuta,
+  ganancias,
+  solicitarDeposito,
 };

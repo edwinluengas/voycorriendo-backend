@@ -1,6 +1,6 @@
-const { Negocio, Producto, Usuario } = require('../models');
-const { validationResult } = require('express-validator');
+const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion, RestaurantToken } = require('../models');
 const { Op } = require('sequelize');
+const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
@@ -498,6 +498,54 @@ const actualizarProducto = async (req, res) => {
   }
 };
 
+// ─── GET /api/negocios/mi-negocio/ganancias ───────────────
+const gananciasNegocio = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
+
+    const pedidos = await Pedido.findAll({
+      where: { negocio_id: negocio.id, estado: 'entregado' },
+      attributes: ['id'],
+      order: [['creado_en', 'DESC']],
+    });
+
+    const ids = pedidos.map((p) => p.id);
+
+    const ledgers = ids.length > 0
+      ? await LedgerConciliacion.findAll({
+          where: { pedido_id: { [Op.in]: ids } },
+          order: [['registrado_en', 'DESC']],
+        })
+      : [];
+
+    const totalSubtotal    = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos    || 0), 0);
+    const totalComisiones  = ledgers.reduce((s, l) => s + parseFloat(l.comision_plataforma   || 0), 0);
+    const totalLiquidacion = ledgers.reduce((s, l) => s + parseFloat(l.liquidacion_comida    || 0), 0);
+
+    const tokenesActivos = await RestaurantToken.findAll({
+      where: { restaurant_id: negocio.id, tokens_remaining: { [Op.gt]: 0 } },
+      attributes: ['tokens_remaining'],
+    });
+    const tokensDisponibles = tokenesActivos.reduce((s, t) => s + (t.tokens_remaining || 0), 0);
+
+    res.json({
+      ok: true,
+      data: {
+        pedidos_completados: pedidos.length,
+        subtotal_productos:  totalSubtotal,
+        comisiones_pagadas:  totalComisiones,
+        liquidacion_comida:  totalLiquidacion,
+        tokens_disponibles:  tokensDisponibles,
+        resumen:             ledgers.slice(0, 30),
+      },
+    });
+  } catch (error) {
+    console.error('Error en gananciasNegocio:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener ganancias.' });
+  }
+};
+
 module.exports = {
   // Public
   listarNegocios,
@@ -514,6 +562,7 @@ module.exports = {
   crearMiProducto,
   actualizarMiProducto,
   subirFotoProducto,
+  gananciasNegocio,
   // Legacy / operacion
   crearNegocio,
   actualizarNegocio,

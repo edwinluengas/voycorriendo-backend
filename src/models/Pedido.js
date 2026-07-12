@@ -100,6 +100,7 @@ const Pedido = sequelize.define('Pedido', {
   calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   comentario:   { type: DataTypes.TEXT, allowNull: true },
+  propina:      { type: DataTypes.DECIMAL(10, 2), allowNull: true, defaultValue: 0 },
   ciudad:       { type: DataTypes.STRING(50), allowNull: true },
   tipo_envio: {
     type: DataTypes.ENUM('express', 'standard'),

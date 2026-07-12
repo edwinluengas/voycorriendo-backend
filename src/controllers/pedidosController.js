@@ -1,4 +1,4 @@
-const { Pedido, Negocio, Repartidor, Usuario, Producto } = require('../models');
+const { Pedido, Negocio, Repartidor, Usuario, Producto, FondoRepartidor } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
@@ -480,7 +480,7 @@ const actualizarEstado = async (req, res) => {
 // ─── POST /api/pedidos/:id/calificar ─────────────────────
 const calificarPedido = async (req, res) => {
   try {
-    const { calificacion_repartidor, calificacion_negocio, comentario } = req.body;
+    const { calificacion_repartidor, calificacion_negocio, comentario, propina } = req.body;
     const pedido = await Pedido.findOne({
       where: { id: req.params.id, cliente_id: req.usuario.id, estado: 'entregado' },
     });
@@ -491,7 +491,22 @@ const calificarPedido = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Ya calificaste este pedido.' });
     }
 
-    await pedido.update({ calificacion_repartidor: calificacion_repartidor || null, calificacion_negocio, comentario });
+    const propinaNum = parseFloat(propina) || 0;
+    await pedido.update({
+      calificacion_repartidor: calificacion_repartidor || null,
+      calificacion_negocio,
+      comentario,
+      propina: propinaNum > 0 ? propinaNum : 0,
+    });
+
+    // Propina va al fondo del repartidor (transparencia, sin comisión de plataforma)
+    if (propinaNum > 0 && pedido.repartidor_id) {
+      const [fondo] = await FondoRepartidor.findOrCreate({
+        where: { repartidor_id: pedido.repartidor_id },
+        defaults: { monto_disponible: 0, monto_reservado: 0 },
+      });
+      await fondo.increment('monto_disponible', { by: propinaNum });
+    }
 
     if (calificacion_negocio) {
       const negocio = await Negocio.findByPk(pedido.negocio_id);

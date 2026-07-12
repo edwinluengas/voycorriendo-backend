@@ -328,6 +328,7 @@ const migrarDB = async () => {
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS paga_con NUMERIC(10,2)`);
   await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS precio_pagado NUMERIC(10,2)`);
   await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS tokens_comprados INTEGER`);
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS propina NUMERIC(10,2) DEFAULT 0`);
 
   // Convertir pack_type de ENUM a VARCHAR (permite silver/golden/diamond + valores futuros)
   await run(`ALTER TABLE restaurant_tokens ALTER COLUMN pack_type TYPE VARCHAR(20) USING pack_type::text`);
