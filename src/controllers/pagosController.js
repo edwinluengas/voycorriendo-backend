@@ -6,7 +6,7 @@
  *   POST   /api/pagos/webhook/mercado-pago (público) → recibe confirmación MP
  */
 
-const { Pedido, Usuario, RestaurantToken, Negocio } = require('../models');
+const { Pedido, Usuario, RestaurantToken, Negocio, Repartidor } = require('../models');
 const pagosService = require('../services/pagos.service');
 const push = require('../services/notificaciones.service');
 const tg   = require('../services/telegram.service');
@@ -105,6 +105,14 @@ const registrarEfectivo = async (req, res) => {
     const { pedido_id, monto_recibido } = req.body;
     const pedido = await Pedido.findByPk(pedido_id);
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
+
+    // Solo el repartidor asignado puede registrar el cobro en efectivo
+    if (req.usuario.rol === 'repartidor' || req.usuario.modo_activo === 'repartidor') {
+      const rep = await Repartidor.findOne({ where: { usuario_id: req.usuario.id }, attributes: ['id'] });
+      if (!rep || String(pedido.repartidor_id) !== String(rep.id)) {
+        return res.status(403).json({ ok: false, mensaje: 'No autorizado para este pedido.' });
+      }
+    }
 
     const result = await pagosService.registrarPagoEfectivo({ pedido, monto_recibido });
     if (!result.ok) return res.status(400).json(result);

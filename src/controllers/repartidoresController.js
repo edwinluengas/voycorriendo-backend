@@ -578,8 +578,17 @@ const solicitarDeposito = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
     }
 
+    const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (adminChatId) {
+      tg.enviar(adminChatId,
+        `💰 <b>Solicitud de depósito</b>\n` +
+        `Repartidor: ${repartidor.usuario?.nombre}\n` +
+        `Teléfono: ${repartidor.usuario?.telefono || 'N/A'}\n` +
+        `Monto: $${monto.toFixed(2)} MXN\n` +
+        `ID: ${repartidor.id}`
+      ).catch(() => {});
+    }
     console.log(`[deposito] Solicitud de ${repartidor.usuario?.nombre} (${repartidor.id}) por $${monto}`);
-    // Aquí iría la notificación al admin (Telegram/email) en producción
 
     res.json({
       ok: true,

@@ -15,15 +15,18 @@ const MP_BASE_URL       = 'https://api.mercadopago.com';
 const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 500);
 
 // ─── Validación de límite de efectivo ─────────────────────────
-const validarMetodoPago = ({ metodo_pago, total }) => {
+// El límite aplica al SUBTOTAL de productos. El fee de envío se cobra encima.
+// Total pagado en efectivo = subtotal (≤$500) + costo_envio
+const validarMetodoPago = ({ metodo_pago, subtotal, costo_envio = 0 }) => {
   const metodosValidos = ['efectivo', 'tarjeta', 'transferencia', 'mercado_pago'];
   if (!metodosValidos.includes(metodo_pago)) {
     return { ok: false, mensaje: 'Método de pago no válido.' };
   }
-  if (metodo_pago === 'efectivo' && total > LIMITE_EFECTIVO) {
+  if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
+    const totalConEnvio = (subtotal + parseFloat(costo_envio || 0)).toFixed(2);
     return {
       ok: false,
-      mensaje: `Los pagos en efectivo tienen un límite de $${LIMITE_EFECTIVO.toLocaleString('es-MX')} MXN. Tu pedido es de $${total.toFixed(2)} MXN. Elige tarjeta, transferencia o Mercado Pago.`,
+      mensaje: `Efectivo solo disponible cuando los productos no superen $${LIMITE_EFECTIVO.toLocaleString('es-MX')} MXN. Tu subtotal es $${subtotal.toFixed(2)} (total con envío: $${totalConEnvio}). Elige tarjeta o Mercado Pago.`,
     };
   }
   return { ok: true };
@@ -174,17 +177,22 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido, Restau
       const [, pack_type, negocio_id] = ref.split(':');
       if (pago.status !== 'approved') return { ok: true, tipo: 'token', mensaje: 'Pago no aprobado aún.' };
 
-      const { RestaurantToken: TokenModel } = RestaurantToken ? { RestaurantToken } : {};
-      const PACKS  = TokenModel?.PACK_TOKENS || { starter: 50, pro: 200, elite: 500 };
-      const EXPIRY = TokenModel?.PACK_EXPIRY || { starter: 60, pro: 90, elite: 120 };
+      // Consultar el tier real desde DB para obtener tokens y vigencia correctos
+      const { TokenTier } = require('../models');
+      const tier = await TokenTier.findOne({ where: { nombre: pack_type } });
+      const tokens_acreditados = tier ? Number(tier.tokens) : 50;
+      const vigencia_dias      = tier ? Number(tier.vigencia_dias) : 60;
+      const precio_pagado      = tier ? Number(tier.precio) : null;
 
       const expires_at = new Date();
-      expires_at.setDate(expires_at.getDate() + (EXPIRY[pack_type] || 60));
+      expires_at.setDate(expires_at.getDate() + vigencia_dias);
 
       const token = await RestaurantToken.create({
         restaurant_id:    negocio_id,
-        tokens_remaining: PACKS[pack_type] || 50,
+        tokens_remaining: tokens_acreditados,
+        tokens_comprados: tokens_acreditados,
         pack_type,
+        precio_pagado,
         expires_at,
       });
 

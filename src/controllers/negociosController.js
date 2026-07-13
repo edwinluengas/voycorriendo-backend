@@ -533,7 +533,8 @@ const gananciasNegocio = async (req, res) => {
 
     const totalSubtotal    = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos    || 0), 0);
     const totalComisiones  = ledgers.reduce((s, l) => s + parseFloat(l.comision_plataforma   || 0), 0);
-    const totalLiquidacion = ledgers.reduce((s, l) => s + parseFloat(l.liquidacion_comida    || 0), 0);
+    // liquidacion_comida es un string descriptor ('efectivo_repartidor'|'mp_directo'), no un monto
+    const totalLiquidacion = totalSubtotal - totalComisiones;
 
     const tokenesActivos = await RestaurantToken.findAll({
       where: { restaurant_id: negocio.id, tokens_remaining: { [Op.gt]: 0 } },

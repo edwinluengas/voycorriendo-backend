@@ -91,8 +91,18 @@ io.on('connection', (socket) => {
   });
 
   // Repartidor aprobado se une a la sala global para recibir 'pedido_disponible' en tiempo real
-  socket.on('unirse_repartidor', (usuario_id) => {
-    socket.join('repartidores_activos');
+  socket.on('unirse_repartidor', async () => {
+    try {
+      const { Repartidor } = require('./models');
+      const rep = await Repartidor.findOne({
+        where: { usuario_id: socket.userId, verificacion_estado: 'aprobado' },
+        attributes: ['id'],
+      });
+      if (!rep) return;
+      socket.join('repartidores_activos');
+    } catch (e) {
+      console.warn('[socket] Error validando repartidor:', e.message);
+    }
   });
 
   socket.on('actualizar_ubicacion', async (data) => {

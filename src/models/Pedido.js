@@ -52,11 +52,13 @@ const Pedido = sequelize.define('Pedido', {
     defaultValue: 'pendiente',
   },
   pago_referencia: { type: DataTypes.STRING, allowNull: true },
-  // Validación de límite de efectivo
+  // Cambio para efectivo: cuánto entregó el cliente
+  paga_con: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+  // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma encima
   excede_limite_efectivo: {
     type: DataTypes.VIRTUAL,
     get() {
-      return this.metodo_pago === 'efectivo' && this.total > 500;
+      return this.metodo_pago === 'efectivo' && parseFloat(this.subtotal) > 500;
     },
   },
   // Estado del pedido
@@ -120,8 +122,9 @@ const Pedido = sequelize.define('Pedido', {
   updatedAt: 'actualizado_en',
   hooks: {
     beforeCreate: (pedido) => {
-      if (pedido.metodo_pago === 'efectivo' && pedido.total > 500) {
-        throw new Error('Los pedidos en efectivo no pueden superar $500 MXN. Por favor elige otro método de pago.');
+      // Límite en subtotal (sin envío), igual que la validación del controller
+      if (pedido.metodo_pago === 'efectivo' && parseFloat(pedido.subtotal) > 500) {
+        throw new Error('Los pedidos en efectivo no pueden superar $500 MXN en productos. Por favor elige otro método de pago.');
       }
     },
   },
