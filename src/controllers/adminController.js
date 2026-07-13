@@ -131,11 +131,13 @@ const obtenerRepartidor = async (req, res) => {
       obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_tarjeta_circulacion),
     ]);
 
+    const rData = r.toJSON();
+    delete rData.clabe_bancaria; // cifrada AES pero no necesaria en esta vista
     res.json({
       ok: true,
       data: {
         repartidor: {
-          ...r.toJSON(),
+          ...rData,
           documentos_firmados: {
             ine_frente: ineFrente,
             ine_reverso: ineReverso,

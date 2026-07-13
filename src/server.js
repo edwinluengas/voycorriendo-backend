@@ -55,13 +55,39 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id} usuario:${socket.userId}`);
 
-  socket.on('unirse_pedido', (pedido_id) => {
-    socket.join(`pedido:${pedido_id}`);
+  socket.on('unirse_pedido', async (pedido_id) => {
+    try {
+      const { Pedido, Repartidor, Negocio } = require('./models');
+      const pedido = await Pedido.findByPk(pedido_id, {
+        attributes: ['cliente_id', 'repartidor_id', 'negocio_id'],
+        include: [
+          { model: Repartidor, as: 'repartidor', attributes: ['usuario_id'] },
+          { model: Negocio,    as: 'negocio',    attributes: ['usuario_id'] },
+        ],
+      });
+      if (!pedido) return;
+      const esCliente    = String(pedido.cliente_id) === String(socket.userId);
+      const esRepartidor = pedido.repartidor?.usuario_id &&
+        String(pedido.repartidor.usuario_id) === String(socket.userId);
+      const esNegocio    = pedido.negocio?.usuario_id &&
+        String(pedido.negocio.usuario_id) === String(socket.userId);
+      if (!esCliente && !esRepartidor && !esNegocio) return;
+      socket.join(`pedido:${pedido_id}`);
+    } catch (e) {
+      console.warn('[socket] Error validando acceso a pedido:', e.message);
+    }
   });
 
   // El dueño del negocio se une a su sala para recibir 'nuevo_pedido' en tiempo real
-  socket.on('unirse_negocio', (negocio_id) => {
-    socket.join(`negocio:${negocio_id}`);
+  socket.on('unirse_negocio', async (negocio_id) => {
+    try {
+      const { Negocio } = require('./models');
+      const negocio = await Negocio.findByPk(negocio_id, { attributes: ['usuario_id'] });
+      if (!negocio || String(negocio.usuario_id) !== String(socket.userId)) return;
+      socket.join(`negocio:${negocio_id}`);
+    } catch (e) {
+      console.warn('[socket] Error validando acceso a negocio:', e.message);
+    }
   });
 
   // Repartidor aprobado se une a la sala global para recibir 'pedido_disponible' en tiempo real

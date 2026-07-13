@@ -180,7 +180,10 @@ const crearPedido = async (req, res) => {
         ciudad:           negocio.ciudad || 'puerto_escondido',
         tipo_envio,
         fee_cliente,
-        paga_con:         metodo_pago === 'efectivo' ? (paga_con ? Number(paga_con) : null) : null,
+        paga_con:         metodo_pago === 'efectivo' ? (() => {
+          const pc = Number(paga_con);
+          return (!isNaN(pc) && pc >= total && pc <= 10000) ? pc : null;
+        })() : null,
         direccion_entrega,
         latitud_entrega,
         longitud_entrega,
@@ -286,9 +289,9 @@ const obtenerPedido = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'No tienes acceso a este pedido.' });
     }
 
-    // El repartidor no debe ver el código — lo obtiene verbalmente del cliente al entregar
+    // El código solo lo ve el CLIENTE — el repartidor lo recibe verbalmente, el negocio no lo necesita
     const pedidoData = pedido.toJSON();
-    if (esRepartidor && !esCliente && !esAdmin) {
+    if (!esCliente && !esAdmin) {
       delete pedidoData.codigo_entrega;
     }
 

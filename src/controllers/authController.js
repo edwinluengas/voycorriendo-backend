@@ -16,7 +16,7 @@ const generarToken = (usuario) =>
   );
 
 // Genera OTP de 6 dígitos con entropía criptográfica
-const generarOTP = () => randomInt(100000, 1000000).toString();
+const generarOTP = () => randomInt(0, 1000000).toString().padStart(6, '0');
 
 // Cliente Twilio (solo si está configurado)
 const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)

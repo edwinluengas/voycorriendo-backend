@@ -9,9 +9,17 @@
 
 const jwt = require('jsonwebtoken');
 const { Usuario } = require('../models');
-const { enviar } = require('../services/telegram.service');
+const { enviar, WEBHOOK_SECRET } = require('../services/telegram.service');
 
 const manejarUpdate = async (req, res) => {
+  // Validar que el request viene de Telegram via secret_token
+  if (WEBHOOK_SECRET) {
+    const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
+    if (headerSecret !== WEBHOOK_SECRET) {
+      return res.sendStatus(403);
+    }
+  }
+
   res.sendStatus(200); // Telegram necesita 200 inmediato
 
   const msg = req.body?.message;

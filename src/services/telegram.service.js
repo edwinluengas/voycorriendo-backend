@@ -30,6 +30,11 @@ const enviar = async (chatId, texto, extras = {}) => {
 
 const enviarAdmin = (texto) => enviar(ADMIN_ID, texto);
 
+// Secret para validar que el webhook viene de Telegram
+const WEBHOOK_SECRET = TOKEN
+  ? require('crypto').createHash('sha256').update(TOKEN).digest('hex').substring(0, 32)
+  : null;
+
 // ─── Registrar webhook con Telegram ───────────────────────────
 const registrarWebhook = async () => {
   if (!BASE_URL) {
@@ -38,12 +43,16 @@ const registrarWebhook = async () => {
   }
   const url = `${process.env.API_PUBLIC_URL}/api/telegram/webhook`;
   try {
-    const { data } = await axios.post(`${BASE_URL}/setWebhook`, { url });
+    const { data } = await axios.post(`${BASE_URL}/setWebhook`, {
+      url,
+      secret_token: WEBHOOK_SECRET,
+    });
     console.log(`[Telegram] Webhook registrado: ${data.description}`);
   } catch (err) {
     console.error('[Telegram] Error registrando webhook:', err.response?.data || err.message);
   }
 };
+
 
 // ─── Alertas de negocio ────────────────────────────────────────
 
@@ -113,4 +122,5 @@ module.exports = {
   alertaAdminNuevoRepartidor,
   alertaAdminNuevoNegocio,
   alertaAdminPedidoSinDriver,
+  WEBHOOK_SECRET,
 };
