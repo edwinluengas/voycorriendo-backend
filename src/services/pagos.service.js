@@ -67,19 +67,22 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
   }
 
   const items = pedido.items.map((it) => ({
-    title: it.nombre,
-    quantity: it.cantidad,
-    unit_price: parseFloat(it.precio_unitario),
+    title: String(it.nombre).substring(0, 256),
+    quantity: Number(it.cantidad) || 1,
+    unit_price: Math.max(0.01, parseFloat(it.precio_unitario) || 0),
     currency_id: 'MXN',
   }));
 
-  // costo de envío como un item extra
-  items.push({
-    title: 'Costo de envío',
-    quantity: 1,
-    unit_price: parseFloat(pedido.costo_envio),
-    currency_id: 'MXN',
-  });
+  // Costo de envío como ítem extra — MP rechaza unit_price = 0
+  const costoEnvio = parseFloat(pedido.costo_envio) || 0;
+  if (costoEnvio > 0) {
+    items.push({
+      title: 'Costo de envío',
+      quantity: 1,
+      unit_price: costoEnvio,
+      currency_id: 'MXN',
+    });
+  }
 
   const payload = {
     items,

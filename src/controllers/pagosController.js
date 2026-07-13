@@ -32,8 +32,10 @@ const crearPreferencia = async (req, res) => {
       data: pref,
     });
   } catch (error) {
-    console.error('Error crearPreferencia:', error.response?.data || error.message);
-    res.status(500).json({ ok: false, mensaje: 'No se pudo crear la preferencia de pago.' });
+    const mpError = error.response?.data;
+    console.error('[MP] Error crearPreferencia:', JSON.stringify(mpError || error.message));
+    const mensajeAmigable = mpError?.message || mpError?.error || 'No se pudo crear la preferencia de pago.';
+    res.status(500).json({ ok: false, mensaje: mensajeAmigable, _debug: mpError });
   }
 };
 
