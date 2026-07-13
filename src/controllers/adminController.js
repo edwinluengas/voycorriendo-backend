@@ -386,6 +386,36 @@ const listarUsuarios = async (req, res) => {
   }
 };
 
+// ─── POST /api/admin/negocios/:id/confirmar-pago ─────────────
+// El admin verifica la transferencia SPEI del restaurante y libera la deuda.
+const confirmarPagoDeuda = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const negocio = await Negocio.findByPk(id);
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+
+    const deudaAntes = parseFloat(negocio.deuda_plataforma || 0);
+    negocio.deuda_plataforma  = 0;
+    negocio.bloqueado_por_deuda = false;
+    if (negocio.estado_cuenta === 'bloqueado') {
+      negocio.estado_cuenta = 'normal';
+      negocio.estado_motivo = null;
+    }
+    await negocio.save();
+
+    logAdmin({
+      adminId: req.usuario.id, accion: 'confirmar_pago_deuda', entidadTipo: 'negocio',
+      entidadId: negocio.id, estadoAntes: { deuda: deudaAntes },
+      estadoDespues: { deuda: 0 }, ip: req.ip,
+    });
+
+    res.json({ ok: true, mensaje: `Deuda de $${deudaAntes.toFixed(2)} MXN liquidada. Negocio desbloqueado.`, data: { negocio } });
+  } catch (e) {
+    console.error('Error confirmarPagoDeuda:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al confirmar el pago.' });
+  }
+};
+
 module.exports = {
   dashboard,
   // Repartidores
@@ -400,6 +430,7 @@ module.exports = {
   aprobarNegocio,
   rechazarNegocio,
   cambiarEstadoCuentaNegocio,
+  confirmarPagoDeuda,
   // Usuarios
   listarUsuarios,
   // Revenue

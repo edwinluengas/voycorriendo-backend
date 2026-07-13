@@ -600,6 +600,50 @@ const solicitarDeposito = async (req, res) => {
   }
 };
 
+// ─── POST /api/repartidores/retiro-diario ─────────────────
+// Retiro inmediato con fee de $10 (los viernes es gratis: usar solicitarDeposito).
+const retiroDiario = async (req, res) => {
+  try {
+    const { FEE_RETIRO_DIARIO } = require('../config/precios');
+
+    const repartidor = await Repartidor.findOne({
+      where: { usuario_id: req.usuario.id },
+      include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'telefono'] }],
+    });
+    if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
+
+    const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
+    const disponible = parseFloat(fondo?.monto_disponible || 0);
+    const neto       = disponible - FEE_RETIRO_DIARIO;
+
+    if (neto <= 0) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Necesitas al menos $${FEE_RETIRO_DIARIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
+      });
+    }
+
+    const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (adminChatId) {
+      tg.enviar(adminChatId,
+        `⚡ <b>Retiro diario solicitado</b>\n` +
+        `Repartidor: ${repartidor.usuario?.nombre}\n` +
+        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO} | Neto: $${neto.toFixed(2)} MXN\n` +
+        `ID: ${repartidor.id}`
+      ).catch(() => {});
+    }
+
+    res.json({
+      ok: true,
+      mensaje: `Retiro solicitado. Recibirás $${neto.toFixed(2)} MXN (se descontó el fee de $${FEE_RETIRO_DIARIO}).`,
+      data: { disponible, fee: FEE_RETIRO_DIARIO, neto },
+    });
+  } catch (error) {
+    console.error('Error retiroDiario:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al procesar el retiro.' });
+  }
+};
+
 module.exports = {
   activarModo,
   actualizarPerfil,
@@ -615,4 +659,5 @@ module.exports = {
   miRuta,
   ganancias,
   solicitarDeposito,
+  retiroDiario,
 };

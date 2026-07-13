@@ -46,6 +46,12 @@ const crearPedido = async (req, res) => {
     if (!negocio || !negocio.activo) {
       return res.status(400).json({ ok: false, mensaje: 'El negocio no está disponible.' });
     }
+    if (negocio.bloqueado_por_deuda) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Este negocio tiene pedidos suspendidos temporalmente. Intenta más tarde o elige otro restaurante.',
+      });
+    }
 
     // 2. Validar items
     let subtotal = 0;
@@ -140,19 +146,7 @@ const crearPedido = async (req, res) => {
       ? calcularFeeCliente({ tipoEnvio: tipo_envio })
       : tarifaResult.costo;
 
-    let tokens_canjeados = 0;
-    if (usa_tokens) {
-      const clienteDB = await Usuario.findByPk(req.usuario.id, { attributes: ['voytokens'] });
-      const tokensActuales = clienteDB?.voytokens || 0;
-      if (tokensActuales < VOYTOKENS.ENVIO_GRATIS) {
-        return res.status(400).json({
-          ok: false,
-          mensaje: `Necesitas ${VOYTOKENS.ENVIO_GRATIS} VoyTokens para envío gratis. Tienes ${tokensActuales}.`,
-        });
-      }
-      fee_cliente = 0;
-      tokens_canjeados = VOYTOKENS.ENVIO_GRATIS;
-    }
+    const tokens_canjeados = 0; // VoyTokens deshabilitados en modelo v1.2.17
 
     const total = subtotal + fee_cliente;
 

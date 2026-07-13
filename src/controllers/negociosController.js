@@ -1,7 +1,9 @@
 const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion, RestaurantToken } = require('../models');
-const { Op } = require('sequelize');
+const { Op, literal } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
+const { COMISION_FLAT, TOPE_DEUDA } = require('../config/precios');
+const tg = require('../services/telegram.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -518,7 +520,7 @@ const gananciasNegocio = async (req, res) => {
 
     const pedidos = await Pedido.findAll({
       where: { negocio_id: negocio.id, estado: 'entregado' },
-      attributes: ['id'],
+      attributes: ['id', 'metodo_pago', 'subtotal', 'creado_en'],
       order: [['creado_en', 'DESC']],
     });
 
@@ -531,16 +533,38 @@ const gananciasNegocio = async (req, res) => {
         })
       : [];
 
-    const totalSubtotal    = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos    || 0), 0);
-    const totalComisiones  = ledgers.reduce((s, l) => s + parseFloat(l.comision_plataforma   || 0), 0);
-    // liquidacion_comida es un string descriptor ('efectivo_repartidor'|'mp_directo'), no un monto
+    const totalSubtotal   = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos  || 0), 0);
+    const totalComisiones = ledgers.reduce((s, l) => s + parseFloat(l.comision_plataforma || 0), 0);
     const totalLiquidacion = totalSubtotal - totalComisiones;
 
-    const tokenesActivos = await RestaurantToken.findAll({
-      where: { restaurant_id: negocio.id, tokens_remaining: { [Op.gt]: 0 } },
-      attributes: ['tokens_remaining'],
-    });
-    const tokensDisponibles = tokenesActivos.reduce((s, t) => s + (t.tokens_remaining || 0), 0);
+    // ── Desglose tarjeta vs efectivo ─────────────────────────
+    const ledgersTarjeta  = ledgers.filter((l) => l.metodo_pago !== 'efectivo');
+    const ledgersEfectivo = ledgers.filter((l) => l.metodo_pago === 'efectivo');
+    const subtotalTarjeta  = ledgersTarjeta.reduce((s, l)  => s + parseFloat(l.subtotal_productos || 0), 0);
+    const subtotalEfectivo = ledgersEfectivo.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0);
+
+    // ── Pendientes de corte del viernes (tarjeta no conciliada) ─
+    const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado);
+    const plataformaDebeNegocio = ledgersSinConciliar.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+    );
+
+    // ── Deuda acumulada del negocio con la plataforma ─────────
+    const deudaActual = parseFloat(negocio.deuda_plataforma || 0);
+
+    // ── Proyección del próximo viernes (neto) ─────────────────
+    // Depósito viernes = (pedidos tarjeta no conciliados × (subtotal − $35)) − deuda efectivo
+    const netoViernesProyectado = Math.max(0, plataformaDebeNegocio - deudaActual);
+
+    // ── Pedidos del día y la semana ───────────────────────────
+    const ahora   = new Date();
+    const inicioDia    = new Date(ahora.toDateString());
+    const inicioSemana = new Date(ahora);
+    inicioSemana.setDate(ahora.getDate() - ahora.getDay());
+    inicioSemana.setHours(0, 0, 0, 0);
+
+    const ledgersHoy    = ledgers.filter((l) => new Date(l.registrado_en) >= inicioDia);
+    const ledgersSemana = ledgers.filter((l) => new Date(l.registrado_en) >= inicioSemana);
 
     res.json({
       ok: true,
@@ -549,13 +573,66 @@ const gananciasNegocio = async (req, res) => {
         subtotal_productos:  totalSubtotal,
         comisiones_pagadas:  totalComisiones,
         liquidacion_comida:  totalLiquidacion,
-        tokens_disponibles:  tokensDisponibles,
+        // Desglose
+        subtotal_tarjeta:    subtotalTarjeta,
+        subtotal_efectivo:   subtotalEfectivo,
+        // Plataforma debe al negocio (tarjeta pendiente de corte)
+        plataforma_debe:     Math.max(0, plataformaDebeNegocio),
+        // Negocio debe a la plataforma (fees efectivo acumulados)
+        deuda_plataforma:    deudaActual,
+        bloqueado_por_deuda: negocio.bloqueado_por_deuda,
+        tope_deuda:          TOPE_DEUDA,
+        // Proyección del próximo viernes
+        neto_viernes:        netoViernesProyectado,
+        // Períodos
+        ventas_hoy:    ledgersHoy.reduce((s, l)    => s + parseFloat(l.subtotal_productos || 0), 0),
+        ventas_semana: ledgersSemana.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0),
+        // CLABE de la plataforma para liquidar deuda
+        clabe_plataforma:   process.env.CLABE_PLATAFORMA || '002180902500967465',
+        banco_plataforma:   process.env.BANCO_PLATAFORMA || 'Citibanamex',
+        referencia_spei:    `VC-${negocio.id.slice(0, 8).toUpperCase()}`,
         resumen:             ledgers.slice(0, 30),
       },
     });
   } catch (error) {
     console.error('Error en gananciasNegocio:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al obtener ganancias.' });
+  }
+};
+
+// ─── POST /api/negocios/mi-negocio/pagar-deuda ─────────────
+// El restaurante notifica que hizo la transferencia SPEI.
+// Admin valida y usa PATCH /api/admin/negocios/:id/confirmar-pago para liberar.
+const registrarPagoDeuda = async (req, res) => {
+  try {
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
+
+    const { referencia_spei, monto } = req.body;
+    if (!referencia_spei) {
+      return res.status(400).json({ ok: false, mensaje: 'Proporciona la referencia de tu transferencia SPEI.' });
+    }
+
+    const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (adminChatId) {
+      tg.enviar(adminChatId,
+        `💰 <b>Pago de deuda recibido</b>\n` +
+        `Negocio: ${negocio.nombre}\n` +
+        `ID: <code>${negocio.id}</code>\n` +
+        `Monto declarado: $${parseFloat(monto || 0).toFixed(2)} MXN\n` +
+        `Referencia SPEI: <b>${referencia_spei}</b>\n\n` +
+        `Verifica en la cuenta bancaria y confirma en el panel admin.`
+      ).catch(() => {});
+    }
+
+    res.json({
+      ok: true,
+      mensaje: 'Hemos recibido tu notificación de pago. Un operador la verificará y desbloqueará tu cuenta en breve.',
+      data: { deuda_actual: parseFloat(negocio.deuda_plataforma || 0) },
+    });
+  } catch (error) {
+    console.error('Error en registrarPagoDeuda:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al registrar el pago.' });
   }
 };
 
@@ -577,6 +654,7 @@ module.exports = {
   eliminarMiProducto,
   subirFotoProducto,
   gananciasNegocio,
+  registrarPagoDeuda,
   // Legacy / operacion
   crearNegocio,
   actualizarNegocio,

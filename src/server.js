@@ -370,6 +370,18 @@ const migrarDB = async () => {
   await run(`ALTER TABLE restaurant_tokens ALTER COLUMN pack_type TYPE VARCHAR(20) USING pack_type::text`);
   await run(`DROP TYPE IF EXISTS "enum_restaurant_tokens_pack_type"`);
 
+  // ── v1.2.17 — Modelo de negocio definitivo ────────────────
+  // Deuda acumulada del restaurante con la plataforma (fees efectivo no pagados)
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS deuda_plataforma NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS bloqueado_por_deuda BOOLEAN NOT NULL DEFAULT false`);
+  // Actualizar radio máximo de entrega a 5 km (era 6 para standard, 4 para express)
+  await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'standard' AND max_km != 5`);
+  await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'express'  AND max_km != 5`);
+  // Pedido mínimo actualizado a $150 (solo si la tabla config_zonas es la fuente — el check principal está en precios.js)
+  // Columna en ledger para identificar si el fee ya fue conciliado en el corte semanal
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado BOOLEAN NOT NULL DEFAULT false`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_en TIMESTAMPTZ`);
+
   console.log('[migración] Completada.');
 };
 

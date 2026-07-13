@@ -110,6 +110,10 @@ const Negocio = sequelize.define('Negocio', {
   quejas_30d: { type: DataTypes.INTEGER, defaultValue: 0 },
   // Badge "Top" / "Mas pedido" que se muestra en el feed (estilo DoorDash)
   destacado_calidad: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // ─── Deuda acumulada con la plataforma (fees en efectivo no liquidados) ─
+  deuda_plataforma:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 0 },
+  // true cuando deuda_plataforma >= TOPE_DEUDA ($1,000) — bloqueo automático
+  bloqueado_por_deuda: { type: DataTypes.BOOLEAN, defaultValue: false },
 }, {
   tableName: 'negocios',
   timestamps: true,

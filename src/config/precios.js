@@ -1,17 +1,14 @@
 /**
  * Configuración económica de VoyCorriendo — Modelo Flat Rate
  * -----------------------------------------------------------
- * Modelo simplificado de tarifa plana:
- *   - Cliente: $35 MXN por entrega (standard) | $60 MXN (express)
- *   - Negocio: $35 MXN flat por pedido (no porcentaje)
- *   - Repartidor: $35 MXN flat por entrega (standard) | $50 MXN (express)
- *   - VoyCorriendo: $35 neto por pedido standard
- *   - Pedido mínimo: $100 MXN en productos
- *
- * VoyTokens — Programa de lealtad:
- *   - Cliente gana 1 VoyToken por cada $10 en productos
- *   - 35 tokens = 1 envío gratis
- *   - ~3-4 pedidos promedio para obtener envío gratis
+ * Modelo definitivo (v1.2.17):
+ *   - FEE_PLATAFORMA: $35 MXN flat por pedido cobrado al restaurante
+ *   - Envío: lo paga el CLIENTE y es ingreso del REPARTIDOR
+ *     · Standard $35 | Express $60
+ *   - Pedido mínimo: $150 MXN en productos (sin envío)
+ *   - Radio máximo: 5 km desde el restaurante a la dirección de entrega
+ *   - Tope deuda restaurante: $1,000 MXN (bloqueo automático)
+ *   - Sin cargos de servicio al cliente. Sin envíos gratis. Sin tokens de cliente.
  */
 
 // Pequeño helper: lee una variable de entorno como número, o usa el default
@@ -40,27 +37,20 @@ const PAGO_REPARTIDOR = {
 };
 
 // ─── 4. Reglas de negocio ───────────────────────────────────
-const PEDIDO_MINIMO = num('PEDIDO_MINIMO', 100);  // mínimo en productos (MXN)
-const MAX_DISTANCE_KM = num('MAX_DISTANCE_KM', 6);
+const PEDIDO_MINIMO     = num('PEDIDO_MINIMO',      150);  // mínimo en productos (MXN)
+const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',      5);  // radio máximo de entrega
+const TOPE_DEUDA        = num('TOPE_DEUDA',        1000);  // bloqueo automático restaurante
+const AVISO_DEUDA       = num('AVISO_DEUDA',        700);  // warning antes del bloqueo
+const FEE_RETIRO_DIARIO = num('FEE_RETIRO_DIARIO',   10);  // fee repartidor si retira fuera del viernes
 
-// ─── 5. VoyTokens — Programa de lealtad para clientes ───────
-// 1 token por cada $10 gastados en productos
-// 50 tokens = 1 envío gratis ($35) — equivale a $500 en compras → 7% cashback efectivo
-// Aproximadamente 4-5 pedidos promedio para obtener envío gratis
-const VOYTOKENS = {
-  POR_PESO:     num('TOKENS_POR_PESO', 10),  // cada $10 → 1 token
-  ENVIO_GRATIS: num('TOKENS_ENVIO', 50),     // tokens para canjear envío gratis
-};
-
-// ─── 6. VoyPass — Suscripción mensual (próximamente) ────────
-const VOYPASS = {
-  PRECIO_MXN:  num('VOYPASS_PRECIO', 99),   // $99/mes = envíos gratis todo el mes
-};
-
-// ─── 7. Bonos al repartidor (fase 2) ────────────────────────
+// ─── 5. Bonos al repartidor (fase 2) ────────────────────────
 const BONOS = {
-  METAS_10: num('BONUS_METAS_10', 50),  // bono al completar 10 pedidos en el día
+  METAS_10: num('BONUS_METAS_10', 50),
 };
+
+// Legacy — mantenidos solo para no romper código existente que los importe
+const VOYTOKENS = { POR_PESO: 10, ENVIO_GRATIS: 50 };
+const VOYPASS   = { PRECIO_MXN: 99 };
 
 // Legacy: Zonas se mantienen solo para validar cobertura por distancia
 const HORA_PICO_RANGOS = [
@@ -80,6 +70,9 @@ module.exports = {
   PAGO_REPARTIDOR,
   PEDIDO_MINIMO,
   MAX_DISTANCE_KM,
+  TOPE_DEUDA,
+  AVISO_DEUDA,
+  FEE_RETIRO_DIARIO,
   VOYTOKENS,
   VOYPASS,
   BONOS,

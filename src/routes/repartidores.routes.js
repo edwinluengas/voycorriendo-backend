@@ -17,6 +17,7 @@ const {
   miPerfil,
   ganancias,
   solicitarDeposito,
+  retiroDiario,
 } = require('../controllers/repartidoresController');
 const { proteger } = require('../middleware/auth');
 
@@ -54,6 +55,7 @@ router.get ('/pedidos-disponibles', pedidosDisponibles);
 router.get ('/mi-ruta',             miRuta);
 router.get ('/ganancias',           ganancias);
 router.post('/solicitar-deposito',  solicitarDeposito);
+router.post('/retiro-diario',       retiroDiario);
 router.post('/aceptar-pedido', [
   body('pedido_id').isUUID(),
 ], aceptarPedido);
