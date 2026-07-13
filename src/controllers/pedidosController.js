@@ -488,9 +488,13 @@ const actualizarEstado = async (req, res) => {
 
     // Notificaciones en tiempo real
     const io = req.app.get('io');
-    const payload = { pedido_id: pedido.id, numero: pedido.numero, estado, actualizado_en: new Date() };
-    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payload);
-    if (pedido.negocio_id) io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payload);
+    const payloadBase = { pedido_id: pedido.id, numero: pedido.numero, estado, actualizado_en: new Date() };
+    // Al ir en camino, incluir el código al room privado del pedido (solo lo ve el cliente)
+    const payloadCliente = estado === 'en_camino'
+      ? { ...payloadBase, codigo_entrega: pedido.codigo_entrega }
+      : payloadBase;
+    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payloadCliente);
+    if (pedido.negocio_id) io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payloadBase);
 
     try {
       const clientePush = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
