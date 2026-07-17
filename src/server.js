@@ -371,6 +371,15 @@ const migrarDB = async () => {
   await run(`DROP TYPE IF EXISTS "enum_restaurant_tokens_pack_type"`);
 
   // ── v1.2.17 — Modelo de negocio definitivo ────────────────
+  // Corregir config_comisiones: modelo flat $35 por pedido
+  // pago_repartidor = 100% del envío ($35 standard, $60 express)
+  // comision_plataforma = $35 flat (cobrada al restaurante, no al cliente)
+  await run(`UPDATE config_comisiones SET comision_plataforma = 35, pago_repartidor = 35
+    WHERE tipo_envio = 'standard'`);
+  await run(`UPDATE config_comisiones SET comision_plataforma = 35, pago_repartidor = 60
+    WHERE tipo_envio = 'express'`);
+  // Desactivar promo_efectivo_sin_comision — ya no aplica en el modelo flat
+  await run(`UPDATE promo_config SET activo = false WHERE clave = 'promo_efectivo_sin_comision'`);
   // Deuda acumulada del restaurante con la plataforma (fees efectivo no pagados)
   await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS deuda_plataforma NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS bloqueado_por_deuda BOOLEAN NOT NULL DEFAULT false`);

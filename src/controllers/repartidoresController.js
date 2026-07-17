@@ -1,4 +1,4 @@
-const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor } = require('../models');
+const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor, LedgerConciliacion } = require('../models');
 const { Op } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
@@ -545,6 +545,17 @@ const ganancias = async (req, res) => {
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
 
+    // Envíos de pedidos con tarjeta no conciliados aún (pendientes de pago del viernes)
+    const idsEntregados = entregados.filter(p => p.metodo_pago !== 'efectivo').map(p => p.id);
+    let porDepositar = 0;
+    if (idsEntregados.length > 0) {
+      const ledgersPendientes = await LedgerConciliacion.findAll({
+        where: { pedido_id: { [Op.in]: idsEntregados }, conciliado: false },
+        attributes: ['pago_repartidor'],
+      });
+      porDepositar = ledgersPendientes.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
+    }
+
     res.json({
       ok: true,
       data: {
@@ -553,6 +564,7 @@ const ganancias = async (req, res) => {
         propinas_cobradas:   totalPropinas,
         total_ganado:        totalEnvios + totalPropinas,
         fondo_efectivo:      parseFloat(fondo?.monto_disponible || 0),
+        por_depositar:       porDepositar,
         pedidos_recientes:   entregados.slice(0, 30),
       },
     });

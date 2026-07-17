@@ -13,6 +13,8 @@ const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const MP_BASE_URL       = 'https://api.mercadopago.com';
 const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 500);
+const API_PUBLIC_URL    = process.env.API_PUBLIC_URL || 'https://voycorriendo-backend-production.up.railway.app';
+const APP_DEEP_LINK     = process.env.APP_DEEP_LINK  || null;
 
 // ─── Validación de límite de efectivo ─────────────────────────
 // El límite aplica al SUBTOTAL de productos. El fee de envío se cobra encima.
@@ -95,13 +97,15 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
       phone: cliente?.telefono ? { number: cliente.telefono } : undefined,
     },
     external_reference: pedido.numero,
-    notification_url: `${process.env.API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
-    back_urls: {
-      success: `${process.env.APP_DEEP_LINK}/pago-exitoso?pedido=${pedido.numero}`,
-      failure: `${process.env.APP_DEEP_LINK}/pago-fallido?pedido=${pedido.numero}`,
-      pending: `${process.env.APP_DEEP_LINK}/pago-pendiente?pedido=${pedido.numero}`,
-    },
-    auto_return: 'approved',
+    notification_url: `${API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
+    ...(APP_DEEP_LINK ? {
+      back_urls: {
+        success: `${APP_DEEP_LINK}/pago-exitoso?pedido=${pedido.numero}`,
+        failure: `${APP_DEEP_LINK}/pago-fallido?pedido=${pedido.numero}`,
+        pending: `${APP_DEEP_LINK}/pago-pendiente?pedido=${pedido.numero}`,
+      },
+      auto_return: 'approved',
+    } : {}),
     statement_descriptor: 'VOYCORRIENDO',
     metadata: { pedido_id: pedido.id, cliente_id: pedido.cliente_id },
   };

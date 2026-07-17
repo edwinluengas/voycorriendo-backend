@@ -36,6 +36,13 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
     distancia_km:        pedido.distancia_km || null,
   });
 
+  // Actualizar pago_repartidor en el pedido (lo lee ganancias del repartidor)
+  try {
+    await pedido.update({ pago_repartidor: pagoRepa });
+  } catch (e) {
+    console.warn('[economia] No se pudo actualizar pago_repartidor en pedido:', e.message);
+  }
+
   // Compatibilidad platform_revenue
   await PlatformRevenue.upsert({
     order_id:         pedido.id,

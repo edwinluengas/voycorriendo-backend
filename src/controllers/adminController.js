@@ -7,7 +7,7 @@
  * Todas las rutas requieren middleware: proteger + restringirA('admin').
  */
 const { Op, fn, col, literal } = require('sequelize');
-const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, RestaurantToken } = require('../models');
+const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, RestaurantToken, LedgerConciliacion } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
 
@@ -513,6 +513,42 @@ async function revenueReport(req, res) {
       order: [[fn('DATE', col('created_at')), 'ASC']],
     });
 
+    // ── Cartera: deudas de restaurantes (modelo flat $35) ────
+    const negociosConDeuda = await Negocio.findAll({
+      where: { deuda_plataforma: { [Op.gt]: 0 } },
+      attributes: ['id', 'nombre', 'deuda_plataforma', 'bloqueado_por_deuda', 'estado_cuenta'],
+      order: [['deuda_plataforma', 'DESC']],
+    });
+    const deudaTotalRestaurantes = negociosConDeuda.reduce((s, n) => s + parseFloat(n.deuda_plataforma || 0), 0);
+    const negociosBloqueados     = negociosConDeuda.filter(n => n.bloqueado_por_deuda).length;
+
+    // ── Por pagar el próximo viernes ─────────────────────────
+    // A restaurantes: suma de (subtotal - $35) de pedidos tarjeta no conciliados
+    // A repartidores: suma de pago_repartidor de pedidos tarjeta no conciliados
+    const [ledgerPendienteTarjeta] = await LedgerConciliacion.findAll({
+      where: { metodo_pago: { [Op.ne]: 'efectivo' }, conciliado: false },
+      attributes: [
+        [fn('SUM', col('subtotal_productos')),  'sum_subtotal'],
+        [fn('SUM', col('pago_repartidor')),     'sum_repartidor'],
+        [fn('SUM', col('comision_plataforma')), 'sum_comision'],
+        [fn('COUNT', col('id')),               'count'],
+      ],
+    });
+    const lp = ledgerPendienteTarjeta?.dataValues || {};
+    const porPagarRestaurantes  = Math.max(0, parseFloat(lp.sum_subtotal || 0) - parseFloat(lp.sum_comision || 0));
+    const porPagarRepartidores  = parseFloat(lp.sum_repartidor || 0);
+    const pedidosTarjetaPendientes = parseInt(lp.count || 0);
+
+    // ── Fees del período desde ledger (fuente de verdad) ─────
+    const ledgerPeriodo = await LedgerConciliacion.findAll({
+      where: { registrado_en: { [Op.between]: [fechaDesde, fechaHasta] } },
+      attributes: [
+        [fn('SUM', col('comision_plataforma')), 'fees_total'],
+        [fn('COUNT', col('id')),               'entregas'],
+      ],
+    });
+    const lperiodo = ledgerPeriodo[0]?.dataValues || {};
+
     const totales = filas[0]?.dataValues || {};
 
     res.json({
@@ -520,12 +556,31 @@ async function revenueReport(req, res) {
       data: {
         periodo: { desde: fechaDesde, hasta: fechaHasta, tipo: periodo },
         totales: {
+          fees_plataforma:    parseFloat(lperiodo.fees_total || 0),
+          entregas:           parseInt(lperiodo.entregas || 0),
+          // legado PlatformRevenue (mantener para compatibilidad con panel web)
           ingresos_tokens:    parseFloat(totales.total_tokens || 0),
           fees_cliente:       parseFloat(totales.total_fees || 0),
           pagos_repartidores: parseFloat(totales.total_payouts || 0),
           costos_gateway:     parseFloat(totales.total_gateway || 0) + parseFloat(totales.total_transacciones || 0),
           neto:               parseFloat(totales.total_neto || 0),
-          entregas:           parseInt(totales.total_entregas || 0),
+        },
+        cartera: {
+          deuda_total_restaurantes: deudaTotalRestaurantes,
+          negocios_con_deuda:       negociosConDeuda.length,
+          negocios_bloqueados:      negociosBloqueados,
+          lista: negociosConDeuda.slice(0, 20).map(n => ({
+            id:              n.id,
+            nombre:          n.nombre,
+            deuda:           parseFloat(n.deuda_plataforma),
+            bloqueado:       n.bloqueado_por_deuda,
+            estado_cuenta:   n.estado_cuenta,
+          })),
+        },
+        por_pagar_viernes: {
+          restaurantes:       porPagarRestaurantes,
+          repartidores:       porPagarRepartidores,
+          pedidos_pendientes: pedidosTarjetaPendientes,
         },
         por_tier: porTier.map(t => ({
           tier:     t.tier || 'sin_tier',
