@@ -150,7 +150,7 @@ app.use(helmet({
     },
   },
 }));
-app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') || '*' }));
+app.use(cors({ origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [] }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 if (process.env.NODE_ENV === 'development') app.use(morgan('dev'));
@@ -390,6 +390,9 @@ const migrarDB = async () => {
   // Columna en ledger para identificar si el fee ya fue conciliado en el corte semanal
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado BOOLEAN NOT NULL DEFAULT false`);
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_en TIMESTAMPTZ`);
+
+  // Control de retiros pendientes — evita doble retiro del mismo saldo
+  await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS retiro_pendiente BOOLEAN NOT NULL DEFAULT false`);
 
   console.log('[migración] Completada.');
 };

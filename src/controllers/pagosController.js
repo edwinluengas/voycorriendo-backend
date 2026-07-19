@@ -107,11 +107,9 @@ const registrarEfectivo = async (req, res) => {
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
     // Solo el repartidor asignado puede registrar el cobro en efectivo
-    if (req.usuario.rol === 'repartidor' || req.usuario.modo_activo === 'repartidor') {
-      const rep = await Repartidor.findOne({ where: { usuario_id: req.usuario.id }, attributes: ['id'] });
-      if (!rep || String(pedido.repartidor_id) !== String(rep.id)) {
-        return res.status(403).json({ ok: false, mensaje: 'No autorizado para este pedido.' });
-      }
+    const rep = await Repartidor.findOne({ where: { usuario_id: req.usuario.id }, attributes: ['id'] });
+    if (!rep || String(pedido.repartidor_id) !== String(rep.id)) {
+      return res.status(403).json({ ok: false, mensaje: 'No autorizado para este pedido.' });
     }
 
     const result = await pagosService.registrarPagoEfectivo({ pedido, monto_recibido });

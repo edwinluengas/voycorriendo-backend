@@ -65,7 +65,7 @@ const actualizarPerfil = async (req, res) => {
       'clabe_bancaria', 'banco',
       'foto_ine_frente', 'foto_ine_reverso',
       'foto_licencia', 'foto_tarjeta_circulacion',
-      'tier',
+      // 'tier' — solo admin puede asignar tiers
     ];
     camposEditables.forEach(c => {
       if (req.body[c] !== undefined) repartidor[c] = req.body[c];
@@ -634,6 +634,16 @@ const retiroDiario = async (req, res) => {
         mensaje: `Necesitas al menos $${FEE_RETIRO_DIARIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
       });
     }
+
+    if (fondo?.retiro_pendiente) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Ya tienes un retiro en proceso. Espera a que sea transferido antes de solicitar otro.',
+      });
+    }
+
+    // Descontar el saldo y marcar retiro pendiente de forma atómica
+    await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {

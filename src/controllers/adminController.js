@@ -453,6 +453,9 @@ async function revenueReport(req, res) {
       fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
       fechaHasta = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 23, 59, 59);
     } else if (periodo === 'rango' && desde && hasta) {
+      if (isNaN(new Date(desde)) || isNaN(new Date(hasta))) {
+        return res.status(400).json({ ok: false, mensaje: 'Fechas inválidas. Usa formato YYYY-MM-DD.' });
+      }
       fechaDesde = new Date(desde);
       fechaHasta = new Date(hasta); fechaHasta.setHours(23, 59, 59, 999);
     } else {

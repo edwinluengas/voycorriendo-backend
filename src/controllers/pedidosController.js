@@ -86,11 +86,15 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    if (requiereINE && !ine_foto_url) {
-      return res.status(400).json({
-        ok: false,
-        mensaje: 'Tu pedido incluye productos con restricción de edad. Necesitamos una foto de tu INE.',
-      });
+    if (requiereINE) {
+      const SUPABASE_HOST = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).hostname : null;
+      const ineValida = ine_foto_url && SUPABASE_HOST && ine_foto_url.includes(SUPABASE_HOST) && ine_foto_url.includes('/storage/v1/object/');
+      if (!ineValida) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'Tu pedido incluye productos con restricción de edad. Sube tu INE desde la app antes de continuar.',
+        });
+      }
     }
 
     // 3. Calcular distancia y validar cobertura por tipo_envio
@@ -304,9 +308,13 @@ const pedidosDelNegocio = async (req, res) => {
       return res.status(404).json({ ok: false, mensaje: 'No tienes un negocio asociado a tu cuenta.' });
     }
 
+    const ESTADOS_VALIDOS = ['pendiente', 'confirmado', 'preparando', 'listo', 'en_camino', 'en_envio', 'entregado', 'rechazado', 'cancelado'];
     const where = { negocio_id: negocio.id };
     if (req.query.estado) {
       const estados = String(req.query.estado).split(',').map((s) => s.trim());
+      if (!estados.every((e) => ESTADOS_VALIDOS.includes(e))) {
+        return res.status(400).json({ ok: false, mensaje: 'Estado no válido.' });
+      }
       where.estado = estados.length === 1 ? estados[0] : estados;
     }
 
@@ -341,8 +349,21 @@ const actualizarEstado = async (req, res) => {
 
     const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
 
-    if (rolEfectivo === 'negocio' && pedido.negocio?.usuario_id !== req.usuario.id) {
-      return res.status(403).json({ ok: false, mensaje: 'Este pedido no pertenece a tu negocio.' });
+    if (rolEfectivo === 'negocio') {
+      if (pedido.negocio?.usuario_id !== req.usuario.id) {
+        return res.status(403).json({ ok: false, mensaje: 'Este pedido no pertenece a tu negocio.' });
+      }
+      // El negocio debe estar aprobado para operar pedidos
+      const negocioActivo = await Negocio.findOne({
+        where: { usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
+        attributes: ['id', 'bloqueado_por_deuda'],
+      });
+      if (!negocioActivo) {
+        return res.status(403).json({ ok: false, mensaje: 'Tu negocio no está aprobado para operar.' });
+      }
+      if (negocioActivo.bloqueado_por_deuda) {
+        return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
+      }
     }
     if (rolEfectivo === 'cliente' && pedido.cliente_id !== req.usuario.id) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no es tuyo.' });
@@ -429,24 +450,22 @@ const actualizarEstado = async (req, res) => {
       pedido.numero_guia = req.body.numero_guia;
     }
 
-    // Validar código / foto al entregar (repartidor)
+    // Validar código al entregar (repartidor) — el código SIEMPRE es obligatorio
     if (estado === 'entregado' && rolEfectivo === 'repartidor') {
       const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
+      if (!codigoProvisto) {
+        return res.status(400).json({ ok: false, mensaje: 'Ingresa el código de entrega del cliente para confirmar.' });
+      }
+      if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
+        return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídelo al cliente.' });
+      }
+      // La foto es evidencia adicional opcional, no reemplaza el código
       if (foto_entrega) {
         try {
           const ruta = `entregas/${pedido.id}_${Date.now()}.jpg`;
           const url = await subirImagen('documentos-negocios', ruta, foto_entrega, 'image/jpeg');
           pedido.foto_entrega = url;
-        } catch (e) {
-          return res.status(400).json({ ok: false, mensaje: 'No se pudo procesar la foto. Usa el código de entrega.' });
-        }
-      } else {
-        if (!codigoProvisto) {
-          return res.status(400).json({ ok: false, mensaje: 'Ingresa el código de entrega del cliente para confirmar.' });
-        }
-        if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
-          return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídelo al cliente.' });
-        }
+        } catch (_) {}
       }
     }
 

@@ -163,6 +163,11 @@ const actualizarMiPerfil = async (req, res) => {
       });
     }
 
+    // Proteger categoría reservada — solo admin puede asignar 'ahivoy store'
+    if (req.body.categoria === 'ahivoy store' && req.usuario.rol !== 'admin') {
+      return res.status(403).json({ ok: false, mensaje: 'Categoría reservada. Contacta a soporte.' });
+    }
+
     const camposEditables = [
       'nombre', 'descripcion', 'categoria',
       'direccion', 'colonia', 'latitud', 'longitud',
@@ -176,11 +181,6 @@ const actualizarMiPerfil = async (req, res) => {
     camposEditables.forEach(c => {
       if (req.body[c] !== undefined) negocio[c] = req.body[c];
     });
-
-    // Proteger categoría reservada — solo admin puede asignar 'ahivoy store'
-    if (negocio.categoria === 'ahivoy store' && req.usuario.rol !== 'admin') {
-      return res.status(403).json({ ok: false, mensaje: 'Categoría reservada. Contacta a soporte.' });
-    }
 
     await negocio.save();
 
@@ -337,7 +337,7 @@ const subirFotoProducto = async (req, res) => {
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
-    const ext = mime.split('/')[1] || 'jpg';
+    const ext = safeExt(mime);
     const ruta = `negocios/${negocio.id}/productos/${producto.id}_${Date.now()}.${ext}`;
     const url = await subirImagen('documentos-negocios', ruta, base64, mime);
     producto.imagen = url;
@@ -587,8 +587,10 @@ const gananciasNegocio = async (req, res) => {
         // Períodos
         ventas_hoy:    ledgersHoy.reduce((s, l)    => s + parseFloat(l.subtotal_productos || 0), 0),
         ventas_semana: ledgersSemana.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0),
-        // CLABE de la plataforma para liquidar deuda
-        clabe_plataforma:   process.env.CLABE_PLATAFORMA || '002180902500967465',
+        // CLABE parcialmente enmascarada — admin comunica CLABE completa por canal seguro
+        clabe_plataforma:   process.env.CLABE_PLATAFORMA
+          ? `****${process.env.CLABE_PLATAFORMA.slice(-4)}`
+          : '****7465',
         banco_plataforma:   process.env.BANCO_PLATAFORMA || 'Citibanamex',
         referencia_spei:    `VC-${negocio.id.slice(0, 8).toUpperCase()}`,
         resumen:             ledgers.slice(0, 30),
