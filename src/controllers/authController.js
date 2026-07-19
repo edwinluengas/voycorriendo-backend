@@ -55,51 +55,33 @@ const registro = async (req, res) => {
       return res.status(409).json({ ok: false, mensaje: 'Ya existe una cuenta con ese número de teléfono.' });
     }
 
-    const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
-    const estadoInicial = esProduccion ? 'pendiente' : 'activo';
-
-    let otpPlano = null;
-    let otpHash = null;
-    let otpExpira = null;
-
-    if (esProduccion) {
-      otpPlano = generarOTP();
-      otpHash  = await bcrypt.hash(otpPlano, 10);
-      otpExpira = new Date(Date.now() + 10 * 60 * 1000);
-    }
-
+    // Siempre activar la cuenta inmediatamente — OTP es informativo mientras Twilio esté en trial
     const usuario = await Usuario.create({
       nombre, apellido, telefono, email, password,
       rol: rol || 'cliente',
-      estado: estadoInicial,
-      telefono_verificado: !esProduccion,
-      otp_codigo: otpHash,
-      otp_expira: otpExpira,
+      estado: 'activo',
+      telefono_verificado: true,
       acepto_terminos: true,
       terminos_aceptados_en: new Date(),
       acepta_marketing: !!acepta_marketing,
     });
 
-    if (esProduccion) {
-      try {
-        await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otpPlano}. Válido 10 minutos. No lo compartas.`);
-      } catch (smsErr) {
-        console.error(`[SMS] Error enviando OTP a ***${telefono.slice(-4)}:`, smsErr.message);
-        // Fallback temporal: imprimir OTP en logs para testing (Twilio trial no puede enviar a números no verificados)
-        console.warn(`[OTP-FALLBACK] Código para ***${telefono.slice(-4)}: ${otpPlano}`);
-        return res.status(200).json({ ok: true, mensaje: 'Registro exitoso. Revisa los logs del servidor para tu código OTP (modo testing).' });
-      }
-      console.log(`[PROD] OTP enviado por SMS a ***${telefono.slice(-4)}`);
-      return res.status(201).json({
-        ok: true,
-        mensaje: 'Registro exitoso. Te enviamos un código por SMS para verificar tu número.',
-        data: { usuario_id: usuario.id, telefono: usuario.telefono },
-      });
+    // Intentar enviar OTP por SMS de forma asíncrona (no bloquea el registro)
+    if (process.env.TWILIO_ACCOUNT_SID) {
+      const otpPlano = generarOTP();
+      bcrypt.hash(otpPlano, 10).then(async (otpHash) => {
+        await usuario.update({
+          otp_codigo: otpHash,
+          otp_expira: new Date(Date.now() + 10 * 60 * 1000),
+        });
+        enviarSMS(telefono, `Tu código de verificación VoyCorriendo es: ${otpPlano}. Válido 10 minutos.`)
+          .then(() => console.log(`[SMS] OTP enviado a ***${telefono.slice(-4)}`))
+          .catch((err) => console.warn(`[OTP-FALLBACK] Código para ***${telefono.slice(-4)}: ${otpPlano} — SMS falló: ${err.message}`));
+      }).catch(() => {});
     }
 
-    // Desarrollo: JWT directo sin OTP
     const token = generarToken(usuario);
-    console.log(`[DEV] Usuario registrado y auto-activado: ***${telefono.slice(-4)} (rol: ${usuario.rol})`);
+    console.log(`[REGISTRO] Usuario activado: ***${telefono.slice(-4)} (rol: ${usuario.rol})`);
 
     res.status(201).json({
       ok: true,
