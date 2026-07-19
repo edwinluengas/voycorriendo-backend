@@ -11,6 +11,9 @@ const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
 
+const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
+
 // Genera número de pedido legible: MND-004823
 const generarNumeroPedido = () => {
   const num = randomInt(1000, 899000 + 1000).toString().padStart(6, '0');
@@ -695,7 +698,32 @@ const cotizarEnvio = async (req, res) => {
   }
 };
 
+// ─── POST /api/pedidos/ine-foto ───────────────────────────
+// Sube la foto del INE del cliente a Supabase Storage y devuelve
+// la URL pública para adjuntarla al crear un pedido con productos
+// que requieren validación de edad. Body: { base64, mime }
+const subirFotoINE = async (req, res) => {
+  try {
+    const { base64, mime } = req.body;
+    if (!base64 || !mime) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta base64 o mime.' });
+    }
+
+    const ext = safeExt(mime);
+    const ruta = `clientes/${req.usuario.id}/ine_${Date.now()}.${ext}`;
+    const url = await subirImagen('documentos-clientes', ruta, base64, mime);
+
+    res.json({ ok: true, mensaje: 'Foto de INE subida.', data: { url } });
+  } catch (error) {
+    console.error('Error en subirFotoINE:', error);
+    res.status(500).json({
+      ok: false,
+      mensaje: error.message || 'No se pudo subir la foto. Intenta de nuevo.',
+    });
+  }
+};
+
 module.exports = {
   crearPedido, misPedidos, obtenerPedido, actualizarEstado,
-  calificarPedido, pedidosDelNegocio, cotizarEnvio,
+  calificarPedido, pedidosDelNegocio, cotizarEnvio, subirFotoINE,
 };
