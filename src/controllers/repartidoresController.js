@@ -86,14 +86,16 @@ const actualizarPerfil = async (req, res) => {
 const subirFoto = async (req, res) => {
   try {
     const { tipo, base64, mime } = req.body;
-    const tiposValidos = {
+    const tiposRepartidor = {
       ine_frente: 'foto_ine_frente',
       ine_reverso: 'foto_ine_reverso',
       licencia: 'foto_licencia',
       tarjeta_circulacion: 'foto_tarjeta_circulacion',
     };
-    const columna = tiposValidos[tipo];
-    if (!columna) {
+    const esFotoPerfil = tipo === 'foto_perfil';
+    const columna = tiposRepartidor[tipo];
+
+    if (!esFotoPerfil && !columna) {
       return res.status(400).json({ ok: false, mensaje: 'Tipo de foto invalido.' });
     }
     if (!base64 || !mime) {
@@ -105,8 +107,16 @@ const subirFoto = async (req, res) => {
       return res.status(404).json({ ok: false, mensaje: 'Activa primero el modo repartidor.' });
     }
 
-    // Subimos a Supabase Storage
     const ext = safeExt(mime);
+
+    if (esFotoPerfil) {
+      const ruta = `repartidores/${req.usuario.id}/perfil_${Date.now()}.${ext}`;
+      const url = await subirImagen('documentos-repartidores', ruta, base64, mime);
+      await req.usuario.update({ foto_perfil: url });
+      return res.json({ ok: true, mensaje: 'Foto de perfil guardada.', data: { url, tipo } });
+    }
+
+    // Documentos del repartidor
     const ruta = `repartidores/${req.usuario.id}/${tipo}_${Date.now()}.${ext}`;
     const url = await subirImagen('documentos-repartidores', ruta, base64, mime);
 
