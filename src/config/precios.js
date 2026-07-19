@@ -42,6 +42,7 @@ const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',      5);  // radio máximo de e
 const TOPE_DEUDA        = num('TOPE_DEUDA',        1000);  // bloqueo automático restaurante
 const AVISO_DEUDA       = num('AVISO_DEUDA',        700);  // warning antes del bloqueo
 const FEE_RETIRO_DIARIO = num('FEE_RETIRO_DIARIO',   10);  // fee repartidor si retira fuera del viernes
+const FEE_RETIRO_DIARIO_NEGOCIO = num('FEE_RETIRO_DIARIO_NEGOCIO', 10);  // fee negocio si retira fuera del viernes
 
 // ─── 5. Bonos al repartidor (fase 2) ────────────────────────
 const BONOS = {
@@ -69,6 +70,7 @@ module.exports = {
   TOPE_DEUDA,
   AVISO_DEUDA,
   FEE_RETIRO_DIARIO,
+  FEE_RETIRO_DIARIO_NEGOCIO,
   BONOS,
   // Legacy exports para compatibilidad
   HORA_PICO_RANGOS,

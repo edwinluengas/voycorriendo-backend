@@ -418,6 +418,53 @@ const confirmarPagoDeuda = async (req, res) => {
   }
 };
 
+// ─── POST /api/admin/negocios/:id/liquidar-semanal ───────────
+// El admin marca como pagadas (corte del viernes) las ganancias de
+// tarjeta/MP de un negocio tras enviar la transferencia SPEI real.
+const liquidarSemanalNegocio = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const negocio = await Negocio.findByPk(id);
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+
+    const pedidos = await Pedido.findAll({
+      where: { negocio_id: id, estado: 'entregado', metodo_pago: { [Op.ne]: 'efectivo' } },
+      attributes: ['id'],
+    });
+    const ids = pedidos.map((p) => p.id);
+    const ledgers = ids.length > 0
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado: false } })
+      : [];
+
+    const { COMISION_FLAT } = require('../config/precios');
+    const monto = Math.max(0, ledgers.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+    ));
+
+    if (ledgers.length > 0) {
+      await LedgerConciliacion.update(
+        { conciliado: true, conciliado_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+      );
+    }
+
+    logAdmin({
+      adminId: req.usuario.id, accion: 'liquidar_semanal_negocio', entidadTipo: 'negocio',
+      entidadId: negocio.id, estadoAntes: { pendiente: monto },
+      estadoDespues: { conciliado: true }, ip: req.ip,
+    });
+
+    res.json({
+      ok: true,
+      mensaje: `Corte semanal liquidado: $${monto.toFixed(2)} MXN marcado como pagado.`,
+      data: { negocio_id: id, monto_liquidado: monto, pedidos_conciliados: ledgers.length },
+    });
+  } catch (e) {
+    console.error('Error liquidarSemanalNegocio:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al liquidar el corte semanal.' });
+  }
+};
+
 module.exports = {
   dashboard,
   // Repartidores
@@ -433,6 +480,7 @@ module.exports = {
   rechazarNegocio,
   cambiarEstadoCuentaNegocio,
   confirmarPagoDeuda,
+  liquidarSemanalNegocio,
   // Usuarios
   listarUsuarios,
   // Revenue

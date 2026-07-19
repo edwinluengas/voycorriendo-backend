@@ -594,7 +594,26 @@ const ganancias = async (req, res) => {
   }
 };
 
+// Ganancias de pedidos con tarjeta/MP entregados y aún no conciliados —
+// es lo que un repartidor tiene "por cobrar" del corte semanal.
+const calcularPorDepositarRepartidor = async (repartidorId) => {
+  const entregados = await Pedido.findAll({
+    where: { repartidor_id: repartidorId, estado: 'entregado', metodo_pago: { [Op.ne]: 'efectivo' } },
+    attributes: ['id'],
+  });
+  const ids = entregados.map((p) => p.id);
+  if (ids.length === 0) return { total: 0, ledgers: [] };
+
+  const ledgers = await LedgerConciliacion.findAll({
+    where: { pedido_id: { [Op.in]: ids }, conciliado: false },
+  });
+  const total = ledgers.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
+  return { total, ledgers };
+};
+
 // ─── POST /api/repartidores/solicitar-deposito ────────────
+// Pago semanal (viernes) SIN comisión — incluye fondo de efectivo/propinas
+// más las ganancias de pedidos con tarjeta aún no conciliadas.
 const solicitarDeposito = async (req, res) => {
   try {
     const repartidor = await Repartidor.findOne({
@@ -604,19 +623,30 @@ const solicitarDeposito = async (req, res) => {
     if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
-    const monto = parseFloat(fondo?.monto_disponible || 0);
+    const montoFondo = parseFloat(fondo?.monto_disponible || 0);
+    const { total: montoTarjeta, ledgers } = await calcularPorDepositarRepartidor(repartidor.id);
+    const monto = montoFondo + montoTarjeta;
 
     if (monto <= 0) {
       return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
     }
 
+    if (fondo && montoFondo > 0) await fondo.update({ monto_disponible: 0 });
+    if (ledgers.length > 0) {
+      await LedgerConciliacion.update(
+        { conciliado: true, conciliado_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+      );
+    }
+
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
       tg.enviar(adminChatId,
-        `💰 <b>Solicitud de depósito</b>\n` +
+        `💰 <b>Solicitud de depósito semanal</b>\n` +
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
         `Teléfono: ${repartidor.usuario?.telefono || 'N/A'}\n` +
-        `Monto: $${monto.toFixed(2)} MXN\n` +
+        `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
+        `Monto total: $${monto.toFixed(2)} MXN\n` +
         `ID: ${repartidor.id}`
       ).catch(() => {});
     }
@@ -625,15 +655,17 @@ const solicitarDeposito = async (req, res) => {
     res.json({
       ok: true,
       mensaje: 'Solicitud enviada. Procesaremos tu depósito en 24-48 horas hábiles.',
-      data: { monto_solicitado: monto },
+      data: { monto_solicitado: monto, fondo_efectivo: montoFondo, tarjeta: montoTarjeta },
     });
   } catch (error) {
+    console.error('Error en solicitarDeposito:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al solicitar depósito.' });
   }
 };
 
 // ─── POST /api/repartidores/retiro-diario ─────────────────
-// Retiro inmediato con fee de $10 (los viernes es gratis: usar solicitarDeposito).
+// Retiro inmediato con fee (los viernes es gratis: usar solicitarDeposito).
+// Incluye fondo de efectivo/propinas MÁS ganancias de tarjeta no conciliadas.
 const retiroDiario = async (req, res) => {
   try {
     const { FEE_RETIRO_DIARIO } = require('../config/precios');
@@ -645,7 +677,9 @@ const retiroDiario = async (req, res) => {
     if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
-    const disponible = parseFloat(fondo?.monto_disponible || 0);
+    const montoFondo = parseFloat(fondo?.monto_disponible || 0);
+    const { total: montoTarjeta, ledgers } = await calcularPorDepositarRepartidor(repartidor.id);
+    const disponible = montoFondo + montoTarjeta;
     const neto       = disponible - FEE_RETIRO_DIARIO;
 
     if (neto <= 0) {
@@ -662,14 +696,22 @@ const retiroDiario = async (req, res) => {
       });
     }
 
-    // Descontar el saldo y marcar retiro pendiente de forma atómica
-    await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
+    // Descontar el saldo, conciliar tarjeta y marcar retiro pendiente
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
+    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true });
+    if (ledgers.length > 0) {
+      await LedgerConciliacion.update(
+        { conciliado: true, conciliado_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+      );
+    }
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
       tg.enviar(adminChatId,
         `⚡ <b>Retiro diario solicitado</b>\n` +
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
+        `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
         `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO} | Neto: $${neto.toFixed(2)} MXN\n` +
         `ID: ${repartidor.id}`
       ).catch(() => {});

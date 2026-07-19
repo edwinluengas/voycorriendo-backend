@@ -639,6 +639,68 @@ const registrarPagoDeuda = async (req, res) => {
   }
 };
 
+// ─── POST /api/negocios/mi-negocio/retiro-diario ───────────
+// Adelanto inmediato de las ganancias de tarjeta/MP aún no conciliadas,
+// con fee (el corte semanal del viernes es gratis).
+const retiroDiarioNegocio = async (req, res) => {
+  try {
+    const { FEE_RETIRO_DIARIO_NEGOCIO } = require('../config/precios');
+
+    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
+
+    const pedidos = await Pedido.findAll({
+      where: { negocio_id: negocio.id, estado: 'entregado', metodo_pago: { [Op.ne]: 'efectivo' } },
+      attributes: ['id'],
+    });
+    const ids = pedidos.map((p) => p.id);
+    const ledgers = ids.length > 0
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado: false } })
+      : [];
+
+    const disponible = Math.max(0, ledgers.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+    ));
+    const neto = disponible - FEE_RETIRO_DIARIO_NEGOCIO;
+
+    if (neto <= 0) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Necesitas al menos $${FEE_RETIRO_DIARIO_NEGOCIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
+      });
+    }
+
+    if (negocio.bloqueado_por_deuda) {
+      return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
+    }
+
+    // Marcar conciliado de inmediato — el pago se procesa manualmente por SPEI
+    await LedgerConciliacion.update(
+      { conciliado: true, conciliado_en: new Date() },
+      { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+    );
+
+    const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
+    if (adminChatId) {
+      tg.enviar(adminChatId,
+        `⚡ <b>Retiro diario solicitado (negocio)</b>\n` +
+        `Negocio: ${negocio.nombre}\n` +
+        `ID: <code>${negocio.id}</code>\n` +
+        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO_NEGOCIO} | Neto: $${neto.toFixed(2)} MXN`
+      ).catch(() => {});
+    }
+
+    res.json({
+      ok: true,
+      mensaje: `Retiro solicitado. Recibirás $${neto.toFixed(2)} MXN (se descontó el fee de $${FEE_RETIRO_DIARIO_NEGOCIO}).`,
+      data: { disponible, fee: FEE_RETIRO_DIARIO_NEGOCIO, neto },
+    });
+  } catch (error) {
+    console.error('Error en retiroDiarioNegocio:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al procesar el retiro.' });
+  }
+};
+
 module.exports = {
   // Public
   listarNegocios,
@@ -658,6 +720,7 @@ module.exports = {
   subirFotoProducto,
   gananciasNegocio,
   registrarPagoDeuda,
+  retiroDiarioNegocio,
   // Legacy / operacion
   crearNegocio,
   actualizarNegocio,

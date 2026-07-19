@@ -19,6 +19,7 @@ const {
   subirFotoProducto,
   gananciasNegocio,
   registrarPagoDeuda,
+  retiroDiarioNegocio,
   // Legacy
   crearNegocio,
   actualizarNegocio,
@@ -52,6 +53,7 @@ router.delete('/mi-negocio/productos/:prod_id',         proteger, eliminarMiProd
 router.post  ('/mi-negocio/productos/:prod_id/foto',    proteger, subirFotoProducto);
 router.get   ('/mi-negocio/ganancias',                  proteger, gananciasNegocio);
 router.post  ('/mi-negocio/pagar-deuda',                proteger, registrarPagoDeuda);
+router.post  ('/mi-negocio/retiro-diario',              proteger, retiroDiarioNegocio);
 
 // ─── Detalle publico (debe ir DESPUES de las rutas con nombre) ─
 router.get('/:id', obtenerNegocio);

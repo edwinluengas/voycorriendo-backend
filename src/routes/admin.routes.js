@@ -32,6 +32,7 @@ router.patch ('/negocios/:id/aprobar',         ctrl.aprobarNegocio);
 router.patch ('/negocios/:id/rechazar',        ctrl.rechazarNegocio);
 router.patch ('/negocios/:id/cuenta',          ctrl.cambiarEstadoCuentaNegocio);
 router.post  ('/negocios/:id/confirmar-pago',  ctrl.confirmarPagoDeuda);
+router.post  ('/negocios/:id/liquidar-semanal', ctrl.liquidarSemanalNegocio);
 
 // ─── Usuarios (busqueda) ────────────────────────────────────
 router.get   ('/usuarios',                     ctrl.listarUsuarios);
