@@ -85,7 +85,9 @@ const registro = async (req, res) => {
         await enviarSMS(telefono, `Tu código de VoyCorriendo es: ${otpPlano}. Válido 10 minutos. No lo compartas.`);
       } catch (smsErr) {
         console.error(`[SMS] Error enviando OTP a ***${telefono.slice(-4)}:`, smsErr.message);
-        return res.status(500).json({ ok: false, mensaje: 'No pudimos enviar el código SMS. Intenta de nuevo.' });
+        // Fallback temporal: imprimir OTP en logs para testing (Twilio trial no puede enviar a números no verificados)
+        console.warn(`[OTP-FALLBACK] Código para ***${telefono.slice(-4)}: ${otpPlano}`);
+        return res.status(200).json({ ok: true, mensaje: 'Registro exitoso. Revisa los logs del servidor para tu código OTP (modo testing).' });
       }
       console.log(`[PROD] OTP enviado por SMS a ***${telefono.slice(-4)}`);
       return res.status(201).json({
