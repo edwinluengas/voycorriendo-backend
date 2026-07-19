@@ -72,13 +72,20 @@ const crearPedido = async (req, res) => {
         });
       }
       if (producto.requiere_id) requiereINE = true;
-      const precioItem = parseFloat(producto.precio) * item.cantidad;
+      const cantidad = Number(item.cantidad);
+      if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 100) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Cantidad inválida para "${producto.nombre}". Debe ser entre 1 y 100.`,
+        });
+      }
+      const precioItem = parseFloat(producto.precio) * cantidad;
       subtotal += precioItem;
       itemsDetallados.push({
         producto_id:    producto.id,
         nombre:         producto.nombre,
         precio_unitario: producto.precio,
-        cantidad:       item.cantidad,
+        cantidad,
         subtotal:       precioItem,
         notas:          item.notas || null,
         opcion_elegida: item.opcion_elegida || null,
@@ -370,7 +377,7 @@ const actualizarEstado = async (req, res) => {
     }
     if (rolEfectivo === 'repartidor') {
       const repActual = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
-      if (pedido.repartidor_id && pedido.repartidor_id !== repActual?.id) {
+      if (!repActual || !pedido.repartidor_id || pedido.repartidor_id !== repActual.id) {
         return res.status(403).json({ ok: false, mensaje: 'Este pedido no te fue asignado.' });
       }
     }

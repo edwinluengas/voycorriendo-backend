@@ -132,6 +132,9 @@ const registrarTransferencia = async (req, res) => {
     const { pedido_id, referencia, comprobante_url } = req.body;
     const pedido = await Pedido.findByPk(pedido_id);
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
+    if (pedido.cliente_id !== req.usuario.id) {
+      return res.status(403).json({ ok: false, mensaje: 'No autorizado.' });
+    }
 
     const result = await pagosService.registrarTransferencia({
       pedido,
