@@ -440,6 +440,15 @@ const aceptarPedido = async (req, res) => {
       });
     }
 
+    // Por ahora una ruta solo combina pedidos del MISMO negocio — no se mezclan
+    // recolecciones de restaurantes distintos en un solo viaje.
+    if (batch && batch.pedidos.length > 0 && batch.pedidos[0].negocio_id !== pedido.negocio_id) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: 'Ya tienes pedidos en ruta de otro negocio. Termina esa entrega antes de aceptar este.',
+      });
+    }
+
     if (batch && pedido.tipo_envio !== 'express' && batch.pedidos.length >= maxOrders) {
       return res.status(409).json({
         ok: false,
