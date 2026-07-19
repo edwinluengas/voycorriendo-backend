@@ -34,7 +34,7 @@ const httpServer = createServer(app);
 
 // Socket.io (tiempo real)
 const io = new Server(httpServer, {
-  cors: { origin: process.env.ALLOWED_ORIGINS?.split(',') || '*', methods: ['GET', 'POST'] },
+  cors: { origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [], methods: ['GET', 'POST'] },
 });
 
 // Requiere JWT válido para toda conexión socket

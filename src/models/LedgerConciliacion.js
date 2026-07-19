@@ -12,6 +12,8 @@ const LedgerConciliacion = sequelize.define('LedgerConciliacion', {
   tipo_envio:          { type: DataTypes.STRING(20), allowNull: false },
   liquidacion_comida:  { type: DataTypes.STRING(50), allowNull: true },
   distancia_km:        { type: DataTypes.DECIMAL(6, 2), allowNull: true },
+  conciliado:          { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  conciliado_en:       { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName:  'ledger_conciliacion',
   timestamps: true,

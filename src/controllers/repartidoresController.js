@@ -149,6 +149,7 @@ const enviarARevision = async (req, res) => {
     if (!repartidor.foto_ine_frente) faltantes.push('foto INE frente');
     if (!repartidor.foto_ine_reverso) faltantes.push('foto INE reverso');
     if (!repartidor.foto_licencia) faltantes.push('foto licencia');
+    if (!req.usuario.foto_perfil) faltantes.push('selfie de perfil');
     if (faltantes.length) {
       return res.status(400).json({
         ok: false,

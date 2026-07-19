@@ -263,8 +263,9 @@ const obtenerNegocio = async (req, res) => {
     });
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
-    const [fotoLocal, comprobante, ine, rfc] = await Promise.all([
+    const [fotoLocal, fotoPortada, comprobante, ine, rfc] = await Promise.all([
       obtenerUrlFirmada(BUCKET_NEGOCIOS, n.foto_local),
+      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.foto_portada),
       obtenerUrlFirmada(BUCKET_NEGOCIOS, n.comprobante_domicilio),
       obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_ine_dueno),
       obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_rfc),
@@ -277,6 +278,7 @@ const obtenerNegocio = async (req, res) => {
           ...n.toJSON(),
           documentos_firmados: {
             foto_local: fotoLocal,
+            foto_portada: fotoPortada,
             comprobante_domicilio: comprobante,
             documento_ine_dueno: ine,
             documento_rfc: rfc,
