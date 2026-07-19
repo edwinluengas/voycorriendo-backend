@@ -400,6 +400,12 @@ const migrarDB = async () => {
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_pedidos BOOLEAN NOT NULL DEFAULT true`);
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_marketing BOOLEAN NOT NULL DEFAULT false`);
 
+  // Fix: cuentas registradas directo como repartidor/negocio/admin cuyo
+  // modo_activo se quedó en el default 'cliente' (bug: registro no lo igualaba
+  // al rol). Esto las dejaba viendo el stack de cliente y sin permiso en rutas
+  // restringidas a su propio rol (ver restringirA en middleware/auth.js).
+  await run(`UPDATE usuarios SET modo_activo = rol::text::"enum_usuarios_modo_activo" WHERE modo_activo = 'cliente' AND rol IN ('repartidor', 'negocio', 'admin')`);
+
   console.log('[migración] Completada.');
 };
 

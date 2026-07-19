@@ -56,9 +56,14 @@ const registro = async (req, res) => {
     }
 
     // Siempre activar la cuenta inmediatamente — OTP es informativo mientras Twilio esté en trial
+    const rolFinal = rol || 'cliente';
     const usuario = await Usuario.create({
       nombre, apellido, telefono, email, password,
-      rol: rol || 'cliente',
+      rol: rolFinal,
+      // modo_activo debe arrancar igual al rol de registro — si no, el usuario
+      // queda con modo_activo='cliente' (default de columna) aunque se haya
+      // registrado como repartidor/negocio, y la app lo manda al stack equivocado.
+      modo_activo: rolFinal,
       estado: 'activo',
       telefono_verificado: true,
       acepto_terminos: true,

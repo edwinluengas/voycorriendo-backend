@@ -31,11 +31,15 @@ const proteger = async (req, res, next) => {
   }
 };
 
-// Restringe acceso por rol — considera modo_activo (multi-rol)
+// Restringe acceso por rol — acepta si el modo_activo (toggle de UI) O el
+// rol de registro coinciden. Evita bloquear cuentas cuyo modo_activo quedó
+// desincronizado de su rol real (p. ej. modo_activo nunca se actualizó al
+// registrarse como repartidor/negocio y quedó en el default 'cliente').
 const restringirA = (...roles) => {
   return (req, res, next) => {
-    const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
-    if (!roles.includes(rolEfectivo)) {
+    const rolesUsuario = [req.usuario.modo_activo, req.usuario.rol].filter(Boolean);
+    const autorizado = rolesUsuario.some((r) => roles.includes(r));
+    if (!autorizado) {
       return res.status(403).json({
         ok: false,
         mensaje: `No tienes permiso para realizar esta acción. Rol requerido: ${roles.join(', ')}.`,

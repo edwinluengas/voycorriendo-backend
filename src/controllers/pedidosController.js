@@ -357,12 +357,31 @@ const actualizarEstado = async (req, res) => {
     });
     if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
 
-    const rolEfectivo = req.usuario.modo_activo || req.usuario.rol;
+    // El rol efectivo para ESTE pedido se determina por relación real con el
+    // pedido (¿eres el repartidor asignado? ¿el dueño del negocio? ¿el cliente?),
+    // NO por el toggle de UI modo_activo — ese puede estar desincronizado (p. ej.
+    // cuentas repartidor/negocio cuyo modo_activo quedó en 'cliente' por defecto)
+    // y bloquear incorrectamente a quien sí tiene permiso real sobre el pedido.
+    const esAdmin = req.usuario.rol === 'admin' || req.usuario.modo_activo === 'admin';
+    let rolEfectivo;
+    let repActual = null;
+
+    if (esAdmin) {
+      rolEfectivo = 'admin';
+    } else {
+      repActual = await Repartidor.findOne({ where: { usuario_id: req.usuario.id }, attributes: ['id'] });
+      if (repActual && pedido.repartidor_id && String(pedido.repartidor_id) === String(repActual.id)) {
+        rolEfectivo = 'repartidor';
+      } else if (pedido.negocio?.usuario_id === req.usuario.id) {
+        rolEfectivo = 'negocio';
+      } else if (pedido.cliente_id === req.usuario.id) {
+        rolEfectivo = 'cliente';
+      } else {
+        return res.status(403).json({ ok: false, mensaje: 'Este pedido no te pertenece.' });
+      }
+    }
 
     if (rolEfectivo === 'negocio') {
-      if (pedido.negocio?.usuario_id !== req.usuario.id) {
-        return res.status(403).json({ ok: false, mensaje: 'Este pedido no pertenece a tu negocio.' });
-      }
       // El negocio debe estar aprobado para operar pedidos
       const negocioActivo = await Negocio.findOne({
         where: { usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
@@ -373,15 +392,6 @@ const actualizarEstado = async (req, res) => {
       }
       if (negocioActivo.bloqueado_por_deuda) {
         return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
-      }
-    }
-    if (rolEfectivo === 'cliente' && pedido.cliente_id !== req.usuario.id) {
-      return res.status(403).json({ ok: false, mensaje: 'Este pedido no es tuyo.' });
-    }
-    if (rolEfectivo === 'repartidor') {
-      const repActual = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
-      if (!repActual || !pedido.repartidor_id || pedido.repartidor_id !== repActual.id) {
-        return res.status(403).json({ ok: false, mensaje: 'Este pedido no te fue asignado.' });
       }
     }
 

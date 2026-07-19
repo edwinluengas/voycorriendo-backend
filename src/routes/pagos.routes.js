@@ -12,8 +12,11 @@ router.use(proteger);
 // Cliente pide link de pago de MP para su pedido
 router.post('/preferencia', restringirA('cliente'), ctrl.crearPreferencia);
 
-// Repartidor registra pago en efectivo al entregar
-router.post('/efectivo', restringirA('repartidor', 'admin'), ctrl.registrarEfectivo);
+// Repartidor registra pago en efectivo al entregar — el controller ya valida
+// dueño real del pedido (Repartidor.usuario_id === req.usuario.id), así que no
+// gateamos por rol/modo_activo aquí (evita bloquear cuentas multi-rol cuyo
+// modo_activo no está en 'repartidor' aunque sí sean el repartidor asignado).
+router.post('/efectivo', ctrl.registrarEfectivo);
 
 // Cliente adjunta comprobante de transferencia
 router.post('/transferencia', restringirA('cliente'), ctrl.registrarTransferencia);
