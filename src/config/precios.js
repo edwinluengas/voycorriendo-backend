@@ -48,10 +48,6 @@ const BONOS = {
   METAS_10: num('BONUS_METAS_10', 50),
 };
 
-// Legacy — mantenidos solo para no romper código existente que los importe
-const VOYTOKENS = { POR_PESO: 10, ENVIO_GRATIS: 50 };
-const VOYPASS   = { PRECIO_MXN: 99 };
-
 // Legacy: Zonas se mantienen solo para validar cobertura por distancia
 const HORA_PICO_RANGOS = [
   { desde: 12, hasta: 14 },
@@ -73,8 +69,6 @@ module.exports = {
   TOPE_DEUDA,
   AVISO_DEUDA,
   FEE_RETIRO_DIARIO,
-  VOYTOKENS,
-  VOYPASS,
   BONOS,
   // Legacy exports para compatibilidad
   HORA_PICO_RANGOS,

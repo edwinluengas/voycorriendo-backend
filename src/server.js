@@ -27,7 +27,6 @@ const pedidosRoutes      = require('./routes/pedidos.routes');
 const repartidoresRoutes = require('./routes/repartidores.routes');
 const pagosRoutes        = require('./routes/pagos.routes');
 const adminRoutes        = require('./routes/admin.routes');
-const tokensRoutes       = require('./routes/tokens.routes');
 const telegramRoutes     = require('./routes/telegram.routes');
 
 const app = express();
@@ -189,7 +188,6 @@ app.use('/api/pedidos',      pedidosRoutes);
 app.use('/api/repartidores', repartidoresRoutes);
 app.use('/api/pagos',        pagosRoutes);
 app.use('/api/admin',        adminRoutes);
-app.use('/api/tokens',       tokensRoutes);
 app.use('/api/telegram',     telegramRoutes);
 
 // ─── Panel web de administracion ───────────────────────────

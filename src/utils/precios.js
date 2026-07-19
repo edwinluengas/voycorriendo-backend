@@ -4,7 +4,7 @@
  * Fallback a valores locales si DB no responde.
  */
 const {
-  TARIFAS_CLIENTE, PAGO_REPARTIDOR, MAX_DISTANCE_KM, VOYTOKENS,
+  TARIFAS_CLIENTE, PAGO_REPARTIDOR, MAX_DISTANCE_KM,
 } = require('../config/precios');
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -61,12 +61,8 @@ const getMaxKm = async (tipoEnvio = 'standard') => {
   return tipoEnvio === 'express' ? 4 : MAX_DISTANCE_KM;
 };
 
-// ─── VoyTokens para el cliente ────────────────────────────
-const calcularVoyTokens = (subtotal) => Math.floor(subtotal / VOYTOKENS.POR_PESO);
-
 module.exports = {
   calcularCostoEnvio,
   getMaxKm,
-  calcularVoyTokens,
   MAX_DISTANCE_KM,
 };

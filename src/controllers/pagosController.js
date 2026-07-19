@@ -6,7 +6,7 @@
  *   POST   /api/pagos/webhook/mercado-pago (público) → recibe confirmación MP
  */
 
-const { Pedido, Usuario, RestaurantToken, Negocio, Repartidor } = require('../models');
+const { Pedido, Usuario, Negocio, Repartidor } = require('../models');
 const pagosService = require('../services/pagos.service');
 const push = require('../services/notificaciones.service');
 const tg   = require('../services/telegram.service');
@@ -48,8 +48,6 @@ const webhookMercadoPago = async (req, res) => {
     body:          req.body,
     headers:       req.headers,
     Pedido,
-    RestaurantToken,
-    Negocio,
   });
 
   if (!result.ok) return;
@@ -88,14 +86,6 @@ const webhookMercadoPago = async (req, res) => {
         console.warn('[webhook] Error notificando negocio tras pago capturado:', e.message);
       }
     }
-  }
-
-  if (result.tipo === 'token' && result.negocio_id) {
-    io.to(`negocio:${result.negocio_id}`).emit('tokens_acreditados', {
-      negocio_id: result.negocio_id,
-      pack_type:  result.token?.pack_type,
-      tokens:     result.token?.tokens_remaining,
-    });
   }
 };
 

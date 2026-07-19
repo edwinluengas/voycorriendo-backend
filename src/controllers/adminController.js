@@ -7,7 +7,7 @@
  * Todas las rutas requieren middleware: proteger + restringirA('admin').
  */
 const { Op, fn, col, literal } = require('sequelize');
-const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, RestaurantToken, LedgerConciliacion } = require('../models');
+const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
 

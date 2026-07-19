@@ -123,41 +123,9 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
   };
 };
 
-// ─── Crear preferencia MP para compra de token pack ───────────
-const crearPreferenciaTokens = async ({ pack_type, negocio, tokens, precio }) => {
-  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado.');
-
-  const payload = {
-    items: [{
-      title: `VoyCorriendo – Pack ${pack_type} (${tokens} tokens)`,
-      quantity: 1,
-      unit_price: precio,
-      currency_id: 'MXN',
-    }],
-    external_reference: `token:${pack_type}:${negocio.id}`,
-    notification_url: `${process.env.API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
-    statement_descriptor: 'VOYCORRIENDO',
-    metadata: { pack_type, negocio_id: negocio.id },
-  };
-
-  const { data } = await axios.post(
-    `${MP_BASE_URL}/checkout/preferences`,
-    payload,
-    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
-  );
-
-  return {
-    preference_id:       data.id,
-    init_point:          data.init_point,
-    sandbox_init_point:  data.sandbox_init_point,
-  };
-};
-
 // ─── Webhook: confirmar pago Mercado Pago ─────────────────────
-// Maneja dos tipos vía external_reference:
-//   "token:{pack}:{negocio_id}" → compra de tokens
-//   cualquier otro valor         → pago de pedido (external_reference = pedido.numero)
-const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido, RestaurantToken, Negocio }) => {
+// external_reference = pedido.numero
+const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
   try {
     const topic     = query.topic || body.type;
     const paymentId = query.id || body.data?.id;
@@ -175,33 +143,6 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido, Restau
     );
 
     const ref = pago.external_reference || '';
-
-    // ── Compra de token pack ──────────────────────────────────
-    if (ref.startsWith('token:')) {
-      const [, pack_type, negocio_id] = ref.split(':');
-      if (pago.status !== 'approved') return { ok: true, tipo: 'token', mensaje: 'Pago no aprobado aún.' };
-
-      // Consultar el tier real desde DB para obtener tokens y vigencia correctos
-      const { TokenTier } = require('../models');
-      const tier = await TokenTier.findOne({ where: { nombre: pack_type } });
-      const tokens_acreditados = tier ? Number(tier.tokens) : 50;
-      const vigencia_dias      = tier ? Number(tier.vigencia_dias) : 60;
-      const precio_pagado      = tier ? Number(tier.precio) : null;
-
-      const expires_at = new Date();
-      expires_at.setDate(expires_at.getDate() + vigencia_dias);
-
-      const token = await RestaurantToken.create({
-        restaurant_id:    negocio_id,
-        tokens_remaining: tokens_acreditados,
-        tokens_comprados: tokens_acreditados,
-        pack_type,
-        precio_pagado,
-        expires_at,
-      });
-
-      return { ok: true, tipo: 'token', token, negocio_id };
-    }
 
     // ── Pago de pedido ────────────────────────────────────────
     const pedido = await Pedido.findOne({ where: { numero: ref } });
@@ -257,7 +198,6 @@ const registrarTransferencia = async ({ pedido, referencia, comprobante_url }) =
 module.exports = {
   validarMetodoPago,
   crearPreferenciaMercadoPago,
-  crearPreferenciaTokens,
   procesarWebhookMercadoPago,
   registrarPagoEfectivo,
   registrarTransferencia,

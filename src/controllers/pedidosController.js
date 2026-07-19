@@ -4,9 +4,8 @@ const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
-const { PEDIDO_MINIMO, VOYTOKENS } = require('../config/precios');
+const { PEDIDO_MINIMO } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
-const { consumirTokensFIFO } = require('./tokensController');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
@@ -35,7 +34,6 @@ const crearPedido = async (req, res) => {
       metodo_pago,
       ine_foto_url,
       tipo_envio = 'standard',
-      usa_tokens = false,
       paga_con = null,
     } = req.body;
 
@@ -160,8 +158,6 @@ const crearPedido = async (req, res) => {
       ? calcularFeeCliente({ tipoEnvio: tipo_envio })
       : tarifaResult.costo;
 
-    const tokens_canjeados = 0; // VoyTokens deshabilitados en modelo v1.2.17
-
     const total = subtotal + fee_cliente;
 
     // 6. Límite efectivo: productos ≤ $500 (el envío se suma encima)
@@ -172,7 +168,7 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // 7. Crear pedido + descontar VoyTokens (atómico)
+    // 7. Crear pedido
     const pedido = await dbConn.transaction(async (t) => {
       const nuevoPedido = await Pedido.create({
         numero:           generarNumeroPedido(),
@@ -200,14 +196,6 @@ const crearPedido = async (req, res) => {
         estado:           'pendiente',
         codigo_entrega:   generarCodigoEntrega(),
       }, { transaction: t });
-
-      if (tokens_canjeados > 0) {
-        await Usuario.decrement('voytokens', {
-          by: tokens_canjeados,
-          where: { id: req.usuario.id },
-          transaction: t,
-        });
-      }
 
       return nuevoPedido;
     });
@@ -440,22 +428,6 @@ const actualizarEstado = async (req, res) => {
       }
     }
 
-    // ── Consumir 1 token al confirmar (FIFO) ───────────────
-    if (estado === 'confirmado' && rolEfectivo === 'negocio') {
-      try {
-        await dbConn.transaction(async (t) => {
-          await consumirTokensFIFO(pedido.negocio_id, pedido.id, 1, t);
-        });
-      } catch (tokenErr) {
-        const httpStatus = tokenErr.httpStatus || 402;
-        return res.status(httpStatus).json({
-          ok: false,
-          mensaje: tokenErr.message,
-          codigo: 'TOKENS_INSUFICIENTES',
-        });
-      }
-    }
-
     // Timestamps
     const timestamps = {
       confirmado: 'confirmado_en',
@@ -492,7 +464,7 @@ const actualizarEstado = async (req, res) => {
     pedido.estado = estado;
     await pedido.save();
 
-    // Al entregar: economía + VoyTokens
+    // Al entregar: economía
     if (estado === 'entregado') {
       if (pedido.repartidor_id) {
         try {
@@ -501,17 +473,6 @@ const actualizarEstado = async (req, res) => {
         } catch (e) {
           console.error('Error en procesarEntrega:', e.message);
         }
-      }
-      try {
-        const tokensGanados = Math.floor(parseFloat(pedido.subtotal || 0) / 10);
-        if (tokensGanados > 0) {
-          await Usuario.increment('voytokens', {
-            by: tokensGanados,
-            where: { id: pedido.cliente_id },
-          });
-        }
-      } catch (e) {
-        console.error('Error sumando VoyTokens:', e.message);
       }
       try {
         const negocioEntregado = await Negocio.findByPk(pedido.negocio_id);

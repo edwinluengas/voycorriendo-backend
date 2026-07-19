@@ -1,4 +1,4 @@
-const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion, RestaurantToken } = require('../models');
+const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion } = require('../models');
 const { Op, literal } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');

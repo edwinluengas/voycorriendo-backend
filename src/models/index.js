@@ -4,11 +4,8 @@ const Negocio          = require('./Negocio');
 const Producto         = require('./Producto');
 const Pedido           = require('./Pedido');
 const DeliveryBatch    = require('./DeliveryBatch');
-const RestaurantToken  = require('./RestaurantToken');
 const DriverPayment    = require('./DriverPayment');
 const PlatformRevenue  = require('./PlatformRevenue');
-const TokenTier        = require('./TokenTier');
-const TokenConsumo     = require('./TokenConsumo');
 const ConfigZona       = require('./ConfigZona');
 const ConfigComision   = require('./ConfigComision');
 const PromoConfig      = require('./PromoConfig');
@@ -41,10 +38,6 @@ DeliveryBatch.belongsTo(Repartidor, { foreignKey: 'driver_id', as: 'repartidor' 
 Pedido.belongsTo(DeliveryBatch, { foreignKey: 'batch_id', as: 'batch' });
 DeliveryBatch.hasMany(Pedido,   { foreignKey: 'batch_id', as: 'pedidos' });
 
-// ─── Tokens de restaurante ────────────────────────────────
-Negocio.hasMany(RestaurantToken, { foreignKey: 'restaurant_id', as: 'tokens' });
-RestaurantToken.belongsTo(Negocio, { foreignKey: 'restaurant_id', as: 'negocio' });
-
 // ─── Pagos a repartidor ───────────────────────────────────
 Repartidor.hasMany(DriverPayment, { foreignKey: 'driver_id', as: 'pagos' });
 DriverPayment.belongsTo(Repartidor, { foreignKey: 'driver_id', as: 'repartidor' });
@@ -64,13 +57,9 @@ LedgerConciliacion.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
 Repartidor.hasOne(FondoRepartidor, { foreignKey: 'repartidor_id', as: 'fondo' });
 FondoRepartidor.belongsTo(Repartidor, { foreignKey: 'repartidor_id', as: 'repartidor' });
 
-// ─── Token consumos ───────────────────────────────────────
-RestaurantToken.hasMany(TokenConsumo, { foreignKey: 'restaurant_token_id', as: 'consumos' });
-TokenConsumo.belongsTo(RestaurantToken, { foreignKey: 'restaurant_token_id', as: 'lote' });
-
 module.exports = {
   Usuario, Repartidor, Negocio, Producto, Pedido,
-  DeliveryBatch, RestaurantToken, DriverPayment, PlatformRevenue,
-  TokenTier, TokenConsumo, ConfigZona, ConfigComision,
+  DeliveryBatch, DriverPayment, PlatformRevenue,
+  ConfigZona, ConfigComision,
   PromoConfig, LedgerConciliacion, FondoRepartidor,
 };
