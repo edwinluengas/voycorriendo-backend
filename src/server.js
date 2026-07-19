@@ -394,6 +394,12 @@ const migrarDB = async () => {
   // Control de retiros pendientes — evita doble retiro del mismo saldo
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS retiro_pendiente BOOLEAN NOT NULL DEFAULT false`);
 
+  // Perfil de usuario: direcciones guardadas, método de pago default, prefs notificaciones
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS direcciones_guardadas JSONB NOT NULL DEFAULT '[]'`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS metodo_pago_default VARCHAR(30) DEFAULT NULL`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_pedidos BOOLEAN NOT NULL DEFAULT true`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS notif_marketing BOOLEAN NOT NULL DEFAULT false`);
+
   console.log('[migración] Completada.');
 };
 

@@ -1,4 +1,5 @@
-const { Usuario, Repartidor, Negocio } = require('../models');
+const { Usuario, Repartidor, Negocio, Pedido } = require('../models');
+const { Op } = require('sequelize');
 
 // ─── GET /api/usuarios/mis-roles ─────────────────────────────
 // Devuelve que modos tiene activos el usuario y su estado.
@@ -214,6 +215,116 @@ function construirMensajeNegocio(verificacion, activo, estadoCuenta, motivo, not
   return null;
 }
 
+// ─── GET /api/usuarios/mis-direcciones ───────────────────────
+const misDirecciones = async (req, res) => {
+  res.json({ ok: true, data: { direcciones: req.usuario.direcciones_guardadas || [] } });
+};
+
+// ─── POST /api/usuarios/mis-direcciones ──────────────────────
+const agregarDireccion = async (req, res) => {
+  try {
+    const { nombre, direccion, notas } = req.body;
+    if (!nombre?.trim() || !direccion?.trim()) {
+      return res.status(400).json({ ok: false, mensaje: 'Nombre y dirección son requeridos.' });
+    }
+    const dirs = [...(req.usuario.direcciones_guardadas || [])];
+    if (dirs.length >= 5) {
+      return res.status(400).json({ ok: false, mensaje: 'Máximo 5 direcciones guardadas.' });
+    }
+    const nueva = {
+      id: Date.now().toString(),
+      nombre: nombre.trim(),
+      direccion: direccion.trim(),
+      notas: notas?.trim() || '',
+      creada_en: new Date().toISOString(),
+    };
+    dirs.push(nueva);
+    await req.usuario.update({ direcciones_guardadas: dirs });
+    res.json({ ok: true, data: { direcciones: dirs } });
+  } catch (e) {
+    res.status(500).json({ ok: false, mensaje: 'Error al guardar dirección.' });
+  }
+};
+
+// ─── DELETE /api/usuarios/mis-direcciones/:id ─────────────────
+const eliminarDireccion = async (req, res) => {
+  try {
+    const dirs = (req.usuario.direcciones_guardadas || []).filter(d => d.id !== req.params.id);
+    await req.usuario.update({ direcciones_guardadas: dirs });
+    res.json({ ok: true, data: { direcciones: dirs } });
+  } catch (e) {
+    res.status(500).json({ ok: false, mensaje: 'Error al eliminar dirección.' });
+  }
+};
+
+// ─── GET /api/usuarios/mis-calificaciones ─────────────────────
+const misCalificaciones = async (req, res) => {
+  try {
+    const pedidos = await Pedido.findAll({
+      where: {
+        cliente_id: req.usuario.id,
+        estado: 'entregado',
+        calificacion_negocio: { [Op.ne]: null },
+      },
+      attributes: [
+        'id', 'numero', 'creado_en',
+        'calificacion_negocio', 'calificacion_repartidor', 'comentario', 'propina',
+      ],
+      include: [{ model: Negocio, as: 'negocio', attributes: ['id', 'nombre'] }],
+      order: [['creado_en', 'DESC']],
+      limit: 50,
+    });
+    res.json({ ok: true, data: { calificaciones: pedidos } });
+  } catch (e) {
+    console.error('Error en misCalificaciones:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener calificaciones.' });
+  }
+};
+
+// ─── GET /api/usuarios/metodo-pago-default ───────────────────
+const getMetodoPagoDefault = async (req, res) => {
+  res.json({ ok: true, data: { metodo_pago_default: req.usuario.metodo_pago_default || null } });
+};
+
+// ─── PATCH /api/usuarios/metodo-pago-default ─────────────────
+const setMetodoPagoDefault = async (req, res) => {
+  try {
+    const { metodo } = req.body;
+    const validos = ['efectivo', 'tarjeta', 'mercado_pago'];
+    if (!validos.includes(metodo)) {
+      return res.status(400).json({ ok: false, mensaje: 'Método de pago inválido.' });
+    }
+    await req.usuario.update({ metodo_pago_default: metodo });
+    res.json({ ok: true, data: { metodo_pago_default: metodo } });
+  } catch (e) {
+    res.status(500).json({ ok: false, mensaje: 'Error al guardar preferencia.' });
+  }
+};
+
+// ─── GET /api/usuarios/notificaciones ────────────────────────
+const getNotificaciones = async (req, res) => {
+  res.json({
+    ok: true,
+    data: {
+      notif_pedidos:    req.usuario.notif_pedidos    ?? true,
+      notif_marketing:  req.usuario.notif_marketing  ?? false,
+    },
+  });
+};
+
+// ─── PATCH /api/usuarios/notificaciones ──────────────────────
+const setNotificaciones = async (req, res) => {
+  try {
+    const campos = {};
+    if (req.body.notif_pedidos   !== undefined) campos.notif_pedidos   = !!req.body.notif_pedidos;
+    if (req.body.notif_marketing !== undefined) campos.notif_marketing = !!req.body.notif_marketing;
+    await req.usuario.update(campos);
+    res.json({ ok: true, data: campos });
+  } catch (e) {
+    res.status(500).json({ ok: false, mensaje: 'Error al guardar preferencias.' });
+  }
+};
+
 // ─── PATCH /api/usuarios/push-token ──────────────────────────
 const guardarPushToken = async (req, res) => {
   try {
@@ -234,4 +345,12 @@ module.exports = {
   obtenerMisRoles,
   cambiarModo,
   guardarPushToken,
+  misDirecciones,
+  agregarDireccion,
+  eliminarDireccion,
+  misCalificaciones,
+  getMetodoPagoDefault,
+  setMetodoPagoDefault,
+  getNotificaciones,
+  setNotificaciones,
 };
