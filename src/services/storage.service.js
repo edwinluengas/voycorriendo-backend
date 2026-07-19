@@ -27,6 +27,21 @@ const validarConfig = () => {
   }
 };
 
+const MIME_PERMITIDOS = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const MAX_BYTES = 8 * 1024 * 1024; // 8 MB — deja margen bajo el límite de axios de 10 MB
+
+const validarImagen = (mime, buffer) => {
+  if (!MIME_PERMITIDOS.includes((mime || '').toLowerCase())) {
+    throw new Error(`Tipo de archivo no permitido: ${mime || 'desconocido'}. Solo se aceptan imágenes JPEG, PNG o WEBP.`);
+  }
+  if (buffer.length > MAX_BYTES) {
+    throw new Error(`La imagen es demasiado grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Máximo ${MAX_BYTES / 1024 / 1024} MB.`);
+  }
+  if (buffer.length === 0) {
+    throw new Error('El archivo está vacío.');
+  }
+};
+
 /**
  * Sube una imagen base64 a Supabase Storage.
  *
@@ -42,6 +57,8 @@ const subirImagen = async (bucket, ruta, base64, mime) => {
   // Limpiamos el prefijo data: por si llega "data:image/jpeg;base64,..."
   const limpio = base64.includes(',') ? base64.split(',')[1] : base64;
   const buffer = Buffer.from(limpio, 'base64');
+
+  validarImagen(mime, buffer);
 
   const url = `${SUPABASE_URL}/storage/v1/object/${bucket}/${ruta}`;
 

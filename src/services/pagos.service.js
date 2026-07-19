@@ -148,6 +148,24 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
     const pedido = await Pedido.findOne({ where: { numero: ref } });
     if (!pedido) return { ok: false, mensaje: 'Pedido no encontrado.' };
 
+    // ── Verificar que el monto pagado coincida con el pedido ──
+    // Defensa en profundidad: Checkout Pro no deja alterar precios desde el
+    // cliente, pero si algún día se acepta un monto reportado por el cliente
+    // (o hay un bug de cálculo), esto evita capturar un pago incompleto.
+    if (pago.status === 'approved') {
+      const montoPagado   = parseFloat(pago.transaction_amount || 0);
+      const montoEsperado = parseFloat(pedido.total || 0);
+      if (Math.abs(montoPagado - montoEsperado) > 0.5) {
+        console.error(
+          `[webhook] MONTO NO COINCIDE pedido ${pedido.numero}: pagado=$${montoPagado} esperado=$${montoEsperado}`
+        );
+        pedido.pago_estado     = 'pendiente';
+        pedido.pago_referencia = String(paymentId);
+        await pedido.save();
+        return { ok: false, mensaje: 'El monto del pago no coincide con el pedido.', tipo: 'monto_invalido', pedido };
+      }
+    }
+
     const mapa = {
       approved:   'capturado',
       authorized: 'autorizado',
