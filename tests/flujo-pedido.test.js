@@ -278,9 +278,11 @@ describe('Flujo completo feliz: efectivo, pendiente → entregado', () => {
     const deudaAntes = await db.query(`SELECT deuda_plataforma FROM negocios WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
 
     const repetido = await cliente.patch(`/pedidos/${pedidoId}/estado`, { estado: 'entregado', codigo_entrega: codigo }, conAuth(token));
-    // La transición atómica debe rechazar la segunda llamada (409) — el pedido
-    // ya no está en el estado previo que el update condicional exige.
-    expect(repetido.status).toBe(409);
+    // Se rechaza — ya sea por la máquina de estados (400, "entregado" no
+    // tiene transición a "entregado") o por el candado atómico (409) si
+    // llegara a pasar la primera validación. Lo que importa es que NO
+    // procese la economía otra vez.
+    expect([400, 409]).toContain(repetido.status);
 
     const deudaDespues = await db.query(`SELECT deuda_plataforma FROM negocios WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
     expect(parseFloat(deudaDespues.rows[0].deuda_plataforma)).toBe(parseFloat(deudaAntes.rows[0].deuda_plataforma));
