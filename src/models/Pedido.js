@@ -98,6 +98,7 @@ const Pedido = sequelize.define('Pedido', {
   enviado_en:    { type: DataTypes.DATE, allowNull: true },
   entregado_en:  { type: DataTypes.DATE, allowNull: true },
   cancelado_en:  { type: DataTypes.DATE, allowNull: true },
+  nota_cancelacion: { type: DataTypes.STRING(255), allowNull: true },
   // Calificaciones
   calificacion_repartidor: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },
   calificacion_negocio: { type: DataTypes.INTEGER, allowNull: true, validate: { min: 1, max: 5 } },

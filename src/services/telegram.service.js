@@ -107,6 +107,12 @@ const alertaAdminNuevoNegocio = (nombre) =>
 const alertaAdminPedidoSinDriver = (pedidoNumero, minutos) =>
   enviarAdmin(`⏰ Pedido <b>${pedidoNumero}</b> sin repartidor asignado hace ${minutos} min.`);
 
+const alertaAdminPedidoAtascado = (pedidoNumero, minutos) =>
+  enviarAdmin(
+    `🚨 Pedido <b>${pedidoNumero}</b> lleva ${minutos} min en camino sin confirmarse como entregado. ` +
+    `Puede que el repartidor no haya cerrado la entrega. Revísalo en el panel admin.`
+  );
+
 module.exports = {
   enviar,
   enviarAdmin,
@@ -122,5 +128,6 @@ module.exports = {
   alertaAdminNuevoRepartidor,
   alertaAdminNuevoNegocio,
   alertaAdminPedidoSinDriver,
+  alertaAdminPedidoAtascado,
   WEBHOOK_SECRET,
 };

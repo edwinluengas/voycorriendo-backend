@@ -106,30 +106,47 @@ const crearPedido = async (req, res) => {
     }
 
     // 3. Calcular distancia y validar cobertura por tipo_envio
+    // IMPORTANTE: si no podemos determinar la distancia (falta ubicación del
+    // negocio o del cliente, o falla el cálculo), el pedido se RECHAZA — antes
+    // se dejaba pasar sin límite de cobertura, permitiendo pedidos a cualquier
+    // distancia si el negocio no tenía latitud/longitud configuradas.
     let distanciaKm = null;
-    const origen  = negocio.latitud && negocio.longitud
-      ? { lat: Number(negocio.latitud), lng: Number(negocio.longitud) }
-      : null;
-    const destino = latitud_entrega && longitud_entrega
-      ? { lat: Number(latitud_entrega), lng: Number(longitud_entrega) }
-      : null;
+    if (tipo_envio !== 'pickup') {
+      if (!negocio.latitud || !negocio.longitud) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'Este negocio aún no tiene su ubicación configurada y no puede recibir pedidos a domicilio por ahora.',
+        });
+      }
+      if (!latitud_entrega || !longitud_entrega) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'Necesitamos tu ubicación para calcular la cobertura de entrega. Activa el GPS y detecta tu ubicación antes de continuar.',
+        });
+      }
 
-    if (origen && destino) {
+      const origen  = { lat: Number(negocio.latitud), lng: Number(negocio.longitud) };
+      const destino = { lat: Number(latitud_entrega), lng: Number(longitud_entrega) };
+
       try {
         const { km } = await calcularDistanciaKm(origen, destino);
         distanciaKm = Number(km.toFixed(2));
       } catch (e) {
-        console.warn('No se pudo calcular distancia:', e.message);
+        console.error('No se pudo calcular distancia:', e.message);
+        return res.status(503).json({
+          ok: false,
+          mensaje: 'No pudimos calcular la distancia de entrega. Intenta de nuevo en unos segundos.',
+        });
       }
-    }
 
-    const maxKm = await getMaxKm(tipo_envio);
-    if (distanciaKm != null && distanciaKm > maxKm) {
-      const tipoLabel = tipo_envio === 'express' ? 'Express' : 'Estándar';
-      return res.status(400).json({
-        ok: false,
-        mensaje: `Tu dirección está a ${distanciaKm.toFixed(1)} km. El envío ${tipoLabel} tiene cobertura máxima de ${maxKm} km.`,
-      });
+      const maxKm = await getMaxKm(tipo_envio);
+      if (distanciaKm > maxKm) {
+        const tipoLabel = tipo_envio === 'express' ? 'Express' : 'Estándar';
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Tu dirección está a ${distanciaKm.toFixed(1)} km. El envío ${tipoLabel} tiene cobertura máxima de ${maxKm} km.`,
+        });
+      }
     }
 
     // 4. Validar método de pago
@@ -315,6 +332,17 @@ const pedidosDelNegocio = async (req, res) => {
       }
       where.estado = estados.length === 1 ? estados[0] : estados;
     }
+    // El negocio no debe ver pedidos con tarjeta/MP hasta que el pago esté
+    // capturado — antes aparecían en la lista apenas se creaban, sin importar
+    // si el cliente ya había pagado.
+    where[Op.and] = [
+      {
+        [Op.or]: [
+          { metodo_pago: { [Op.notIn]: ['tarjeta', 'mercado_pago'] } },
+          { pago_estado: 'capturado' },
+        ],
+      },
+    ];
 
     const pedidos = await Pedido.findAll({
       where,

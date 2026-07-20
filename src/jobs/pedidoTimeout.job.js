@@ -2,8 +2,13 @@ const cron = require('node-cron');
 const { Op } = require('sequelize');
 const { Pedido, Usuario } = require('../models');
 const push = require('../services/notificaciones.service');
+const tg = require('../services/telegram.service');
 
 const TIMEOUT_MIN = parseInt(process.env.PEDIDO_TIMEOUT_MIN || '15');
+// Una entrega real puede tardar; solo alertamos (no cancelamos automático)
+// cuando lleva demasiado tiempo "en_camino" sin cerrarse — probable que el
+// repartidor haya perdido el pedido de vista sin confirmar la entrega.
+const ATASCADO_MIN = parseInt(process.env.PEDIDO_ATASCADO_MIN || '90');
 
 async function cancelarPedidosExpirados() {
   const limite = new Date(Date.now() - TIMEOUT_MIN * 60 * 1000);
@@ -33,6 +38,28 @@ async function cancelarPedidosExpirados() {
   }
 }
 
+// Alerta (no cancela) pedidos "en_camino" atascados. Se avisa UNA vez por
+// pedido: solo si el cruce del umbral cae dentro de la ventana de este tick
+// del cron (evita reenviar la misma alerta cada 5 min indefinidamente).
+async function alertarPedidosAtascados() {
+  const limite = new Date(Date.now() - ATASCADO_MIN * 60 * 1000);
+  const ventana = new Date(Date.now() - (ATASCADO_MIN + 5) * 60 * 1000);
+
+  const pedidos = await Pedido.findAll({
+    where: {
+      estado: 'en_camino',
+      repartidor_id: { [Op.ne]: null },
+      asignado_en: { [Op.lt]: limite, [Op.gte]: ventana },
+    },
+  });
+
+  for (const pedido of pedidos) {
+    const minutos = Math.round((Date.now() - new Date(pedido.asignado_en).getTime()) / 60000);
+    tg.alertaAdminPedidoAtascado(pedido.numero, minutos).catch(() => {});
+    console.warn(`[PedidoTimeout] ${pedido.numero} atascado en_camino hace ${minutos} min — admin alertado.`);
+  }
+}
+
 function iniciarJobPedidoTimeout() {
   cron.schedule('*/5 * * * *', async () => {
     try {
@@ -40,8 +67,13 @@ function iniciarJobPedidoTimeout() {
     } catch (e) {
       console.error('[PedidoTimeout] Error:', e.message);
     }
+    try {
+      await alertarPedidosAtascados();
+    } catch (e) {
+      console.error('[PedidoTimeout] Error en alertarPedidosAtascados:', e.message);
+    }
   });
-  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela tras ${TIMEOUT_MIN} min.`);
+  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela tras ${TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min.`);
 }
 
 module.exports = { iniciarJobPedidoTimeout };

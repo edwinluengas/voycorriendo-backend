@@ -404,6 +404,10 @@ const migrarDB = async () => {
   // restringidas a su propio rol (ver restringirA en middleware/auth.js).
   await run(`UPDATE usuarios SET modo_activo = rol::text::"enum_usuarios_modo_activo" WHERE modo_activo = 'cliente' AND rol IN ('repartidor', 'negocio', 'admin')`);
 
+  // nota_cancelacion: usada por el job de timeout de pedidos, existía en el
+  // código pero nunca se creó la columna — se perdía silenciosamente.
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS nota_cancelacion VARCHAR(255)`);
+
   console.log('[migración] Completada.');
 };
 
