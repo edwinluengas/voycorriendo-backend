@@ -33,7 +33,10 @@ const obtenerMisRoles = async (req, res) => {
           estado: mapearEstadoRol(repartidor.verificacion_estado, repartidor.estado_cuenta),
           verificacion: repartidor.verificacion_estado,
           estado_cuenta: repartidor.estado_cuenta,
-          mensaje: construirMensajeRol(repartidor.verificacion_estado, repartidor.estado_cuenta, repartidor.estado_motivo),
+          mensaje: construirMensajeRol(
+            repartidor.verificacion_estado, repartidor.estado_cuenta,
+            repartidor.estado_cuenta !== 'normal' ? repartidor.estado_motivo : repartidor.verificacion_nota
+          ),
           conectado: repartidor.conectado,
           calificacion: parseFloat(repartidor.calificacion_promedio),
           total_entregas: repartidor.total_entregas,

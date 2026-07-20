@@ -254,6 +254,7 @@ const enviarARevision = async (req, res) => {
     if (!negocio.comprobante_domicilio)  faltantes.push('comprobante de domicilio');
     if (!negocio.documento_ine_dueno)    faltantes.push('INE del dueno');
     if (!negocio.clabe_bancaria)         faltantes.push('CLABE');
+    if (!negocio.banco)                  faltantes.push('banco');
     if (faltantes.length) {
       return res.status(400).json({
         ok: false,
@@ -546,9 +547,23 @@ const gananciasNegocio = async (req, res) => {
 
     // ── Pendientes de corte del viernes (tarjeta no conciliada) ─
     const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado);
+    const ledgersTarjetaConciliada = ledgersTarjeta.filter((l) => l.conciliado);
     const plataformaDebeNegocio = ledgersSinConciliar.reduce(
       (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
     );
+
+    // ── Pagado vs generado ────────────────────────────────────
+    // Efectivo: el negocio ya tiene el dinero en mano (se lo dio el
+    // repartidor) — cuenta como "pagado" desde ya, no depende de la
+    // plataforma. Tarjeta: solo cuenta como pagado una vez conciliado
+    // (corte semanal o retiro diario ya procesado).
+    const liquidacionEfectivo = ledgersEfectivo.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - parseFloat(l.comision_plataforma || 0), 0
+    );
+    const liquidacionTarjetaPagada = ledgersTarjetaConciliada.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - parseFloat(l.comision_plataforma || 0), 0
+    );
+    const ingresoPagado = liquidacionEfectivo + liquidacionTarjetaPagada;
 
     // ── Deuda acumulada del negocio con la plataforma ─────────
     const deudaActual = parseFloat(negocio.deuda_plataforma || 0);
@@ -571,9 +586,13 @@ const gananciasNegocio = async (req, res) => {
       ok: true,
       data: {
         pedidos_completados: pedidos.length,
+        total_pedidos:       pedidos.length,
         subtotal_productos:  totalSubtotal,
         comisiones_pagadas:  totalComisiones,
         liquidacion_comida:  totalLiquidacion,
+        ingreso_generado:    totalLiquidacion,
+        ingreso_pagado:      ingresoPagado,
+        ingreso_por_pagar:   Math.max(0, totalLiquidacion - ingresoPagado),
         // Desglose
         subtotal_tarjeta:    subtotalTarjeta,
         subtotal_efectivo:   subtotalEfectivo,

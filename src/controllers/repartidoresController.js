@@ -146,6 +146,7 @@ const enviarARevision = async (req, res) => {
     if (!repartidor.tipo_vehiculo) faltantes.push('tipo de vehiculo');
     if (!repartidor.placa_vehiculo) faltantes.push('placa');
     if (!repartidor.clabe_bancaria) faltantes.push('CLABE');
+    if (!repartidor.banco) faltantes.push('banco');
     if (!repartidor.foto_ine_frente) faltantes.push('foto INE frente');
     if (!repartidor.foto_ine_reverso) faltantes.push('foto INE reverso');
     if (!repartidor.foto_licencia) faltantes.push('foto licencia');
@@ -583,6 +584,11 @@ const ganancias = async (req, res) => {
 
     const totalEnvios   = entregados.reduce((s, p) => s + parseFloat(p.pago_repartidor || 0), 0);
     const totalPropinas = entregados.reduce((s, p) => s + parseFloat(p.propina || 0), 0);
+    // Efectivo: el repartidor ya recibió el dinero de mano del cliente al
+    // entregar — nunca pasa por la plataforma, cuenta como "pagado" desde ya.
+    const gananciaEfectivo = entregados
+      .filter(p => p.metodo_pago === 'efectivo')
+      .reduce((s, p) => s + parseFloat(p.pago_repartidor || 0) + parseFloat(p.propina || 0), 0);
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
 
@@ -597,15 +603,25 @@ const ganancias = async (req, res) => {
       porDepositar = ledgersPendientes.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
     }
 
+    const ingresoGenerado = totalEnvios + totalPropinas;
+    // Pagado = efectivo (ya en mano) + lo que un admin ya confirmó transferido
+    // (retiros/depósitos ya procesados vía confirmar-retiro).
+    const ingresoPagado = gananciaEfectivo + parseFloat(fondo?.total_pagado_historico || 0);
+
     res.json({
       ok: true,
       data: {
         pedidos_completados: entregados.length,
+        total_pedidos:       entregados.length,
         ganancias_envios:    totalEnvios,
         propinas_cobradas:   totalPropinas,
-        total_ganado:        totalEnvios + totalPropinas,
+        total_ganado:        ingresoGenerado,
+        ingreso_generado:    ingresoGenerado,
+        ingreso_pagado:      ingresoPagado,
+        ingreso_por_pagar:   Math.max(0, ingresoGenerado - ingresoPagado),
         fondo_efectivo:      parseFloat(fondo?.monto_disponible || 0),
         por_depositar:       porDepositar,
+        retiro_pendiente:    !!fondo?.retiro_pendiente,
         pedidos_recientes:   entregados.slice(0, 30),
       },
     });
@@ -662,8 +678,8 @@ const solicitarDeposito = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
     }
 
-    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
-    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true });
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
+    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
 
     let ledgersConciliados = 0;
     if (ledgers.length > 0) {
@@ -733,8 +749,10 @@ const retiroDiario = async (req, res) => {
     }
 
     // Descontar el saldo, conciliar tarjeta y marcar retiro pendiente
-    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
-    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true });
+    // (monto_pendiente_confirmar = neto, lo que realmente recibirá el
+    // repartidor — el fee se lo queda la plataforma, no cuenta como "pagado")
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
+    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
     if (ledgers.length > 0) {
       await LedgerConciliacion.update(
         { conciliado: true, conciliado_en: new Date() },

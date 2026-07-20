@@ -510,15 +510,20 @@ const confirmarRetiroRepartidor = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Este repartidor no tiene ningún retiro pendiente.' });
     }
 
-    await fondo.update({ retiro_pendiente: false });
+    const montoConfirmado = parseFloat(fondo.monto_pendiente_confirmar || 0);
+    await fondo.update({
+      retiro_pendiente: false,
+      monto_pendiente_confirmar: 0,
+      total_pagado_historico: parseFloat(fondo.total_pagado_historico || 0) + montoConfirmado,
+    });
 
     logAdmin({
       adminId: req.usuario.id, accion: 'confirmar_retiro_repartidor', entidadTipo: 'repartidor',
-      entidadId: id, estadoAntes: { retiro_pendiente: true },
+      entidadId: id, estadoAntes: { retiro_pendiente: true, monto: montoConfirmado },
       estadoDespues: { retiro_pendiente: false }, ip: req.ip,
     });
 
-    res.json({ ok: true, mensaje: 'Retiro marcado como transferido. El repartidor ya puede solicitar otro.' });
+    res.json({ ok: true, mensaje: `Retiro de $${montoConfirmado.toFixed(2)} MXN marcado como transferido. El repartidor ya puede solicitar otro.` });
   } catch (e) {
     console.error('Error confirmarRetiroRepartidor:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al confirmar el retiro.' });
