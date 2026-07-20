@@ -7,7 +7,7 @@
  * Todas las rutas requieren middleware: proteger + restringirA('admin').
  */
 const { Op, fn, col, literal } = require('sequelize');
-const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion } = require('../models');
+const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion, FondoRepartidor } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
 
@@ -444,7 +444,7 @@ const liquidarSemanalNegocio = async (req, res) => {
     if (ledgers.length > 0) {
       await LedgerConciliacion.update(
         { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
       );
     }
 
@@ -465,6 +465,66 @@ const liquidarSemanalNegocio = async (req, res) => {
   }
 };
 
+// ─── PATCH /api/admin/pedidos/:id/confirmar-pago ─────────────
+// El admin verifica que la transferencia SPEI del cliente (Voy Store®)
+// realmente llegó y captura el pago — sin esto, un pedido por transferencia
+// nunca podría avanzar más allá de 'autorizado' porque nada más lo hace.
+const confirmarPagoPedido = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pedido = await Pedido.findByPk(id);
+    if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
+    if (pedido.metodo_pago !== 'transferencia') {
+      return res.status(400).json({ ok: false, mensaje: 'Este pedido no es por transferencia — su pago se confirma automáticamente.' });
+    }
+    if (pedido.pago_estado === 'capturado') {
+      return res.status(400).json({ ok: false, mensaje: 'Este pedido ya tenía el pago confirmado.' });
+    }
+
+    pedido.pago_estado = 'capturado';
+    await pedido.save();
+
+    logAdmin({
+      adminId: req.usuario.id, accion: 'confirmar_pago_pedido', entidadTipo: 'pedido',
+      entidadId: pedido.id, estadoAntes: { pago_estado: 'autorizado' },
+      estadoDespues: { pago_estado: 'capturado' }, ip: req.ip,
+    });
+
+    res.json({ ok: true, mensaje: `Pago de ${pedido.numero} confirmado. El negocio ya puede recibirlo.`, data: { pedido } });
+  } catch (e) {
+    console.error('Error confirmarPagoPedido:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al confirmar el pago.' });
+  }
+};
+
+// ─── POST /api/admin/repartidores/:id/confirmar-retiro ───────
+// El admin confirma que ya transfirió el retiro diario/semanal pendiente —
+// sin esto, retiro_pendiente=true se queda para siempre y el repartidor
+// jamás puede volver a pedir un retiro.
+const confirmarRetiroRepartidor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: id } });
+    if (!fondo) return res.status(404).json({ ok: false, mensaje: 'Repartidor sin fondo registrado.' });
+    if (!fondo.retiro_pendiente) {
+      return res.status(400).json({ ok: false, mensaje: 'Este repartidor no tiene ningún retiro pendiente.' });
+    }
+
+    await fondo.update({ retiro_pendiente: false });
+
+    logAdmin({
+      adminId: req.usuario.id, accion: 'confirmar_retiro_repartidor', entidadTipo: 'repartidor',
+      entidadId: id, estadoAntes: { retiro_pendiente: true },
+      estadoDespues: { retiro_pendiente: false }, ip: req.ip,
+    });
+
+    res.json({ ok: true, mensaje: 'Retiro marcado como transferido. El repartidor ya puede solicitar otro.' });
+  } catch (e) {
+    console.error('Error confirmarRetiroRepartidor:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al confirmar el retiro.' });
+  }
+};
+
 module.exports = {
   dashboard,
   // Repartidores
@@ -481,6 +541,8 @@ module.exports = {
   cambiarEstadoCuentaNegocio,
   confirmarPagoDeuda,
   liquidarSemanalNegocio,
+  confirmarPagoPedido,
+  confirmarRetiroRepartidor,
   // Usuarios
   listarUsuarios,
   // Revenue

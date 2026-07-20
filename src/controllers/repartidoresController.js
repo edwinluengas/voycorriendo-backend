@@ -425,13 +425,25 @@ const aceptarPedido = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no corresponde a tu ciudad de operación.' });
     }
 
-    // Obtener o crear batch activo del repartidor
+    const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
+
+    // Obtener o crear batch activo del repartidor — solo cuentan los pedidos
+    // NO terminales; un batch con todo entregado/cancelado no debe seguir
+    // bloqueando al repartidor de aceptar pedidos nuevos.
     let batch = await DeliveryBatch.findOne({
       where: { driver_id: repartidor.id, status: 'active' },
-      include: [{ model: Pedido, as: 'pedidos' }],
+      include: [{ model: Pedido, as: 'pedidos', where: { estado: { [Op.notIn]: ESTADOS_TERMINALES } }, required: false }],
     });
 
     const maxOrders = repartidor.max_pedidos_ruta || 3;
+    const pedidosActivosBatch = batch?.pedidos || [];
+
+    // Si el batch activo ya no tiene pedidos pendientes, se cierra solo y se
+    // trata como si el repartidor no tuviera ruta activa.
+    if (batch && pedidosActivosBatch.length === 0) {
+      await batch.update({ status: 'completed', completed_at: new Date() });
+      batch = null;
+    }
 
     // EXPRESS viaja solo — sin batch activo ni compartido
     if (pedido.tipo_envio === 'express' && batch) {
@@ -443,14 +455,14 @@ const aceptarPedido = async (req, res) => {
 
     // Por ahora una ruta solo combina pedidos del MISMO negocio — no se mezclan
     // recolecciones de restaurantes distintos en un solo viaje.
-    if (batch && batch.pedidos.length > 0 && batch.pedidos[0].negocio_id !== pedido.negocio_id) {
+    if (batch && pedidosActivosBatch.length > 0 && pedidosActivosBatch[0].negocio_id !== pedido.negocio_id) {
       return res.status(409).json({
         ok: false,
         mensaje: 'Ya tienes pedidos en ruta de otro negocio. Termina esa entrega antes de aceptar este.',
       });
     }
 
-    if (batch && pedido.tipo_envio !== 'express' && batch.pedidos.length >= maxOrders) {
+    if (batch && pedido.tipo_envio !== 'express' && pedidosActivosBatch.length >= maxOrders) {
       return res.status(409).json({
         ok: false,
         mensaje: `Ya tienes ${maxOrders} pedidos en ruta. Entrega primero antes de tomar más.`,
@@ -464,16 +476,23 @@ const aceptarPedido = async (req, res) => {
       });
     }
 
-    // Asignar pedido al batch y al repartidor (codigo_entrega ya existe, no sobreescribir)
-    await pedido.update({
-      repartidor_id: repartidor.id,
-      batch_id: batch.id,
-      estado: 'en_camino',
-      asignado_en: new Date(),
-    });
+    // Asignar pedido al batch y al repartidor de forma ATÓMICA — evita que
+    // dos repartidores "ganen" el mismo pedido si aceptan casi al mismo
+    // tiempo (ambos pasan el findOne de arriba antes de que cualquiera
+    // escriba). Si affectedCount es 0, alguien más ya se lo quedó.
+    const [affectedCount] = await Pedido.update(
+      { repartidor_id: repartidor.id, batch_id: batch.id, estado: 'en_camino', asignado_en: new Date() },
+      { where: { id: pedido.id, estado: 'listo', repartidor_id: null } }
+    );
+    if (affectedCount === 0) {
+      return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue tomado por otro repartidor.' });
+    }
+    await pedido.reload();
 
-    // Recalcular ruta con todos los pedidos del batch
-    const pedidosEnBatch = await Pedido.findAll({ where: { batch_id: batch.id } });
+    // Recalcular ruta con todos los pedidos NO terminales del batch
+    const pedidosEnBatch = await Pedido.findAll({
+      where: { batch_id: batch.id, estado: { [Op.notIn]: ESTADOS_TERMINALES } },
+    });
     const origen = repartidor.latitud && repartidor.longitud
       ? { lat: parseFloat(repartidor.latitud), lng: parseFloat(repartidor.longitud) }
       : null;
@@ -533,12 +552,14 @@ const miRuta = async (req, res) => {
       include: [{
         model: Pedido,
         as: 'pedidos',
+        where: { estado: { [Op.notIn]: ['entregado', 'cancelado', 'rechazado'] } },
+        required: false,
         attributes: ['id', 'numero', 'tipo_envio', 'direccion_entrega',
                      'latitud_entrega', 'longitud_entrega', 'estado', 'fee_cliente'],
       }],
     });
 
-    if (!batch) {
+    if (!batch || (batch.pedidos || []).length === 0) {
       return res.json({ ok: true, data: { batch: null, mensaje: 'Sin ruta activa.' } });
     }
 
@@ -623,6 +644,16 @@ const solicitarDeposito = async (req, res) => {
     if (!repartidor) return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
+
+    // Mismo candado que retiroDiario — evita doble-envío (doble-tap, reintento
+    // de red) que generaría dos alertas de pago por el mismo dinero.
+    if (fondo?.retiro_pendiente) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Ya tienes un pago en proceso. Espera a que se transfiera antes de solicitar otro.',
+      });
+    }
+
     const montoFondo = parseFloat(fondo?.monto_disponible || 0);
     const { total: montoTarjeta, ledgers } = await calcularPorDepositarRepartidor(repartidor.id);
     const monto = montoFondo + montoTarjeta;
@@ -631,11 +662,16 @@ const solicitarDeposito = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
     }
 
-    if (fondo && montoFondo > 0) await fondo.update({ monto_disponible: 0 });
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true });
+    else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true });
+
+    let ledgersConciliados = 0;
     if (ledgers.length > 0) {
-      await LedgerConciliacion.update(
+      // Re-chequea conciliado:false en el WHERE del UPDATE — si otra request
+      // ganó la carrera y ya los marcó, este update no hace nada (no duplica).
+      [ledgersConciliados] = await LedgerConciliacion.update(
         { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
       );
     }
 
@@ -702,7 +738,7 @@ const retiroDiario = async (req, res) => {
     if (ledgers.length > 0) {
       await LedgerConciliacion.update(
         { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
       );
     }
 

@@ -24,6 +24,7 @@ router.get   ('/repartidores/:id',             ctrl.obtenerRepartidor);
 router.patch ('/repartidores/:id/aprobar',     ctrl.aprobarRepartidor);
 router.patch ('/repartidores/:id/rechazar',    ctrl.rechazarRepartidor);
 router.patch ('/repartidores/:id/cuenta',      ctrl.cambiarEstadoCuentaRepartidor);
+router.post  ('/repartidores/:id/confirmar-retiro', ctrl.confirmarRetiroRepartidor);
 
 // ─── Negocios ───────────────────────────────────────────────
 router.get   ('/negocios',                     ctrl.listarNegocios);
@@ -33,6 +34,9 @@ router.patch ('/negocios/:id/rechazar',        ctrl.rechazarNegocio);
 router.patch ('/negocios/:id/cuenta',          ctrl.cambiarEstadoCuentaNegocio);
 router.post  ('/negocios/:id/confirmar-pago',  ctrl.confirmarPagoDeuda);
 router.post  ('/negocios/:id/liquidar-semanal', ctrl.liquidarSemanalNegocio);
+
+// ─── Pedidos ──────────────────────────────────────────────────
+router.patch ('/pedidos/:id/confirmar-pago',   ctrl.confirmarPagoPedido);
 
 // ─── Usuarios (busqueda) ────────────────────────────────────
 router.get   ('/usuarios',                     ctrl.listarUsuarios);

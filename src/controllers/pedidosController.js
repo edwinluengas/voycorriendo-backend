@@ -1,4 +1,4 @@
-const { Pedido, Negocio, Repartidor, Usuario, Producto, FondoRepartidor } = require('../models');
+const { Pedido, Negocio, Repartidor, Usuario, Producto, FondoRepartidor, DeliveryBatch } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
@@ -218,9 +218,11 @@ const crearPedido = async (req, res) => {
     });
 
     // 8. Notificaciones al negocio
-    // Pagos digitales (tarjeta/MP): el negocio NO recibe notificación hasta que
-    // el webhook de MP confirme el pago. Evita que confirmen pedidos sin cobrar.
-    const metodoDigital = ['tarjeta', 'mercado_pago'].includes(metodo_pago);
+    // Pagos digitales (tarjeta/MP/transferencia): el negocio NO recibe
+    // notificación hasta que el pago esté confirmado (webhook de MP, o un
+    // admin verificando la transferencia SPEI). Evita que confirmen pedidos
+    // sin cobrar.
+    const metodoDigital = ['tarjeta', 'mercado_pago', 'transferencia'].includes(metodo_pago);
     if (!metodoDigital) {
       const io = req.app.get('io');
       io.to(`negocio:${negocio_id}`).emit('nuevo_pedido', {
@@ -338,7 +340,7 @@ const pedidosDelNegocio = async (req, res) => {
     where[Op.and] = [
       {
         [Op.or]: [
-          { metodo_pago: { [Op.notIn]: ['tarjeta', 'mercado_pago'] } },
+          { metodo_pago: { [Op.notIn]: ['tarjeta', 'mercado_pago', 'transferencia'] } },
           { pago_estado: 'capturado' },
         ],
       },
@@ -446,11 +448,11 @@ const actualizarEstado = async (req, res) => {
 
     // ── Bloquear confirmación si el pago digital no fue capturado ──
     if (estado === 'confirmado' && rolEfectivo === 'negocio') {
-      const metodoDigital = ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago);
+      const metodoDigital = ['tarjeta', 'mercado_pago', 'transferencia'].includes(pedido.metodo_pago);
       if (metodoDigital && pedido.pago_estado !== 'capturado') {
         return res.status(402).json({
           ok: false,
-          mensaje: 'El pago con tarjeta aún no ha sido confirmado. Espera la notificación de pago antes de aceptar el pedido.',
+          mensaje: 'El pago aún no ha sido confirmado. Espera la notificación de pago antes de aceptar el pedido.',
           codigo: 'PAGO_PENDIENTE',
         });
       }
@@ -464,10 +466,11 @@ const actualizarEstado = async (req, res) => {
       entregado:  'entregado_en',
       cancelado:  'cancelado_en',
     };
-    if (timestamps[estado]) pedido[timestamps[estado]] = new Date();
+    const camposActualizar = { estado };
+    if (timestamps[estado]) camposActualizar[timestamps[estado]] = new Date();
 
     if (estado === 'en_envio' && req.body.numero_guia) {
-      pedido.numero_guia = req.body.numero_guia;
+      camposActualizar.numero_guia = req.body.numero_guia;
     }
 
     // Validar código al entregar (repartidor) — el código SIEMPRE es obligatorio
@@ -484,13 +487,25 @@ const actualizarEstado = async (req, res) => {
         try {
           const ruta = `entregas/${pedido.id}_${Date.now()}.jpg`;
           const url = await subirImagen('documentos-negocios', ruta, foto_entrega, 'image/jpeg');
-          pedido.foto_entrega = url;
+          camposActualizar.foto_entrega = url;
         } catch (_) {}
       }
     }
 
-    pedido.estado = estado;
-    await pedido.save();
+    // Transición ATÓMICA: solo aplica si el pedido sigue en el estado que
+    // leímos al principio. Evita que dos requests casi simultáneas (doble-tap,
+    // reintento de red) disparen procesarEntrega() dos veces y dupliquen la
+    // deuda del negocio u otros efectos económicos.
+    const estadoPrevio = pedido.estado;
+    const [affectedCount] = await Pedido.update(camposActualizar, {
+      where: { id: pedido.id, estado: estadoPrevio },
+    });
+    if (affectedCount === 0) {
+      return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue actualizado por otra solicitud. Refresca e intenta de nuevo.' });
+    }
+    Object.assign(pedido, camposActualizar);
+
+    const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 
     // Al entregar: economía
     if (estado === 'entregado') {
@@ -509,6 +524,26 @@ const actualizarEstado = async (req, res) => {
           : null;
         if (dueno?.telegram_chat_id) tg.alertaPedidoEntregado(dueno.telegram_chat_id, pedido).catch(() => {});
       } catch (_) {}
+    }
+
+    // Si el pedido llegó a un estado terminal y pertenecía a una ruta de
+    // repartidor, cerramos el batch cuando ya no le queda ningún pedido
+    // pendiente — evita que rutas viejas se queden "activas" para siempre y
+    // bloqueen al repartidor de aceptar pedidos nuevos.
+    if (ESTADOS_TERMINALES.includes(estado) && pedido.batch_id) {
+      try {
+        const pendientesEnBatch = await Pedido.count({
+          where: { batch_id: pedido.batch_id, estado: { [Op.notIn]: ESTADOS_TERMINALES } },
+        });
+        if (pendientesEnBatch === 0) {
+          await DeliveryBatch.update(
+            { status: 'completed', completed_at: new Date() },
+            { where: { id: pedido.batch_id, status: 'active' } }
+          );
+        }
+      } catch (e) {
+        console.error('Error cerrando batch:', e.message);
+      }
     }
 
     // Notificaciones en tiempo real
@@ -645,7 +680,23 @@ const cotizarEnvio = async (req, res) => {
     const negocio = await Negocio.findByPk(negocio_id);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
-    if (!negocio.latitud || !negocio.longitud || lat == null || lng == null) {
+    // Si no podemos determinar la distancia (negocio sin coordenadas, o el
+    // cliente no compartió su ubicación), NO decimos "dentro de cobertura" —
+    // crearPedido rechaza este mismo caso, así que decirlo aquí sería mentir
+    // en el carrito y luego fallar sorpresivamente al confirmar.
+    if (!negocio.latitud || !negocio.longitud) {
+      return res.json({
+        ok: true,
+        data: {
+          distancia_km: null,
+          zona: null,
+          costo_envio: 0,
+          fuera_de_cobertura: true,
+          aviso: 'Este negocio aún no tiene su ubicación configurada y no puede recibir pedidos a domicilio por ahora.',
+        },
+      });
+    }
+    if (lat == null || lng == null) {
       const tarifa = await calcularCostoEnvio({ distanciaKm: 1, tipoEnvio: tipo_envio });
       return res.json({
         ok: true,
@@ -653,8 +704,11 @@ const cotizarEnvio = async (req, res) => {
           distancia_km: null,
           zona: tarifa.zona,
           costo_envio: tarifa.costo,
-          fuera_de_cobertura: false,
-          aviso: 'No tenemos tu ubicación exacta; usamos tarifa base.',
+          // No es "fuera de cobertura" en sentido estricto, pero sin GPS
+          // crearPedido va a rechazar el pedido igual — lo marcamos para que
+          // el carrito no deje avanzar con una falsa sensación de "listo".
+          fuera_de_cobertura: true,
+          aviso: 'Activa el GPS y detecta tu ubicación para poder confirmar tu pedido.',
         },
       });
     }

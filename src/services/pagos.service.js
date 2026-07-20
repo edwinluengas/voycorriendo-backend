@@ -191,6 +191,11 @@ const registrarPagoEfectivo = async ({ pedido, monto_recibido }) => {
   if (pedido.metodo_pago !== 'efectivo') {
     return { ok: false, mensaje: 'Este pedido no es pago en efectivo.' };
   }
+  if (pedido.pago_estado === 'capturado') {
+    const cambio = parseFloat(pedido.total) <= parseFloat(monto_recibido)
+      ? parseFloat(monto_recibido) - parseFloat(pedido.total) : 0;
+    return { ok: true, pedido, cambio, yaRegistrado: true };
+  }
   if (parseFloat(monto_recibido) < parseFloat(pedido.total)) {
     return { ok: false, mensaje: 'El monto recibido es menor al total.' };
   }

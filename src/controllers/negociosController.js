@@ -674,11 +674,16 @@ const retiroDiarioNegocio = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
     }
 
-    // Marcar conciliado de inmediato — el pago se procesa manualmente por SPEI
-    await LedgerConciliacion.update(
+    // Marcar conciliado de inmediato — el pago se procesa manualmente por SPEI.
+    // Re-chequea conciliado:false en el WHERE: si otra request ganó la carrera
+    // (doble-tap, reintento), este update no hace nada — no se duplica el pago.
+    const [marcados] = await LedgerConciliacion.update(
       { conciliado: true, conciliado_en: new Date() },
-      { where: { id: { [Op.in]: ledgers.map((l) => l.id) } } }
+      { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
     );
+    if (marcados === 0) {
+      return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un retiro para este saldo. Espera a que se procese.' });
+    }
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
