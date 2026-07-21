@@ -26,6 +26,7 @@ const negociosRoutes     = require('./routes/negocios.routes');
 const pedidosRoutes      = require('./routes/pedidos.routes');
 const repartidoresRoutes = require('./routes/repartidores.routes');
 const pagosRoutes        = require('./routes/pagos.routes');
+const tarjetasRoutes     = require('./routes/tarjetas.routes');
 const adminRoutes        = require('./routes/admin.routes');
 const telegramRoutes     = require('./routes/telegram.routes');
 
@@ -187,6 +188,7 @@ app.use('/api/negocios',     negociosRoutes);
 app.use('/api/pedidos',      pedidosRoutes);
 app.use('/api/repartidores', repartidoresRoutes);
 app.use('/api/pagos',        pagosRoutes);
+app.use('/api/tarjetas',     tarjetasRoutes);
 app.use('/api/admin',        adminRoutes);
 app.use('/api/telegram',     telegramRoutes);
 
@@ -409,6 +411,31 @@ const migrarDB = async () => {
   // nota_cancelacion: usada por el job de timeout de pedidos, existía en el
   // código pero nunca se creó la columna — se perdía silenciosamente.
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS nota_cancelacion VARCHAR(255)`);
+
+  // Pago con tarjeta nativo (sin salir a Mercado Pago) + tarjetas guardadas
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_customer_id VARCHAR(50)`);
+  await run(`CREATE TABLE IF NOT EXISTS tarjetas_guardadas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    usuario_id UUID NOT NULL,
+    mp_card_id VARCHAR(50) NOT NULL,
+    ultimos_4 VARCHAR(4) NOT NULL,
+    marca VARCHAR(30),
+    payment_method_id VARCHAR(30),
+    issuer_id VARCHAR(30),
+    exp_mes SMALLINT,
+    exp_anio SMALLINT,
+    titular VARCHAR(100),
+    predeterminada BOOLEAN NOT NULL DEFAULT false,
+    creado_en TIMESTAMPTZ DEFAULT NOW(),
+    actualizado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await run(`ALTER TABLE tarjetas_guardadas ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(30)`);
+  await run(`ALTER TABLE tarjetas_guardadas ADD COLUMN IF NOT EXISTS issuer_id VARCHAR(30)`);
+
+  // Negocio: la ubicación GPS confirmada ahora es obligatoria para enviar a
+  // revisión / aprobar (ver negociosController.enviarARevision y
+  // adminController.aprobarNegocio) — no requiere columna nueva, latitud/longitud
+  // ya existían, solo se hizo obligatoria a nivel de aplicación.
 
   console.log('[migración] Completada.');
 };

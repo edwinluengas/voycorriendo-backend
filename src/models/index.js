@@ -11,6 +11,7 @@ const ConfigComision   = require('./ConfigComision');
 const PromoConfig      = require('./PromoConfig');
 const LedgerConciliacion = require('./LedgerConciliacion');
 const FondoRepartidor  = require('./FondoRepartidor');
+const TarjetaGuardada  = require('./TarjetaGuardada');
 
 // ─── Relaciones base ──────────────────────────────────────
 Usuario.hasOne(Repartidor, { foreignKey: 'usuario_id', as: 'perfil_repartidor' });
@@ -57,9 +58,14 @@ LedgerConciliacion.belongsTo(Pedido, { foreignKey: 'pedido_id', as: 'pedido' });
 Repartidor.hasOne(FondoRepartidor, { foreignKey: 'repartidor_id', as: 'fondo' });
 FondoRepartidor.belongsTo(Repartidor, { foreignKey: 'repartidor_id', as: 'repartidor' });
 
+// ─── Tarjetas guardadas (Mercado Pago Customers & Cards) ──
+Usuario.hasMany(TarjetaGuardada, { foreignKey: 'usuario_id', as: 'tarjetas' });
+TarjetaGuardada.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
+
 module.exports = {
   Usuario, Repartidor, Negocio, Producto, Pedido,
   DeliveryBatch, DriverPayment, PlatformRevenue,
   ConfigZona, ConfigComision,
   PromoConfig, LedgerConciliacion, FondoRepartidor,
+  TarjetaGuardada,
 };

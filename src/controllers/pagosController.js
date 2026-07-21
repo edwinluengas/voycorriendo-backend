@@ -11,6 +11,46 @@ const pagosService = require('../services/pagos.service');
 const push = require('../services/notificaciones.service');
 const tg   = require('../services/telegram.service');
 
+// ─── Notifica al cliente y al negocio cuando un pago digital se captura ──
+// Compartido entre el webhook de MP y el pago directo con tarjeta, para que
+// ambos caminos disparen exactamente el mismo aviso.
+const notificarPagoCapturado = async (app, pedido) => {
+  const io = app.get('io');
+  io.to(`pedido:${pedido.id}`).emit('pago_actualizado', {
+    pedido_id: pedido.id,
+    estado:    pedido.pago_estado,
+  });
+
+  try {
+    const cliente = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
+    if (cliente?.token_push) push.notificarPagoConfirmado(cliente.token_push, pedido).catch(() => {});
+  } catch (_) {}
+
+  try {
+    const negocio = await Negocio.findByPk(pedido.negocio_id);
+    if (negocio) {
+      io.to(`negocio:${negocio.id}`).emit('nuevo_pedido', {
+        pedido_id:    pedido.id,
+        numero:       pedido.numero,
+        total:        pedido.total,
+        items:        pedido.items,
+        pago_estado:  'capturado',
+      });
+      const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
+      if (dueno?.telegram_chat_id) tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch(() => {});
+      if (dueno?.token_push) push.notificarNuevoPedido(dueno.token_push, pedido).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('[pago] Error notificando negocio tras pago capturado:', e.message);
+  }
+};
+
+const mensajePorEstadoPago = (status) => {
+  if (status === 'approved') return '¡Pago aprobado! Tu pedido está confirmado.';
+  if (status === 'in_process' || status === 'pending') return 'Tu pago está siendo procesado. Te avisaremos cuando se confirme.';
+  return 'El pago fue rechazado. Intenta con otra tarjeta.';
+};
+
 // ─── POST /api/pagos/preferencia ─────────────────────────
 const crearPreferencia = async (req, res) => {
   try {
@@ -52,40 +92,67 @@ const webhookMercadoPago = async (req, res) => {
 
   if (!result.ok) return;
 
-  const io = req.app.get('io');
-
   if (result.tipo === 'pedido' && result.pedido) {
-    io.to(`pedido:${result.pedido.id}`).emit('pago_actualizado', {
-      pedido_id: result.pedido.id,
-      estado:    result.pedido.pago_estado,
+    if (result.pedido.pago_estado === 'capturado') {
+      await notificarPagoCapturado(req.app, result.pedido);
+    } else {
+      req.app.get('io').to(`pedido:${result.pedido.id}`).emit('pago_actualizado', {
+        pedido_id: result.pedido.id,
+        estado:    result.pedido.pago_estado,
+      });
+    }
+  }
+};
+
+// ─── POST /api/pagos/tarjeta ──────────────────────────────
+// Pago nativo con tarjeta dentro de la app (Checkout API), sin salir a
+// Mercado Pago. `token` viene de POST /v1/card_tokens tokenizado en el
+// cliente con la public key — el número/CVV nunca tocan este backend.
+// NOTA: `token` debe ser de UN SOLO USO válido para pago (MP invalida el
+// token tras usarlo). Si el cliente quiere guardar una tarjeta NUEVA, la app
+// debe guardarla primero (POST /api/tarjetas, que consume ese token) y luego
+// generar un token fresco desde la tarjeta ya guardada (card_id + cvv) para
+// pagar con ESTE endpoint — ver tokenizarTarjetaGuardada en la app. Por eso
+// aquí ya no existe un flag "guardar": guardar y pagar son dos pasos
+// separados en el cliente, nunca el mismo token para ambos.
+const pagarConTarjeta = async (req, res) => {
+  try {
+    const { pedido_id, token, installments, payment_method_id, issuer_id, idempotency_key } = req.body;
+    if (!token || !payment_method_id) {
+      return res.status(400).json({ ok: false, mensaje: 'Faltan datos de la tarjeta.' });
+    }
+    const pedido = await Pedido.findByPk(pedido_id);
+    if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
+    if (pedido.cliente_id !== req.usuario.id) {
+      return res.status(403).json({ ok: false, mensaje: 'No autorizado.' });
+    }
+    if (pedido.pago_estado === 'capturado') {
+      return res.status(400).json({ ok: false, mensaje: 'Este pedido ya fue pagado.' });
+    }
+
+    const cliente = await Usuario.findByPk(pedido.cliente_id);
+    const result = await pagosService.crearPagoConTarjeta({
+      pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey: idempotency_key,
     });
 
-    if (result.pedido.pago_estado === 'capturado') {
-      // Notificar al cliente
-      try {
-        const cliente = await Usuario.findByPk(result.pedido.cliente_id, { attributes: ['token_push'] });
-        if (cliente?.token_push) push.notificarPagoConfirmado(cliente.token_push, result.pedido).catch(() => {});
-      } catch (_) {}
-
-      // Pago digital confirmado → ahora SÍ notificar al negocio
-      try {
-        const negocio = await Negocio.findByPk(result.pedido.negocio_id);
-        if (negocio) {
-          io.to(`negocio:${negocio.id}`).emit('nuevo_pedido', {
-            pedido_id:    result.pedido.id,
-            numero:       result.pedido.numero,
-            total:        result.pedido.total,
-            items:        result.pedido.items,
-            pago_estado:  'capturado',
-          });
-          const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
-          if (dueno?.telegram_chat_id) tg.alertaNuevoPedido(dueno.telegram_chat_id, result.pedido).catch(() => {});
-          if (dueno?.token_push) push.notificarNuevoPedido(dueno.token_push, result.pedido).catch(() => {});
-        }
-      } catch (e) {
-        console.warn('[webhook] Error notificando negocio tras pago capturado:', e.message);
-      }
+    if (!result.ok) {
+      return res.status(400).json({ ok: false, mensaje: result.mensaje, data: { pedido: result.pedido } });
     }
+
+    if (result.pedido.pago_estado === 'capturado') {
+      await notificarPagoCapturado(req.app, result.pedido);
+    }
+
+    res.json({
+      ok: true,
+      mensaje: mensajePorEstadoPago(result.statusMP),
+      data: { pedido: result.pedido, status: result.statusMP, status_detail: result.statusDetail },
+    });
+  } catch (error) {
+    const mpError = error.response?.data;
+    console.error('[MP] Error pagarConTarjeta:', JSON.stringify(mpError || error.message));
+    const mensajeAmigable = mpError?.cause?.[0]?.description || mpError?.message || 'No se pudo procesar el pago. Verifica los datos de tu tarjeta.';
+    res.status(400).json({ ok: false, mensaje: mensajeAmigable, _debug: mpError });
   }
 };
 
@@ -147,6 +214,7 @@ const registrarTransferencia = async (req, res) => {
 module.exports = {
   crearPreferencia,
   webhookMercadoPago,
+  pagarConTarjeta,
   registrarEfectivo,
   registrarTransferencia,
 };

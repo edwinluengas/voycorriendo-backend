@@ -110,6 +110,11 @@ const Usuario = sequelize.define('Usuario', {
     defaultValue: false,
     allowNull: false,
   },
+  // Customer ID en Mercado Pago — permite guardar tarjetas (Customers & Cards API)
+  mp_customer_id: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+  },
 }, {
   tableName: 'usuarios',
   timestamps: true,

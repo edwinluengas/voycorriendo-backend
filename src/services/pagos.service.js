@@ -131,6 +131,42 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
   };
 };
 
+// ─── Mapa de estados de pago de MP → estados internos ─────────
+const MAPA_ESTADO_MP = {
+  approved:   'capturado',
+  authorized: 'autorizado',
+  in_process: 'pendiente',
+  pending:    'pendiente',
+  rejected:   'fallido',
+  cancelled:  'fallido',
+  refunded:   'reembolsado',
+};
+
+// ─── Aplica el resultado de un pago de MP al pedido ────────────
+// Compartido entre el webhook y el pago directo con tarjeta (Checkout API),
+// para que ambos caminos verifiquen el monto y mapeen el estado igual.
+const aplicarResultadoPago = async (pedido, pago) => {
+  if (pago.status === 'approved') {
+    const montoPagado   = parseFloat(pago.transaction_amount || 0);
+    const montoEsperado = parseFloat(pedido.total || 0);
+    if (Math.abs(montoPagado - montoEsperado) > 0.5) {
+      console.error(
+        `[pago] MONTO NO COINCIDE pedido ${pedido.numero}: pagado=$${montoPagado} esperado=$${montoEsperado}`
+      );
+      pedido.pago_estado     = 'pendiente';
+      pedido.pago_referencia = String(pago.id);
+      await pedido.save();
+      return { ok: false, mensaje: 'El monto del pago no coincide con el pedido.', tipo: 'monto_invalido', pedido, statusMP: pago.status };
+    }
+  }
+
+  pedido.pago_estado     = MAPA_ESTADO_MP[pago.status] || 'pendiente';
+  pedido.pago_referencia = String(pago.id);
+  await pedido.save();
+
+  return { ok: true, tipo: 'pedido', pedido, statusMP: pago.status, statusDetail: pago.status_detail };
+};
+
 // ─── Webhook: confirmar pago Mercado Pago ─────────────────────
 // external_reference = pedido.numero
 const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
@@ -156,42 +192,95 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
     const pedido = await Pedido.findOne({ where: { numero: ref } });
     if (!pedido) return { ok: false, mensaje: 'Pedido no encontrado.' };
 
-    // ── Verificar que el monto pagado coincida con el pedido ──
-    // Defensa en profundidad: Checkout Pro no deja alterar precios desde el
-    // cliente, pero si algún día se acepta un monto reportado por el cliente
-    // (o hay un bug de cálculo), esto evita capturar un pago incompleto.
-    if (pago.status === 'approved') {
-      const montoPagado   = parseFloat(pago.transaction_amount || 0);
-      const montoEsperado = parseFloat(pedido.total || 0);
-      if (Math.abs(montoPagado - montoEsperado) > 0.5) {
-        console.error(
-          `[webhook] MONTO NO COINCIDE pedido ${pedido.numero}: pagado=$${montoPagado} esperado=$${montoEsperado}`
-        );
-        pedido.pago_estado     = 'pendiente';
-        pedido.pago_referencia = String(paymentId);
-        await pedido.save();
-        return { ok: false, mensaje: 'El monto del pago no coincide con el pedido.', tipo: 'monto_invalido', pedido };
-      }
-    }
-
-    const mapa = {
-      approved:   'capturado',
-      authorized: 'autorizado',
-      in_process: 'pendiente',
-      rejected:   'fallido',
-      cancelled:  'fallido',
-      refunded:   'reembolsado',
-    };
-
-    pedido.pago_estado     = mapa[pago.status] || 'pendiente';
-    pedido.pago_referencia = String(paymentId);
-    await pedido.save();
-
-    return { ok: true, tipo: 'pedido', pedido };
+    return await aplicarResultadoPago(pedido, pago);
   } catch (error) {
     console.error('Error webhook MP:', error.response?.data || error.message);
     return { ok: false, mensaje: 'Error procesando webhook.' };
   }
+};
+
+// ─── Customers & Cards API: obtiene o crea el customer de MP ──
+const obtenerOCrearCustomerMP = async (usuario) => {
+  if (usuario.mp_customer_id) return usuario.mp_customer_id;
+  const { data } = await axios.post(
+    `${MP_BASE_URL}/v1/customers`,
+    {
+      email: usuario.email || `usuario-${usuario.id}@voycorriendo.mx`,
+      first_name: usuario.nombre,
+      last_name: usuario.apellido,
+    },
+    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+  );
+  usuario.mp_customer_id = data.id;
+  await usuario.save();
+  return data.id;
+};
+
+// ─── Guarda una tarjeta ya tokenizada del lado del cliente ─────
+// El "token" viene de POST /v1/card_tokens hecho en la app con la public
+// key — el número de tarjeta y el CVV nunca tocan este backend.
+const guardarTarjetaMP = async ({ usuario, token }) => {
+  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
+  const customerId = await obtenerOCrearCustomerMP(usuario);
+  const { data } = await axios.post(
+    `${MP_BASE_URL}/v1/customers/${customerId}/cards`,
+    { token },
+    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+  );
+  return {
+    mp_card_id:        data.id,
+    ultimos_4:         data.last_four_digits,
+    marca:             data.payment_method?.name || data.payment_method?.id || null,
+    payment_method_id: data.payment_method?.id || null,
+    issuer_id:         data.issuer?.id ? String(data.issuer.id) : null,
+    exp_mes:           data.expiration_month || null,
+    exp_anio:          data.expiration_year || null,
+    titular:            data.cardholder?.name || null,
+  };
+};
+
+// ─── Elimina una tarjeta guardada en MP ────────────────────────
+const eliminarTarjetaMP = async ({ usuario, mp_card_id }) => {
+  if (!usuario.mp_customer_id) return;
+  await axios.delete(
+    `${MP_BASE_URL}/v1/customers/${usuario.mp_customer_id}/cards/${mp_card_id}`,
+    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+  );
+};
+
+// ─── Pago directo con tarjeta (Checkout API) ───────────────────
+// token: generado en la app con la public key, ya sea de una tarjeta nueva
+// (POST /v1/card_tokens con los datos capturados en el formulario) o de una
+// tarjeta guardada (POST /v1/card_tokens con {card_id, security_code}).
+const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey }) => {
+  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
+
+  const payload = {
+    transaction_amount: parseFloat(pedido.total),
+    token,
+    description: `Pedido VoyCorriendo #${pedido.numero}`,
+    installments: Number(installments) || 1,
+    payment_method_id,
+    ...(issuer_id ? { issuer_id } : {}),
+    payer: {
+      email: cliente?.email || `usuario-${cliente.id}@voycorriendo.mx`,
+    },
+    external_reference: pedido.numero,
+    notification_url: `${API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
+    statement_descriptor: 'VOYCORRIENDO',
+    metadata: { pedido_id: pedido.id, cliente_id: pedido.cliente_id },
+  };
+
+  const { data: pago } = await axios.post(
+    `${MP_BASE_URL}/v1/payments`,
+    payload,
+    { headers: {
+        Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
+        'X-Idempotency-Key': idempotencyKey || `pedido-${pedido.id}-${crypto.randomUUID()}`,
+      } }
+  );
+
+  return aplicarResultadoPago(pedido, pago);
 };
 
 // ─── Registrar pago en efectivo (al entregar) ─────────────────
@@ -232,5 +321,8 @@ module.exports = {
   procesarWebhookMercadoPago,
   registrarPagoEfectivo,
   registrarTransferencia,
+  guardarTarjetaMP,
+  eliminarTarjetaMP,
+  crearPagoConTarjeta,
   LIMITE_EFECTIVO,
 };

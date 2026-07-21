@@ -298,6 +298,9 @@ const aprobarNegocio = async (req, res) => {
     const { id } = req.params;
     const n = await Negocio.findByPk(id);
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
+    if (!n.latitud || !n.longitud) {
+      return res.status(400).json({ ok: false, mensaje: 'No se puede aprobar: el negocio no tiene ubicación GPS confirmada. Los repartidores no podrían encontrarlo.' });
+    }
     const estadoAntes = { verificacion_estado: n.verificacion_estado, activo: n.activo };
     n.verificacion_estado = 'aprobado';
     n.verificacion_nota   = null;

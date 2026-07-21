@@ -255,6 +255,7 @@ const enviarARevision = async (req, res) => {
     if (!negocio.documento_ine_dueno)    faltantes.push('INE del dueno');
     if (!negocio.clabe_bancaria)         faltantes.push('CLABE');
     if (!negocio.banco)                  faltantes.push('banco');
+    if (!negocio.latitud || !negocio.longitud) faltantes.push('ubicación GPS confirmada');
     if (faltantes.length) {
       return res.status(400).json({
         ok: false,
