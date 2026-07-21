@@ -535,15 +535,23 @@ const gananciasNegocio = async (req, res) => {
         })
       : [];
 
-    const totalSubtotal   = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos  || 0), 0);
-    const totalComisiones = ledgers.reduce((s, l) => s + parseFloat(l.comision_plataforma || 0), 0);
-    const totalLiquidacion = totalSubtotal - totalComisiones;
+    // NOTA: ledger.comision_plataforma es el corte de la plataforma sobre el
+    // FEE DE ENVÍO ($35 envío − $30 repartidor = $5), no una comisión sobre
+    // la comida del negocio. La única comisión que le toca al negocio es el
+    // FEE_PLATAFORMA flat ($35/pedido, constante COMISION_FLAT) — en efectivo
+    // se acumula como deuda_plataforma (se liquida aparte por SPEI, no se
+    // resta aquí); en tarjeta se descuenta del depósito porque la plataforma
+    // ya retuvo el dinero completo vía Mercado Pago.
+    const totalSubtotal   = ledgers.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0);
 
     // ── Desglose tarjeta vs efectivo ─────────────────────────
     const ledgersTarjeta  = ledgers.filter((l) => l.metodo_pago !== 'efectivo');
     const ledgersEfectivo = ledgers.filter((l) => l.metodo_pago === 'efectivo');
     const subtotalTarjeta  = ledgersTarjeta.reduce((s, l)  => s + parseFloat(l.subtotal_productos || 0), 0);
     const subtotalEfectivo = ledgersEfectivo.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0);
+
+    const totalComisiones  = ledgers.length * COMISION_FLAT;
+    const totalLiquidacion = subtotalEfectivo + Math.max(0, subtotalTarjeta - ledgersTarjeta.length * COMISION_FLAT);
 
     // ── Pendientes de corte del viernes (tarjeta no conciliada) ─
     const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado);
@@ -553,15 +561,16 @@ const gananciasNegocio = async (req, res) => {
     );
 
     // ── Pagado vs generado ────────────────────────────────────
-    // Efectivo: el negocio ya tiene el dinero en mano (se lo dio el
-    // repartidor) — cuenta como "pagado" desde ya, no depende de la
-    // plataforma. Tarjeta: solo cuenta como pagado una vez conciliado
-    // (corte semanal o retiro diario ya procesado).
-    const liquidacionEfectivo = ledgersEfectivo.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - parseFloat(l.comision_plataforma || 0), 0
-    );
+    // Efectivo: el negocio ya tiene el subtotal COMPLETO en mano (se lo dio
+    // el repartidor) — cuenta como "pagado" desde ya. El fee de $35 NO se
+    // resta aquí: es una deuda aparte (deuda_plataforma) que se liquida por
+    // SPEI, no algo que reduzca lo que el negocio ya recibió en efectivo.
+    // Tarjeta: solo cuenta como pagado una vez conciliado (corte semanal o
+    // retiro diario ya procesado), y ahí sí se descuenta el fee flat porque
+    // la plataforma retiene el dinero hasta liquidar.
+    const liquidacionEfectivo = subtotalEfectivo;
     const liquidacionTarjetaPagada = ledgersTarjetaConciliada.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - parseFloat(l.comision_plataforma || 0), 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
     );
     const ingresoPagado = liquidacionEfectivo + liquidacionTarjetaPagada;
 

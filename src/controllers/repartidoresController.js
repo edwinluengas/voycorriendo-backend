@@ -391,7 +391,7 @@ const pedidosDisponibles = async (req, res) => {
     }
 
     const pedidos = await Pedido.findAll({
-      where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad },
+      where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad, tipo_envio: { [Op.ne]: 'pickup' } },
       order: [['creado_en', 'ASC']],
       limit: 10,
       include: [{

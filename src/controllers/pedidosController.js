@@ -473,8 +473,11 @@ const actualizarEstado = async (req, res) => {
       camposActualizar.numero_guia = req.body.numero_guia;
     }
 
-    // Validar código al entregar (repartidor) — el código SIEMPRE es obligatorio
-    if (estado === 'entregado' && rolEfectivo === 'repartidor') {
+    // Validar código al entregar — el código SIEMPRE es obligatorio para cerrar
+    // una entrega a domicilio (en_camino -> entregado), sin importar quién hace
+    // la llamada (repartidor o admin). Antes solo se exigía si rolEfectivo era
+    // 'repartidor', dejando a un admin cerrar el pedido sin código.
+    if (estado === 'entregado' && pedido.estado === 'en_camino') {
       const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
       if (!codigoProvisto) {
         return res.status(400).json({ ok: false, mensaje: 'Ingresa el código de entrega del cliente para confirmar.' });
@@ -628,8 +631,11 @@ const calificarPedido = async (req, res) => {
       propina: propinaNum > 0 ? propinaNum : 0,
     });
 
-    // Propina va al fondo del repartidor (transparencia, sin comisión de plataforma)
-    if (propinaNum > 0 && pedido.repartidor_id) {
+    // Propina va al fondo RETIRABLE del repartidor — pero solo si el pedido
+    // fue pago en línea. En efectivo, el cliente ya se la dio en mano junto
+    // con el total del pedido; sumarla también al fondo retirable duplicaría
+    // el pago cuando el repartidor pida su retiro/depósito.
+    if (propinaNum > 0 && pedido.repartidor_id && pedido.metodo_pago !== 'efectivo') {
       const [fondo] = await FondoRepartidor.findOrCreate({
         where: { repartidor_id: pedido.repartidor_id },
         defaults: { monto_disponible: 0, monto_reservado: 0 },

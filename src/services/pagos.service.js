@@ -89,6 +89,14 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
     });
   }
 
+  // Mercado Pago exige que back_urls sean URLs http(s) válidas — un deep
+  // link de app (ej. "voycorriendo://") lo rechaza con "back_urls invalid.
+  // Wrong format" y tumba la creación de TODA la preferencia. Sin back_urls
+  // válidas simplemente no se ofrece el botón de "volver a la app": el pago
+  // se sigue confirmando por webhook y el cliente ve el estado actualizado
+  // en Seguimiento al reintentar o por socket.
+  const deepLinkValido = APP_DEEP_LINK && /^https?:\/\//i.test(APP_DEEP_LINK);
+
   const payload = {
     items,
     payer: {
@@ -98,7 +106,7 @@ const crearPreferenciaMercadoPago = async ({ pedido, cliente }) => {
     },
     external_reference: pedido.numero,
     notification_url: `${API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
-    ...(APP_DEEP_LINK ? {
+    ...(deepLinkValido ? {
       back_urls: {
         success: `${APP_DEEP_LINK}/pago-exitoso?pedido=${pedido.numero}`,
         failure: `${APP_DEEP_LINK}/pago-fallido?pedido=${pedido.numero}`,
