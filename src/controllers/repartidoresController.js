@@ -6,7 +6,6 @@ const { subirImagen } = require('../services/storage.service');
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 const { calcularRuta } = require('../services/routing.service');
-const { PAGO_REPARTIDOR } = require('../config/precios');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 
@@ -334,20 +333,28 @@ const misEntregas = async (req, res) => {
       desde = new Date(ahora - 7 * 24 * 60 * 60 * 1000);
     }
 
+    // Solo entregas COMPLETADAS — antes traía cualquier pedido asignado en el
+    // período (incluidos cancelados/en curso), inflando el conteo y mezclando
+    // pedidos sin ganancia real en una pantalla que se presenta como historial
+    // de entregas. Así queda consistente con /repartidores/ganancias, que
+    // también solo cuenta estado: 'entregado'.
     const entregas = await Pedido.findAll({
       where: {
         repartidor_id: repartidor.id,
+        estado: 'entregado',
         creado_en: { [Op.gte]: desde },
       },
       order: [['creado_en', 'DESC']],
       limit: 100,
     });
 
-    const entregadas = entregas.filter(p => p.estado === 'entregado');
-    const ganancias = entregadas.reduce((sum, p) => {
-      const tarifa = p.tipo_envio === 'express' ? PAGO_REPARTIDOR.EXPRESS : PAGO_REPARTIDOR.STANDARD;
-      return sum + tarifa;
-    }, 0);
+    // Usa el pago_repartidor REAL grabado por procesarEntrega() al entregar
+    // (viene de config_comisiones, editable en DB) — antes se recalculaba con
+    // una tarifa fija en variables de entorno que podía no coincidir con lo
+    // que el repartidor realmente ganó por ese pedido.
+    const ganancias = entregas.reduce(
+      (sum, p) => sum + parseFloat(p.pago_repartidor || 0) + parseFloat(p.propina || 0), 0
+    );
 
     res.json({
       ok: true,
@@ -355,7 +362,7 @@ const misEntregas = async (req, res) => {
         entregas,
         resumen: {
           periodo,
-          total_entregas: entregadas.length,
+          total_entregas: entregas.length,
           ganancias_estimadas: ganancias.toFixed(2),
           calificacion_promedio: repartidor.calificacion_promedio,
         },

@@ -301,13 +301,17 @@ describe('Flujo completo feliz: efectivo, pendiente → entregado', () => {
     expect(res.status).toBe(200);
   });
 
-  test('la propina se acredita al fondo del repartidor', async () => {
-    const p = await db.query(`SELECT repartidor_id FROM pedidos WHERE id = $1`, [pedidoId]);
+  test('la propina de un pedido en EFECTIVO NO se acredita al fondo retirable (ya se dio en mano)', async () => {
+    const p = await db.query(`SELECT repartidor_id, propina FROM pedidos WHERE id = $1`, [pedidoId]);
+    expect(parseFloat(p.rows[0].propina)).toBe(10);
+
+    // El fondo_repartidor es dinero que la plataforma transfiere por SPEI al
+    // pedir retiro. Sumar ahí una propina en efectivo (que el cliente ya le
+    // dio en mano al repartidor) generaría un pago duplicado real.
     const fondo = await db.query(`SELECT monto_disponible FROM fondo_repartidor WHERE repartidor_id = $1`, [p.rows[0].repartidor_id]);
-    expect(fondo.rowCount).toBe(1);
-    expect(parseFloat(fondo.rows[0].monto_disponible)).toBeGreaterThanOrEqual(10);
-    // Revertir la propina para no acumular saldo de prueba real
-    await db.query(`UPDATE fondo_repartidor SET monto_disponible = GREATEST(0, monto_disponible - 10) WHERE repartidor_id = $1`, [p.rows[0].repartidor_id]);
+    if (fondo.rowCount > 0) {
+      expect(parseFloat(fondo.rows[0].monto_disponible)).toBe(0);
+    }
   });
 });
 
