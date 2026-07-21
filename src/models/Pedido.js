@@ -52,6 +52,9 @@ const Pedido = sequelize.define('Pedido', {
     defaultValue: 'pendiente',
   },
   pago_referencia: { type: DataTypes.STRING, allowNull: true },
+  // Lock atómico contra doble-tap / reintento de red al pagar con tarjeta —
+  // ver pagosController.pagarConTarjeta. Se libera siempre en el finally.
+  pago_en_proceso: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   // Cambio para efectivo: cuánto entregó el cliente
   paga_con: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
   // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma encima

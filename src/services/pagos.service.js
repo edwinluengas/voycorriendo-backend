@@ -255,11 +255,14 @@ const eliminarTarjetaMP = async ({ usuario, mp_card_id }) => {
 const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
 
+  const cuotas = Number.isInteger(Number(installments)) && installments >= 1 && installments <= 24
+    ? Number(installments) : 1;
+
   const payload = {
     transaction_amount: parseFloat(pedido.total),
     token,
     description: `Pedido VoyCorriendo #${pedido.numero}`,
-    installments: Number(installments) || 1,
+    installments: cuotas,
     payment_method_id,
     ...(issuer_id ? { issuer_id } : {}),
     payer: {
@@ -271,12 +274,20 @@ const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payme
     metadata: { pedido_id: pedido.id, cliente_id: pedido.cliente_id },
   };
 
+  // Clave estable por (pedido, token): si esta MISMA llamada se reintenta por
+  // un timeout de red entre nuestro backend y MP, MP la reconoce como el
+  // mismo intento y no cobra dos veces. Un token distinto (otra tarjeta, u
+  // otro intento) genera naturalmente una clave distinta — nunca colapsa
+  // intentos de pago legítimamente distintos en la misma clave.
+  const claveIdempotencia = idempotencyKey ||
+    `pedido-${pedido.id}-${crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
+
   const { data: pago } = await axios.post(
     `${MP_BASE_URL}/v1/payments`,
     payload,
     { headers: {
         Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
-        'X-Idempotency-Key': idempotencyKey || `pedido-${pedido.id}-${crypto.randomUUID()}`,
+        'X-Idempotency-Key': claveIdempotencia,
       } }
   );
 

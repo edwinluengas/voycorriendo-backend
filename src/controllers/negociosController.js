@@ -90,8 +90,10 @@ const activarModoNegocio = async (req, res) => {
     const esAdmin = req.usuario.rol === 'admin';
     const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (yaExiste) {
-      // Auto-aprobar negocio del admin si aun no esta aprobado
-      if (esAdmin && yaExiste.verificacion_estado !== 'aprobado') {
+      // Auto-aprobar negocio del admin si aun no esta aprobado — pero nunca
+      // sin ubicación GPS confirmada, o quedaría "aprobado" sin que los
+      // repartidores puedan encontrarlo (mismo riesgo que enviarARevision).
+      if (esAdmin && yaExiste.verificacion_estado !== 'aprobado' && yaExiste.latitud && yaExiste.longitud) {
         yaExiste.verificacion_estado = 'aprobado';
         yaExiste.activo = true;
         await yaExiste.save();
@@ -133,8 +135,8 @@ const obtenerMiNegocio = async (req, res) => {
         mensaje: 'Aun no tienes negocio. Activalo desde tu perfil.',
       });
     }
-    // Auto-aprobar negocio del admin
-    if (req.usuario.rol === 'admin' && negocio.verificacion_estado !== 'aprobado') {
+    // Auto-aprobar negocio del admin — nunca sin ubicación GPS confirmada
+    if (req.usuario.rol === 'admin' && negocio.verificacion_estado !== 'aprobado' && negocio.latitud && negocio.longitud) {
       negocio.verificacion_estado = 'aprobado';
       negocio.activo = true;
       await negocio.save();

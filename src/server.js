@@ -432,6 +432,9 @@ const migrarDB = async () => {
   await run(`ALTER TABLE tarjetas_guardadas ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(30)`);
   await run(`ALTER TABLE tarjetas_guardadas ADD COLUMN IF NOT EXISTS issuer_id VARCHAR(30)`);
 
+  // Lock atómico contra doble cobro por doble-tap/reintento en pago con tarjeta
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS pago_en_proceso BOOLEAN NOT NULL DEFAULT false`);
+
   // Negocio: la ubicación GPS confirmada ahora es obligatoria para enviar a
   // revisión / aprobar (ver negociosController.enviarARevision y
   // adminController.aprobarNegocio) — no requiere columna nueva, latitud/longitud

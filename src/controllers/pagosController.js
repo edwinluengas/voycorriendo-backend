@@ -6,6 +6,7 @@
  *   POST   /api/pagos/webhook/mercado-pago (público) → recibe confirmación MP
  */
 
+const { Op } = require('sequelize');
 const { Pedido, Usuario, Negocio, Repartidor } = require('../models');
 const pagosService = require('../services/pagos.service');
 const push = require('../services/notificaciones.service');
@@ -75,7 +76,11 @@ const crearPreferencia = async (req, res) => {
     const mpError = error.response?.data;
     console.error('[MP] Error crearPreferencia:', JSON.stringify(mpError || error.message));
     const mensajeAmigable = mpError?.message || mpError?.error || 'No se pudo crear la preferencia de pago.';
-    res.status(500).json({ ok: false, mensaje: mensajeAmigable, _debug: mpError });
+    res.status(500).json({
+      ok: false,
+      mensaje: mensajeAmigable,
+      ...(process.env.NODE_ENV !== 'production' ? { _debug: mpError } : {}),
+    });
   }
 };
 
@@ -116,6 +121,7 @@ const webhookMercadoPago = async (req, res) => {
 // aquí ya no existe un flag "guardar": guardar y pagar son dos pasos
 // separados en el cliente, nunca el mismo token para ambos.
 const pagarConTarjeta = async (req, res) => {
+  let pedidoClaimed = null;
   try {
     const { pedido_id, token, installments, payment_method_id, issuer_id, idempotency_key } = req.body;
     if (!token || !payment_method_id) {
@@ -129,6 +135,18 @@ const pagarConTarjeta = async (req, res) => {
     if (pedido.pago_estado === 'capturado') {
       return res.status(400).json({ ok: false, mensaje: 'Este pedido ya fue pagado.' });
     }
+
+    // Claim atómico: evita que un doble-tap o reintento de red dispare dos
+    // cobros reales en MP para el mismo pedido mientras el primero sigue en
+    // vuelo. Se libera SIEMPRE en el finally, gane o pierda el pago.
+    const [claimed] = await Pedido.update(
+      { pago_en_proceso: true },
+      { where: { id: pedido.id, pago_en_proceso: false, pago_estado: { [Op.ne]: 'capturado' } } }
+    );
+    if (!claimed) {
+      return res.status(409).json({ ok: false, mensaje: 'Ya hay un cobro en proceso para este pedido. Espera unos segundos antes de reintentar.' });
+    }
+    pedidoClaimed = pedido;
 
     const cliente = await Usuario.findByPk(pedido.cliente_id);
     const result = await pagosService.crearPagoConTarjeta({
@@ -152,7 +170,15 @@ const pagarConTarjeta = async (req, res) => {
     const mpError = error.response?.data;
     console.error('[MP] Error pagarConTarjeta:', JSON.stringify(mpError || error.message));
     const mensajeAmigable = mpError?.cause?.[0]?.description || mpError?.message || 'No se pudo procesar el pago. Verifica los datos de tu tarjeta.';
-    res.status(400).json({ ok: false, mensaje: mensajeAmigable, _debug: mpError });
+    res.status(400).json({
+      ok: false,
+      mensaje: mensajeAmigable,
+      ...(process.env.NODE_ENV !== 'production' ? { _debug: mpError } : {}),
+    });
+  } finally {
+    if (pedidoClaimed) {
+      await Pedido.update({ pago_en_proceso: false }, { where: { id: pedidoClaimed.id } }).catch(() => {});
+    }
   }
 };
 
