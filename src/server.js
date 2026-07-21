@@ -435,6 +435,34 @@ const migrarDB = async () => {
   // Lock atómico contra doble cobro por doble-tap/reintento en pago con tarjeta
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS pago_en_proceso BOOLEAN NOT NULL DEFAULT false`);
 
+  // Bloqueo del negocio por deuda: ahora es por CANTIDAD de pedidos en
+  // efectivo sin liquidar (15), no por monto acumulado ($1,000 antes).
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS pedidos_efectivo_pendientes INTEGER NOT NULL DEFAULT 0`);
+
+  // Lista negra permanente: placas de repartidor y direcciones de negocio
+  // que quedan vetadas para siempre tras un bloqueo por incumplimiento.
+  await run(`DO $$ BEGIN
+    CREATE TYPE enum_bloqueos_permanentes_tipo AS ENUM ('placa_repartidor', 'direccion_negocio');
+  EXCEPTION WHEN duplicate_object THEN NULL; END $$;`);
+  await run(`CREATE TABLE IF NOT EXISTS bloqueos_permanentes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo enum_bloqueos_permanentes_tipo NOT NULL,
+    valor VARCHAR(255) NOT NULL,
+    motivo VARCHAR(255) NOT NULL,
+    entidad_id_origen UUID,
+    bloqueado_en TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tipo, valor)
+  )`);
+
+  // Snapshot inmutable de quién entregó cada pedido (foto + placa) — se
+  // conserva aunque el repartidor luego cambie su foto o vehículo.
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS repartidor_foto_snapshot TEXT`);
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS repartidor_placa_snapshot VARCHAR(10)`);
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS repartidor_nombre_snapshot VARCHAR(100)`);
+
+  // Baja permanente de repartidor por calificación reprobatoria
+  await run(`ALTER TABLE repartidores ADD COLUMN IF NOT EXISTS baja_permanente BOOLEAN NOT NULL DEFAULT false`);
+
   // Negocio: la ubicación GPS confirmada ahora es obligatoria para enviar a
   // revisión / aprobar (ver negociosController.enviarARevision y
   // adminController.aprobarNegocio) — no requiere columna nueva, latitud/longitud

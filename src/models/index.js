@@ -12,6 +12,7 @@ const PromoConfig      = require('./PromoConfig');
 const LedgerConciliacion = require('./LedgerConciliacion');
 const FondoRepartidor  = require('./FondoRepartidor');
 const TarjetaGuardada  = require('./TarjetaGuardada');
+const BloqueoPermanente = require('./PlacaBloqueada');
 
 // ─── Relaciones base ──────────────────────────────────────
 Usuario.hasOne(Repartidor, { foreignKey: 'usuario_id', as: 'perfil_repartidor' });
@@ -67,5 +68,5 @@ module.exports = {
   DeliveryBatch, DriverPayment, PlatformRevenue,
   ConfigZona, ConfigComision,
   PromoConfig, LedgerConciliacion, FondoRepartidor,
-  TarjetaGuardada,
+  TarjetaGuardada, BloqueoPermanente,
 };

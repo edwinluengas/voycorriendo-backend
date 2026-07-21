@@ -8,6 +8,8 @@ const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 const { calcularRuta } = require('../services/routing.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
+const { placaBloqueadaPermanente, bloquearRepartidorPermanente, normalizar } = require('../services/seguridadCuentas.service');
+const { CALIFICACION_MIN_PROMEDIO, CALIFICACIONES_MIN_PARA_BAJA } = require('../config/precios');
 
 // ─── POST /api/repartidores/activar ───────────────────────
 // Cuando el usuario da clic en "Activar modo repartidor" en su
@@ -56,6 +58,44 @@ const actualizarPerfil = async (req, res) => {
         ok: false,
         mensaje: 'Tu cuenta esta restringida. Contacta a soporte.',
       });
+    }
+
+    // ─── Candado: la misma moto (placa) no puede estar en dos cuentas ──
+    if (req.body.placa_vehiculo !== undefined) {
+      const placaNormalizada = normalizar(req.body.placa_vehiculo);
+      if (placaNormalizada) {
+        // 1) Lista negra permanente — placa vetada para siempre (fraude o
+        // baja permanente por calificación). Ni esta ni ninguna otra cuenta
+        // puede volver a usarla; solo un admin puede levantar el veto.
+        const vetada = await placaBloqueadaPermanente(placaNormalizada);
+        if (vetada) {
+          repartidor.placa_vehiculo = req.body.placa_vehiculo;
+          repartidor.estado_cuenta = 'bloqueado';
+          repartidor.estado_motivo = `Placa "${placaNormalizada}" está en lista negra permanente (${vetada.motivo}).`;
+          await repartidor.save();
+          return res.status(403).json({
+            ok: false,
+            mensaje: 'Esta moto y/o usuario están bloqueados permanentemente. Comunícate con atención a clientes.',
+          });
+        }
+        // 2) Duplicado activo — la misma placa ya está en OTRA cuenta viva.
+        // Señal de fraude (cuenta duplicada para evadir un bloqueo, o
+        // compartir vehículo para inflar cupos): se bloquea de inmediato.
+        const duplicada = await Repartidor.findOne({
+          where: { id: { [Op.ne]: repartidor.id }, placa_vehiculo: { [Op.iLike]: placaNormalizada } },
+        });
+        if (duplicada) {
+          repartidor.placa_vehiculo = req.body.placa_vehiculo;
+          await bloquearRepartidorPermanente(
+            repartidor,
+            `Placa "${placaNormalizada}" ya registrada en otra cuenta de repartidor — bloqueado para revisión.`
+          );
+          return res.status(403).json({
+            ok: false,
+            mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
+          });
+        }
+      }
     }
 
     const camposEditables = [
@@ -155,6 +195,23 @@ const enviarARevision = async (req, res) => {
         ok: false,
         mensaje: `Faltan datos: ${faltantes.join(', ')}.`,
       });
+    }
+    // Defensa en profundidad: la placa ya se valida como única en
+    // actualizarPerfil, esto cubre cualquier otro camino que la haya fijado.
+    if (repartidor.placa_vehiculo) {
+      const placaNormalizada = String(repartidor.placa_vehiculo).trim().toUpperCase();
+      const duplicada = await Repartidor.findOne({
+        where: { id: { [Op.ne]: repartidor.id }, placa_vehiculo: { [Op.iLike]: placaNormalizada } },
+      });
+      if (duplicada) {
+        repartidor.estado_cuenta = 'bloqueado';
+        repartidor.estado_motivo = `Placa "${placaNormalizada}" ya registrada en otra cuenta de repartidor — bloqueado para revisión. Requiere que un admin cambie el estado.`;
+        await repartidor.save();
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada para revisión — contacta a soporte.',
+        });
+      }
     }
     repartidor.verificacion_estado = 'en_revision';
     repartidor.enviado_revision_en = new Date();
@@ -488,8 +545,16 @@ const aceptarPedido = async (req, res) => {
     // dos repartidores "ganen" el mismo pedido si aceptan casi al mismo
     // tiempo (ambos pasan el findOne de arriba antes de que cualquiera
     // escriba). Si affectedCount es 0, alguien más ya se lo quedó.
+    // Snapshot inmutable de quién entrega (foto + placa + nombre) — se
+    // conserva aunque el repartidor luego cambie su foto o vehículo. Es la
+    // fuente de verdad de seguridad de "quién y en qué moto entregó esto".
     const [affectedCount] = await Pedido.update(
-      { repartidor_id: repartidor.id, batch_id: batch.id, estado: 'en_camino', asignado_en: new Date() },
+      {
+        repartidor_id: repartidor.id, batch_id: batch.id, estado: 'en_camino', asignado_en: new Date(),
+        repartidor_foto_snapshot:   req.usuario.foto_perfil || null,
+        repartidor_placa_snapshot:  repartidor.placa_vehiculo || null,
+        repartidor_nombre_snapshot: req.usuario.nombre || null,
+      },
       { where: { id: pedido.id, estado: 'listo', repartidor_id: null } }
     );
     if (affectedCount === 0) {
@@ -615,6 +680,10 @@ const ganancias = async (req, res) => {
     // (retiros/depósitos ya procesados vía confirmar-retiro).
     const ingresoPagado = gananciaEfectivo + parseFloat(fondo?.total_pagado_historico || 0);
 
+    const pedidosCalificados = await Pedido.count({
+      where: { repartidor_id: repartidor.id, calificacion_repartidor: { [Op.not]: null } },
+    });
+
     res.json({
       ok: true,
       data: {
@@ -630,6 +699,11 @@ const ganancias = async (req, res) => {
         por_depositar:       porDepositar,
         retiro_pendiente:    !!fondo?.retiro_pendiente,
         pedidos_recientes:   entregados.slice(0, 30),
+        // Reputación — baja permanente automática si promedio < 3★ en 6+ pedidos
+        calificacion_promedio: parseFloat(repartidor.calificacion_promedio || 0),
+        pedidos_calificados:   pedidosCalificados,
+        calificacion_min:      CALIFICACION_MIN_PROMEDIO,
+        calificaciones_min_para_baja: CALIFICACIONES_MIN_PARA_BAJA,
       },
     });
   } catch (error) {

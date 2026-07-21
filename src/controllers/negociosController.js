@@ -2,8 +2,9 @@ const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion } = require('../m
 const { Op, literal } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
-const { COMISION_FLAT, TOPE_DEUDA } = require('../config/precios');
+const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
 const tg = require('../services/telegram.service');
+const { claveDireccion, direccionBloqueadaPermanente, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -170,6 +171,48 @@ const actualizarMiPerfil = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Categoría reservada. Contacta a soporte.' });
     }
 
+    // ─── Candado: la misma dirección no puede estar en dos cuentas ────
+    if (req.body.direccion !== undefined || req.body.colonia !== undefined) {
+      const direccionResultante = req.body.direccion !== undefined ? req.body.direccion : negocio.direccion;
+      const coloniaResultante   = req.body.colonia   !== undefined ? req.body.colonia   : negocio.colonia;
+      const clave = claveDireccion(direccionResultante, coloniaResultante);
+      if (clave && clave !== '|') {
+        // 1) Lista negra permanente — dirección vetada para siempre.
+        const vetada = await direccionBloqueadaPermanente(direccionResultante, coloniaResultante);
+        if (vetada) {
+          if (req.body.direccion !== undefined) negocio.direccion = req.body.direccion;
+          if (req.body.colonia !== undefined) negocio.colonia = req.body.colonia;
+          negocio.estado_cuenta = 'bloqueado';
+          negocio.estado_motivo = `Dirección en lista negra permanente (${vetada.motivo}).`;
+          await negocio.save();
+          return res.status(403).json({
+            ok: false,
+            mensaje: 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.',
+          });
+        }
+        // 2) Duplicado activo — la misma dirección ya está en OTRA cuenta viva.
+        const otrosNegocios = await Negocio.findAll({
+          where: { id: { [Op.ne]: negocio.id }, direccion: { [Op.not]: null } },
+          attributes: ['id', 'direccion', 'colonia'],
+        });
+        const duplicado = otrosNegocios.find(
+          (n) => claveDireccion(n.direccion, n.colonia) === clave
+        );
+        if (duplicado) {
+          if (req.body.direccion !== undefined) negocio.direccion = req.body.direccion;
+          if (req.body.colonia !== undefined) negocio.colonia = req.body.colonia;
+          await bloquearNegocioPermanente(
+            negocio,
+            `Dirección ya registrada en otra cuenta de negocio (id ${duplicado.id}) — bloqueado para revisión.`
+          );
+          return res.status(403).json({
+            ok: false,
+            mensaje: 'Esa dirección ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
+          });
+        }
+      }
+    }
+
     const camposEditables = [
       'nombre', 'descripcion', 'categoria',
       'direccion', 'colonia', 'latitud', 'longitud',
@@ -262,6 +305,19 @@ const enviarARevision = async (req, res) => {
       return res.status(400).json({
         ok: false,
         mensaje: `Faltan datos: ${faltantes.join(', ')}.`,
+      });
+    }
+
+    // Defensa en profundidad: la dirección ya se valida como única en
+    // actualizarMiPerfil, esto cubre cualquier otro camino que la haya fijado.
+    const vetada = await direccionBloqueadaPermanente(negocio.direccion, negocio.colonia);
+    if (vetada) {
+      negocio.estado_cuenta = 'bloqueado';
+      negocio.estado_motivo = `Dirección en lista negra permanente (${vetada.motivo}).`;
+      await negocio.save();
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.',
       });
     }
 
@@ -613,7 +669,8 @@ const gananciasNegocio = async (req, res) => {
         // Negocio debe a la plataforma (fees efectivo acumulados)
         deuda_plataforma:    deudaActual,
         bloqueado_por_deuda: negocio.bloqueado_por_deuda,
-        tope_deuda:          TOPE_DEUDA,
+        pedidos_efectivo_pendientes: negocio.pedidos_efectivo_pendientes || 0,
+        limite_pedidos_deuda: LIMITE_PEDIDOS_DEUDA,
         // Proyección del próximo viernes
         neto_viernes:        netoViernesProyectado,
         // Períodos

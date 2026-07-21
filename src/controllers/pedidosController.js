@@ -4,11 +4,12 @@ const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
-const { PEDIDO_MINIMO } = require('../config/precios');
+const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
+const { bloquearRepartidorPermanente } = require('../services/seguridadCuentas.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -666,7 +667,29 @@ const calificarPedido = async (req, res) => {
           attributes: ['calificacion_repartidor'],
         });
         const sumaRep = califsRep.reduce((acc, p) => acc + p.calificacion_repartidor, 0);
-        await repartidor.update({ calificacion_promedio: (sumaRep / califsRep.length).toFixed(2) });
+        const promedioRep = sumaRep / califsRep.length;
+        await repartidor.update({ calificacion_promedio: promedioRep.toFixed(2) });
+
+        // ─── Baja permanente por calificación reprobatoria ──────
+        // 6+ pedidos calificados y promedio < 3★ → se da de baja para
+        // siempre (no es una suspensión temporal). Su placa queda vetada
+        // permanentemente — ni él ni nadie más podrá volver a usarla.
+        if (
+          repartidor.estado_cuenta !== 'bloqueado' &&
+          califsRep.length >= CALIFICACIONES_MIN_PARA_BAJA &&
+          promedioRep < CALIFICACION_MIN_PROMEDIO
+        ) {
+          await bloquearRepartidorPermanente(
+            repartidor,
+            `Baja permanente automática: calificación de ${promedioRep.toFixed(2)}★ en ${califsRep.length} pedidos (mínimo ${CALIFICACION_MIN_PROMEDIO}★). No puede volver a operar con VoyCorriendo.`
+          );
+          try {
+            const duenoRep = await Usuario.findByPk(repartidor.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
+            const mensajeBaja = `🚫 Tu cuenta de repartidor fue dada de baja permanente por calificación promedio de ${promedioRep.toFixed(2)}★ en tus últimos ${califsRep.length} pedidos (mínimo requerido: ${CALIFICACION_MIN_PROMEDIO}★). Ni tú ni tu vehículo podrán volver a registrarse en VoyCorriendo. Si crees que es un error, contacta a atención a clientes.`;
+            if (duenoRep?.telegram_chat_id) tg.enviar(duenoRep.telegram_chat_id, mensajeBaja).catch(() => {});
+            if (duenoRep?.token_push) push.enviarPush(duenoRep.token_push, 'Cuenta dada de baja', mensajeBaja).catch(() => {});
+          } catch (_) {}
+        }
       }
     }
 

@@ -55,6 +55,12 @@ const Pedido = sequelize.define('Pedido', {
   // Lock atómico contra doble-tap / reintento de red al pagar con tarjeta —
   // ver pagosController.pagarConTarjeta. Se libera siempre en el finally.
   pago_en_proceso: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  // Snapshot inmutable de quién entregó (foto + placa + nombre) tomado al
+  // aceptar el pedido — se conserva aunque el repartidor luego cambie su
+  // foto de perfil o su vehículo. Trazabilidad de seguridad por pedido.
+  repartidor_foto_snapshot:   { type: DataTypes.TEXT, allowNull: true },
+  repartidor_placa_snapshot:  { type: DataTypes.STRING(10), allowNull: true },
+  repartidor_nombre_snapshot: { type: DataTypes.STRING(100), allowNull: true },
   // Cambio para efectivo: cuánto entregó el cliente
   paga_con: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
   // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma encima

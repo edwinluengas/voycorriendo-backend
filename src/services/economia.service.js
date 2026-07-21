@@ -1,7 +1,7 @@
 const PlatformRevenue    = require('../models/PlatformRevenue');
 const LedgerConciliacion = require('../models/LedgerConciliacion');
 const { getComision }    = require('./config.service');
-const { COMISION_FLAT, TOPE_DEUDA, AVISO_DEUDA } = require('../config/precios');
+const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA, AVISO_PEDIDOS_DEUDA } = require('../config/precios');
 const tg = require('./telegram.service');
 
 // ─── Procesar entrega ─────────────────────────────────────
@@ -63,31 +63,32 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
       const { Negocio, Usuario } = require('../models');
       const negocio = await Negocio.findByPk(pedido.negocio_id);
       if (negocio) {
-        const nuevaDeuda = parseFloat(negocio.deuda_plataforma || 0) + COMISION_FLAT;
+        const nuevaDeuda    = parseFloat(negocio.deuda_plataforma || 0) + COMISION_FLAT;
+        const nuevoContador = (negocio.pedidos_efectivo_pendientes || 0) + 1;
         negocio.deuda_plataforma = parseFloat(nuevaDeuda.toFixed(2));
+        negocio.pedidos_efectivo_pendientes = nuevoContador;
 
-        if (nuevaDeuda >= TOPE_DEUDA && !negocio.bloqueado_por_deuda) {
+        if (nuevoContador >= LIMITE_PEDIDOS_DEUDA && !negocio.bloqueado_por_deuda) {
           negocio.bloqueado_por_deuda = true;
           negocio.estado_cuenta = 'bloqueado';
-          negocio.estado_motivo = `Deuda acumulada de $${nuevaDeuda.toFixed(2)} MXN con la plataforma. Transfiere por SPEI para reactivar.`;
+          negocio.estado_motivo = `Llegaste a ${nuevoContador} pedidos en efectivo sin liquidar ($${nuevaDeuda.toFixed(2)} MXN). Transfiere por SPEI para reactivar.`;
           // Notificar al dueño
           const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'nombre'] });
           if (dueno?.telegram_chat_id) {
             tg.enviar(dueno.telegram_chat_id,
               `🚫 <b>Tu cuenta ha sido bloqueada</b>\n\n` +
-              `Tu deuda acumulada con VoyCorriendo es de <b>$${nuevaDeuda.toFixed(2)} MXN</b>.\n\n` +
+              `Llegaste a <b>${nuevoContador} pedidos en efectivo</b> sin liquidar, lo que suma <b>$${nuevaDeuda.toFixed(2)} MXN</b>.\n\n` +
               `Para reactivar tu negocio, transfiere por SPEI y notifícanos.\n` +
               `Contacto: WhatsApp o Telegram de soporte.`
             ).catch(() => {});
           }
-        } else if (nuevaDeuda >= AVISO_DEUDA && nuevaDeuda < TOPE_DEUDA) {
+        } else if (nuevoContador >= AVISO_PEDIDOS_DEUDA && nuevoContador < LIMITE_PEDIDOS_DEUDA) {
           const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id'] });
           if (dueno?.telegram_chat_id) {
             tg.enviar(dueno.telegram_chat_id,
               `⚠️ <b>Aviso de deuda</b>\n\n` +
-              `Tu deuda con VoyCorriendo es <b>$${nuevaDeuda.toFixed(2)} MXN</b>.\n` +
-              `Límite antes del bloqueo: <b>$${TOPE_DEUDA} MXN</b>.\n\n` +
-              `Liquida tu deuda por SPEI para evitar interrupciones.`
+              `Llevas <b>${nuevoContador} de ${LIMITE_PEDIDOS_DEUDA}</b> pedidos en efectivo sin liquidar (<b>$${nuevaDeuda.toFixed(2)} MXN</b>).\n\n` +
+              `Liquida tu deuda por SPEI para evitar que se bloquee tu cuenta.`
             ).catch(() => {});
           }
         }

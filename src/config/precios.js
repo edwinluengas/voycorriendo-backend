@@ -39,10 +39,18 @@ const PAGO_REPARTIDOR = {
 // ─── 4. Reglas de negocio ───────────────────────────────────
 const PEDIDO_MINIMO     = num('PEDIDO_MINIMO',      150);  // mínimo en productos (MXN)
 const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',      5);  // radio máximo de entrega
-const TOPE_DEUDA        = num('TOPE_DEUDA',        1000);  // bloqueo automático restaurante
-const AVISO_DEUDA       = num('AVISO_DEUDA',        700);  // warning antes del bloqueo
+// Bloqueo automático del restaurante: ya NO es por monto acumulado ($1,000
+// antes) — ahora es por CANTIDAD de pedidos en efectivo sin liquidar. Al
+// llegar a LIMITE_PEDIDOS_DEUDA se bloquea y debe transferir por SPEI lo
+// que sume esa cantidad de pedidos (deuda_plataforma), sea cual sea el monto.
+const LIMITE_PEDIDOS_DEUDA = num('LIMITE_PEDIDOS_DEUDA', 15);
+const AVISO_PEDIDOS_DEUDA  = num('AVISO_PEDIDOS_DEUDA',  12);  // aviso antes del bloqueo
 const FEE_RETIRO_DIARIO = num('FEE_RETIRO_DIARIO',   10);  // fee repartidor si retira fuera del viernes
 const FEE_RETIRO_DIARIO_NEGOCIO = num('FEE_RETIRO_DIARIO_NEGOCIO', 10);  // fee negocio si retira fuera del viernes
+
+// Baja permanente de repartidor por calificación reprobatoria
+const CALIFICACIONES_MIN_PARA_BAJA = num('CALIFICACIONES_MIN_PARA_BAJA', 6);
+const CALIFICACION_MIN_PROMEDIO    = num('CALIFICACION_MIN_PROMEDIO',    3);
 
 // ─── 5. Bonos al repartidor (fase 2) ────────────────────────
 const BONOS = {
@@ -67,10 +75,12 @@ module.exports = {
   PAGO_REPARTIDOR,
   PEDIDO_MINIMO,
   MAX_DISTANCE_KM,
-  TOPE_DEUDA,
-  AVISO_DEUDA,
+  LIMITE_PEDIDOS_DEUDA,
+  AVISO_PEDIDOS_DEUDA,
   FEE_RETIRO_DIARIO,
   FEE_RETIRO_DIARIO_NEGOCIO,
+  CALIFICACIONES_MIN_PARA_BAJA,
+  CALIFICACION_MIN_PROMEDIO,
   BONOS,
   // Legacy exports para compatibilidad
   HORA_PICO_RANGOS,

@@ -10,6 +10,7 @@ const { Op, fn, col, literal } = require('sequelize');
 const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion, FondoRepartidor } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
+const { bloquearRepartidorPermanente, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
 const BUCKET_NEGOCIOS     = 'documentos-negocios';
@@ -209,13 +210,22 @@ const cambiarEstadoCuentaRepartidor = async (req, res) => {
     const r = await Repartidor.findByPk(id);
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
     const estadoAntes = { estado_cuenta: r.estado_cuenta };
-    r.estado_cuenta = estado_cuenta;
-    r.estado_motivo = motivo || null;
-    if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
+    if (estado_cuenta === 'bloqueado') {
+      // 'bloqueado' es baja PERMANENTE (a diferencia de 'suspendido', que es
+      // reversible) — veta la placa para siempre, ni esta ni otra cuenta
+      // podrá volver a usarla.
       r.conectado = false;
       r.disponible = false;
+      await bloquearRepartidorPermanente(r, motivo || 'Bloqueado manualmente por administrador.');
+    } else {
+      r.estado_cuenta = estado_cuenta;
+      r.estado_motivo = motivo || null;
+      if (estado_cuenta === 'suspendido') {
+        r.conectado = false;
+        r.disponible = false;
+      }
+      await r.save();
     }
-    await r.save();
     logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { repartidor: r } });
   } catch (e) {
@@ -351,12 +361,18 @@ const cambiarEstadoCuentaNegocio = async (req, res) => {
     const n = await Negocio.findByPk(id);
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
     const estadoAntes = { estado_cuenta: n.estado_cuenta };
-    n.estado_cuenta = estado_cuenta;
-    n.estado_motivo = motivo || null;
-    if (estado_cuenta === 'suspendido' || estado_cuenta === 'bloqueado') {
+    if (estado_cuenta === 'bloqueado') {
+      // 'bloqueado' es baja PERMANENTE — veta la dirección para siempre.
       n.abierto_ahora = false;
+      await bloquearNegocioPermanente(n, motivo || 'Bloqueado manualmente por administrador.');
+    } else {
+      n.estado_cuenta = estado_cuenta;
+      n.estado_motivo = motivo || null;
+      if (estado_cuenta === 'suspendido') {
+        n.abierto_ahora = false;
+      }
+      await n.save();
     }
-    await n.save();
     logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { negocio: n } });
   } catch (e) {
@@ -401,6 +417,7 @@ const confirmarPagoDeuda = async (req, res) => {
 
     const deudaAntes = parseFloat(negocio.deuda_plataforma || 0);
     negocio.deuda_plataforma  = 0;
+    negocio.pedidos_efectivo_pendientes = 0;
     negocio.bloqueado_por_deuda = false;
     if (negocio.estado_cuenta === 'bloqueado') {
       negocio.estado_cuenta = 'normal';
@@ -639,7 +656,7 @@ async function revenueReport(req, res) {
     // ── Cartera: deudas de restaurantes (modelo flat $35) ────
     const negociosConDeuda = await Negocio.findAll({
       where: { deuda_plataforma: { [Op.gt]: 0 } },
-      attributes: ['id', 'nombre', 'deuda_plataforma', 'bloqueado_por_deuda', 'estado_cuenta'],
+      attributes: ['id', 'nombre', 'deuda_plataforma', 'pedidos_efectivo_pendientes', 'bloqueado_por_deuda', 'estado_cuenta'],
       order: [['deuda_plataforma', 'DESC']],
     });
     const deudaTotalRestaurantes = negociosConDeuda.reduce((s, n) => s + parseFloat(n.deuda_plataforma || 0), 0);
@@ -696,6 +713,7 @@ async function revenueReport(req, res) {
             id:              n.id,
             nombre:          n.nombre,
             deuda:           parseFloat(n.deuda_plataforma),
+            pedidos_pendientes: n.pedidos_efectivo_pendientes || 0,
             bloqueado:       n.bloqueado_por_deuda,
             estado_cuenta:   n.estado_cuenta,
           })),

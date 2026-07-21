@@ -56,6 +56,9 @@ const Repartidor = sequelize.define('Repartidor', {
     defaultValue: 'normal',
   },
   estado_motivo: { type: DataTypes.TEXT, allowNull: true },
+  // true cuando la baja es permanente (placa duplicada, calificación
+  // reprobatoria) — distinto de una suspensión temporal reversible.
+  baja_permanente: { type: DataTypes.BOOLEAN, defaultValue: false },
   // ─── Metricas para el sistema de reputacion ─────────────────
   tasa_cancelacion: { type: DataTypes.DECIMAL(5, 2), defaultValue: 0.00 },
   tasa_aceptacion: { type: DataTypes.DECIMAL(5, 2), defaultValue: 100.00 },
