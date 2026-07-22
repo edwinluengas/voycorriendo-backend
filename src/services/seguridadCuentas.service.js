@@ -12,6 +12,29 @@
  */
 const { Op } = require('sequelize');
 
+const ESTADOS_NO_TERMINALES = ['pendiente', 'confirmado', 'preparando', 'listo', 'en_camino', 'en_envio'];
+
+// Alerta a admin de inmediato si la cuenta que se bloquea tiene pedidos en
+// curso — sin esto quedaban huérfanos hasta que un job de timeout los
+// detectara (hasta 90 min después, o nunca para negocio en confirmado/
+// preparando). No cancela ni reasigna solo: requiere intervención humana,
+// mismo patrón que pedidoTimeout.job.alertarPedidosAtascados.
+const alertarPedidosEnCursoPorBloqueo = async ({ Pedido }, where, entidad, motivo) => {
+  const tg = require('./telegram.service');
+  const pedidos = await Pedido.findAll({
+    where: { ...where, estado: { [Op.in]: ESTADOS_NO_TERMINALES } },
+    attributes: ['id', 'numero', 'estado'],
+  });
+  if (pedidos.length === 0) return;
+  const lista = pedidos.map((p) => `#${p.numero} (${p.estado})`).join(', ');
+  tg.enviarAdmin(
+    `🚨 <b>${entidad} bloqueado con pedidos en curso</b>\n\n` +
+    `Motivo: ${motivo}\n` +
+    `Pedidos afectados: <b>${lista}</b>\n\n` +
+    `Requieren reasignación o seguimiento manual — no se cancelaron ni reasignaron solos.`
+  ).catch(() => {});
+};
+
 const normalizar = (v) => String(v || '').trim().toUpperCase().replace(/\s+/g, ' ');
 // Las placas se comparan ignorando espacios/guiones — "AB-123" y "AB 123"
 // son la misma placa. El valor que se GUARDA en el registro es el que
@@ -59,10 +82,15 @@ const validarPlacaRepartidor = async (repartidorId, placaCandidata) => {
 
 // Bloquea la cuenta AHORA (estado_cuenta) y veta la placa para siempre.
 const bloquearRepartidorPermanente = async (repartidor, motivo) => {
-  const { BloqueoPermanente } = require('../models');
+  const models = require('../models');
+  const { BloqueoPermanente, Pedido } = models;
   repartidor.estado_cuenta   = 'bloqueado';
   repartidor.estado_motivo   = motivo;
   repartidor.baja_permanente = true;
+  // No debe seguir recibiendo pedidos nuevos ni figurar como disponible,
+  // sin importar por cuál de los 4 caminos se llegó a este bloqueo.
+  repartidor.conectado       = false;
+  repartidor.disponible      = false;
   await repartidor.save();
 
   const valor = normalizarPlaca(repartidor.placa_vehiculo);
@@ -72,6 +100,8 @@ const bloquearRepartidorPermanente = async (repartidor, motivo) => {
       defaults: { motivo, entidad_id_origen: repartidor.id },
     });
   }
+
+  await alertarPedidosEnCursoPorBloqueo({ Pedido }, { repartidor_id: repartidor.id }, `Repartidor ${repartidor.id}`, motivo);
 };
 
 // Levanta el veto permanente que ESTA cuenta generó sobre su propia placa
@@ -128,9 +158,15 @@ const validarDireccionNegocio = async (negocioId, direccionCandidata, coloniaCan
 };
 
 const bloquearNegocioPermanente = async (negocio, motivo) => {
-  const { BloqueoPermanente } = require('../models');
+  const models = require('../models');
+  const { BloqueoPermanente, Pedido } = models;
   negocio.estado_cuenta = 'bloqueado';
   negocio.estado_motivo = motivo;
+  // Un negocio bloqueado no debe seguir operable — activo=true lo dejaba
+  // aceptar pedidos vía deep link/historial/favoritos aunque ya no
+  // apareciera en el listado público.
+  negocio.activo        = false;
+  negocio.abierto_ahora  = false;
   await negocio.save();
 
   const valor = claveDireccion(negocio.direccion, negocio.colonia);
@@ -140,6 +176,8 @@ const bloquearNegocioPermanente = async (negocio, motivo) => {
       defaults: { motivo, entidad_id_origen: negocio.id },
     });
   }
+
+  await alertarPedidosEnCursoPorBloqueo({ Pedido }, { negocio_id: negocio.id }, `Negocio ${negocio.id}`, motivo);
 };
 
 // Igual que liberarPlacaPropia pero para dirección de negocio.

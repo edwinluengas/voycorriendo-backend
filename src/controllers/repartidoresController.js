@@ -481,6 +481,13 @@ const aceptarPedido = async (req, res) => {
       where: { usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
     });
     if (!repartidor) return res.status(403).json({ ok: false, mensaje: 'Sin acceso.' });
+    // Un repartidor bloqueado (placa duplicada/vetada, baja por calificación,
+    // o bloqueo manual de admin) sigue con verificacion_estado='aprobado' —
+    // bloquearRepartidorPermanente solo toca estado_cuenta. Sin este chequeo
+    // podía seguir aceptando pedidos nuevos aunque ya estuviera bloqueado.
+    if (['suspendido', 'bloqueado'].includes(repartidor.estado_cuenta)) {
+      return res.status(403).json({ ok: false, mensaje: 'Tu cuenta está restringida. Contacta a soporte.' });
+    }
 
     const pedido = await Pedido.findOne({
       where: { id: pedido_id, estado: 'listo', repartidor_id: null },

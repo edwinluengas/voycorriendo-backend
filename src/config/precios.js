@@ -7,7 +7,7 @@
  *     · Standard $35 | Express $60
  *   - Pedido mínimo: $150 MXN en productos (sin envío)
  *   - Radio máximo: 5 km desde el restaurante a la dirección de entrega
- *   - Tope deuda restaurante: $1,000 MXN (bloqueo automático)
+ *   - Tope deuda restaurante: 15 pedidos en efectivo sin liquidar (bloqueo automático — ya NO es por monto)
  *   - Sin cargos de servicio al cliente. Sin envíos gratis. Sin tokens de cliente.
  */
 

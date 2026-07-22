@@ -54,6 +54,13 @@ const crearPedido = async (req, res) => {
         mensaje: 'Este negocio tiene pedidos suspendidos temporalmente. Intenta más tarde o elige otro restaurante.',
       });
     }
+    // Cubre bloqueos que NO son por deuda (dirección duplicada/vetada,
+    // bloqueo manual de admin) — bloqueado_por_deuda por sí solo no los
+    // detectaba, permitiendo crear pedidos vía deep link/historial/favoritos
+    // a un negocio que ya no debería operar.
+    if (['suspendido', 'bloqueado'].includes(negocio.estado_cuenta)) {
+      return res.status(400).json({ ok: false, mensaje: 'Este negocio no está disponible.' });
+    }
 
     // 2. Validar items
     let subtotal = 0;
@@ -404,13 +411,16 @@ const actualizarEstado = async (req, res) => {
       // El negocio debe estar aprobado para operar pedidos
       const negocioActivo = await Negocio.findOne({
         where: { usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
-        attributes: ['id', 'bloqueado_por_deuda'],
+        attributes: ['id', 'bloqueado_por_deuda', 'estado_cuenta'],
       });
       if (!negocioActivo) {
         return res.status(403).json({ ok: false, mensaje: 'Tu negocio no está aprobado para operar.' });
       }
       if (negocioActivo.bloqueado_por_deuda) {
         return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
+      }
+      if (['suspendido', 'bloqueado'].includes(negocioActivo.estado_cuenta)) {
+        return res.status(403).json({ ok: false, mensaje: 'Tu cuenta está restringida. Contacta a soporte.' });
       }
     }
 
