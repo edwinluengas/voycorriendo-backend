@@ -10,7 +10,7 @@ const { Op, fn, col, literal } = require('sequelize');
 const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion, FondoRepartidor } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
-const { bloquearRepartidorPermanente, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
+const { bloquearRepartidorPermanente, bloquearNegocioPermanente, liberarPlacaPropia, liberarDireccionPropia } = require('../services/seguridadCuentas.service');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
 const BUCKET_NEGOCIOS     = 'documentos-negocios';
@@ -225,6 +225,13 @@ const cambiarEstadoCuentaRepartidor = async (req, res) => {
         r.disponible = false;
       }
       await r.save();
+      // Si venía de un bloqueo permanente que ÉL MISMO generó (su propia
+      // placa vetada), liberar el veto — si no, la próxima vez que toque
+      // su perfil se auto-bloquea de nuevo sin salida (bug real detectado
+      // en auditoría 2026-07-21). No toca vetos originados por OTRA cuenta.
+      if (estadoAntes.estado_cuenta === 'bloqueado') {
+        await liberarPlacaPropia(r);
+      }
     }
     logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { repartidor: r } });
@@ -372,6 +379,9 @@ const cambiarEstadoCuentaNegocio = async (req, res) => {
         n.abierto_ahora = false;
       }
       await n.save();
+      if (estadoAntes.estado_cuenta === 'bloqueado') {
+        await liberarDireccionPropia(n);
+      }
     }
     logAdmin({ adminId: req.usuario.id, accion: 'cambiar_cuenta_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { estado_cuenta, motivo }, ip: req.ip });
     res.json({ ok: true, data: { negocio: n } });
@@ -550,6 +560,42 @@ const confirmarRetiroRepartidor = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/bloqueos-permanentes ───────────────────
+// Lista placas/direcciones en la lista negra permanente.
+const listarBloqueosPermanentes = async (req, res) => {
+  try {
+    const { BloqueoPermanente } = require('../models');
+    const { tipo } = req.query;
+    const where = tipo ? { tipo } : {};
+    const bloqueos = await BloqueoPermanente.findAll({ where, order: [['bloqueado_en', 'DESC']], limit: 200 });
+    res.json({ ok: true, data: { bloqueos } });
+  } catch (e) {
+    console.error('Error listar bloqueos permanentes:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar bloqueos.' });
+  }
+};
+
+// ─── DELETE /api/admin/bloqueos-permanentes/:id ────────────
+// Levanta un veto permanente por error humano o revisión — única forma de
+// revertirlo fuera de editar la base de datos a mano. NO reactiva la
+// cuenta bloqueada por sí sola; el admin debe además cambiar su
+// estado_cuenta con el endpoint correspondiente si procede.
+const eliminarBloqueoPermanente = async (req, res) => {
+  try {
+    const { BloqueoPermanente } = require('../models');
+    const { id } = req.params;
+    const bloqueo = await BloqueoPermanente.findByPk(id);
+    if (!bloqueo) return res.status(404).json({ ok: false, mensaje: 'Bloqueo no encontrado.' });
+    const estadoAntes = bloqueo.toJSON();
+    await bloqueo.destroy();
+    logAdmin({ adminId: req.usuario.id, accion: 'eliminar_bloqueo_permanente', entidadTipo: 'bloqueo_permanente', entidadId: id, estadoAntes, estadoDespues: null, ip: req.ip });
+    res.json({ ok: true, mensaje: 'Veto permanente levantado.' });
+  } catch (e) {
+    console.error('Error eliminar bloqueo permanente:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al levantar el bloqueo.' });
+  }
+};
+
 module.exports = {
   dashboard,
   // Repartidores
@@ -570,6 +616,9 @@ module.exports = {
   confirmarRetiroRepartidor,
   // Usuarios
   listarUsuarios,
+  // Bloqueos permanentes
+  listarBloqueosPermanentes,
+  eliminarBloqueoPermanente,
   // Revenue
   revenueReport,
 };

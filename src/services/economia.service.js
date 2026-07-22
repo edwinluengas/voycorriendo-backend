@@ -63,10 +63,15 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
       const { Negocio, Usuario } = require('../models');
       const negocio = await Negocio.findByPk(pedido.negocio_id);
       if (negocio) {
-        const nuevaDeuda    = parseFloat(negocio.deuda_plataforma || 0) + COMISION_FLAT;
-        const nuevoContador = (negocio.pedidos_efectivo_pendientes || 0) + 1;
-        negocio.deuda_plataforma = parseFloat(nuevaDeuda.toFixed(2));
-        negocio.pedidos_efectivo_pendientes = nuevoContador;
+        // Incremento ATÓMICO a nivel DB — dos entregas en efectivo del
+        // mismo negocio casi simultáneas ya no se pisan el incremento
+        // (read-modify-write en JS perdía actualizaciones bajo carrera).
+        await negocio.increment(
+          { deuda_plataforma: COMISION_FLAT, pedidos_efectivo_pendientes: 1 }
+        );
+        await negocio.reload();
+        const nuevaDeuda    = parseFloat(negocio.deuda_plataforma || 0);
+        const nuevoContador = negocio.pedidos_efectivo_pendientes || 0;
 
         if (nuevoContador >= LIMITE_PEDIDOS_DEUDA && !negocio.bloqueado_por_deuda) {
           negocio.bloqueado_por_deuda = true;

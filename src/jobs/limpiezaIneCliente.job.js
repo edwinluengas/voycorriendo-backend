@@ -12,6 +12,11 @@ const RETENCION_INE_DIAS = parseInt(process.env.RETENCION_INE_DIAS || '30');
 
 const BUCKET_INE_CLIENTE = 'documentos-clientes';
 
+// Solo se borra la foto de pedidos ya CERRADOS — uno atascado en 'listo' o
+// 'en_camino' todavía puede necesitar que el repartidor verifique el INE
+// al entregar, sin importar cuántos días lleve abierto.
+const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
+
 const rutaDesdeUrl = (url) => {
   const marcador = `/object/public/${BUCKET_INE_CLIENTE}/`;
   if (!url || !url.includes(marcador)) return null;
@@ -25,21 +30,31 @@ async function borrarFotosIneVencidas() {
     where: {
       ine_foto_url: { [Op.not]: null },
       creado_en: { [Op.lt]: limite },
+      estado: { [Op.in]: ESTADOS_TERMINALES },
     },
     attributes: ['id', 'numero', 'ine_foto_url', 'creado_en'],
   });
 
+  let eliminadas = 0;
+  let fallidas = 0;
   for (const pedido of pedidos) {
     const ruta = rutaDesdeUrl(pedido.ine_foto_url);
-    if (ruta) {
-      await borrarImagen(BUCKET_INE_CLIENTE, ruta);
+    // Si no se puede borrar del storage, NO se limpia la referencia en DB —
+    // se reintenta el siguiente día (el pedido sigue cayendo en el filtro
+    // de arriba mientras ine_foto_url no sea null). Evita archivos
+    // huérfanos en Supabase con la DB ya diciendo que no existen.
+    const borrado = ruta ? await borrarImagen(BUCKET_INE_CLIENTE, ruta) : true;
+    if (!borrado) {
+      fallidas++;
+      console.warn(`[LimpiezaIneCliente] No se pudo borrar del storage — pedido ${pedido.numero}, se reintenta mañana.`);
+      continue;
     }
     await pedido.update({ ine_foto_url: null });
-    console.log(`[LimpiezaIneCliente] Foto de INE eliminada — pedido ${pedido.numero} (${RETENCION_INE_DIAS}+ días).`);
+    eliminadas++;
   }
 
-  if (pedidos.length > 0) {
-    console.log(`[LimpiezaIneCliente] ${pedidos.length} foto(s) de INE eliminada(s) por retención.`);
+  if (eliminadas > 0 || fallidas > 0) {
+    console.log(`[LimpiezaIneCliente] ${eliminadas} foto(s) eliminada(s), ${fallidas} fallida(s) (se reintentan mañana).`);
   }
 }
 

@@ -41,6 +41,10 @@ router.patch ('/pedidos/:id/confirmar-pago',   ctrl.confirmarPagoPedido);
 // ─── Usuarios (busqueda) ────────────────────────────────────
 router.get   ('/usuarios',                     ctrl.listarUsuarios);
 
+// ─── Bloqueos permanentes (placas/direcciones vetadas) ──────
+router.get   ('/bloqueos-permanentes',         ctrl.listarBloqueosPermanentes);
+router.delete('/bloqueos-permanentes/:id',     ctrl.eliminarBloqueoPermanente);
+
 // ─── Pagos SPEI ──────────────────────────────────────────────
 router.get  ('/pagos/spei/pendientes', speiCtrl.pendientes);
 router.post ('/pagos/spei/ejecutar',   speiCtrl.ejecutar);

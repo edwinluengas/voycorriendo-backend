@@ -8,7 +8,7 @@ const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 const { calcularRuta } = require('../services/routing.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
-const { placaBloqueadaPermanente, bloquearRepartidorPermanente, normalizar } = require('../services/seguridadCuentas.service');
+const { validarPlacaRepartidor, bloquearRepartidorPermanente } = require('../services/seguridadCuentas.service');
 const { CALIFICACION_MIN_PROMEDIO, CALIFICACIONES_MIN_PARA_BAJA } = require('../config/precios');
 
 // ─── POST /api/repartidores/activar ───────────────────────
@@ -61,40 +61,26 @@ const actualizarPerfil = async (req, res) => {
     }
 
     // ─── Candado: la misma moto (placa) no puede estar en dos cuentas ──
+    // Centralizado en seguridadCuentas.service — NO repetir este chequeo a
+    // mano en otro endpoint, usar validarPlacaRepartidor siempre.
     if (req.body.placa_vehiculo !== undefined) {
-      const placaNormalizada = normalizar(req.body.placa_vehiculo);
-      if (placaNormalizada) {
-        // 1) Lista negra permanente — placa vetada para siempre (fraude o
-        // baja permanente por calificación). Ni esta ni ninguna otra cuenta
-        // puede volver a usarla; solo un admin puede levantar el veto.
-        const vetada = await placaBloqueadaPermanente(placaNormalizada);
-        if (vetada) {
-          repartidor.placa_vehiculo = req.body.placa_vehiculo;
+      const resultado = await validarPlacaRepartidor(repartidor.id, req.body.placa_vehiculo);
+      if (!resultado.ok) {
+        repartidor.placa_vehiculo = req.body.placa_vehiculo;
+        if (resultado.permanente) {
           repartidor.estado_cuenta = 'bloqueado';
-          repartidor.estado_motivo = `Placa "${placaNormalizada}" está en lista negra permanente (${vetada.motivo}).`;
+          repartidor.estado_motivo = `Placa está en lista negra permanente (${resultado.motivo}).`;
           await repartidor.save();
           return res.status(403).json({
             ok: false,
             mensaje: 'Esta moto y/o usuario están bloqueados permanentemente. Comunícate con atención a clientes.',
           });
         }
-        // 2) Duplicado activo — la misma placa ya está en OTRA cuenta viva.
-        // Señal de fraude (cuenta duplicada para evadir un bloqueo, o
-        // compartir vehículo para inflar cupos): se bloquea de inmediato.
-        const duplicada = await Repartidor.findOne({
-          where: { id: { [Op.ne]: repartidor.id }, placa_vehiculo: { [Op.iLike]: placaNormalizada } },
+        await bloquearRepartidorPermanente(repartidor, resultado.motivo);
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
         });
-        if (duplicada) {
-          repartidor.placa_vehiculo = req.body.placa_vehiculo;
-          await bloquearRepartidorPermanente(
-            repartidor,
-            `Placa "${placaNormalizada}" ya registrada en otra cuenta de repartidor — bloqueado para revisión.`
-          );
-          return res.status(403).json({
-            ok: false,
-            mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
-          });
-        }
       }
     }
 
@@ -196,22 +182,25 @@ const enviarARevision = async (req, res) => {
         mensaje: `Faltan datos: ${faltantes.join(', ')}.`,
       });
     }
-    // Defensa en profundidad: la placa ya se valida como única en
-    // actualizarPerfil, esto cubre cualquier otro camino que la haya fijado.
-    if (repartidor.placa_vehiculo) {
-      const placaNormalizada = String(repartidor.placa_vehiculo).trim().toUpperCase();
-      const duplicada = await Repartidor.findOne({
-        where: { id: { [Op.ne]: repartidor.id }, placa_vehiculo: { [Op.iLike]: placaNormalizada } },
-      });
-      if (duplicada) {
+    // Defensa en profundidad: la placa ya se valida en actualizarPerfil,
+    // esto cubre cualquier otro camino que la haya fijado (incluye ahora
+    // el chequeo de lista negra permanente, que antes faltaba aquí).
+    const resultadoPlaca = await validarPlacaRepartidor(repartidor.id, repartidor.placa_vehiculo);
+    if (!resultadoPlaca.ok) {
+      if (resultadoPlaca.permanente) {
         repartidor.estado_cuenta = 'bloqueado';
-        repartidor.estado_motivo = `Placa "${placaNormalizada}" ya registrada en otra cuenta de repartidor — bloqueado para revisión. Requiere que un admin cambie el estado.`;
+        repartidor.estado_motivo = `Placa está en lista negra permanente (${resultadoPlaca.motivo}).`;
         await repartidor.save();
         return res.status(403).json({
           ok: false,
-          mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada para revisión — contacta a soporte.',
+          mensaje: 'Esta moto y/o usuario están bloqueados permanentemente. Comunícate con atención a clientes.',
         });
       }
+      await bloquearRepartidorPermanente(repartidor, resultadoPlaca.motivo);
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'Esa placa ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
+      });
     }
     repartidor.verificacion_estado = 'en_revision';
     repartidor.enviado_revision_en = new Date();
@@ -296,6 +285,19 @@ const crearPerfil = async (req, res) => {
       anio_vehiculo, placa_vehiculo, color_vehiculo,
       clabe_bancaria, banco,
     } = req.body;
+
+    // Mismo candado que actualizarPerfil — este endpoint legacy se había
+    // quedado sin el chequeo, permitiendo evadir por completo el bloqueo
+    // de placa duplicada/vetada con solo registrar una cuenta nueva.
+    const resultadoPlaca = await validarPlacaRepartidor(null, placa_vehiculo);
+    if (!resultadoPlaca.ok) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: resultadoPlaca.permanente
+          ? 'Esta moto y/o usuario están bloqueados permanentemente. Comunícate con atención a clientes.'
+          : 'Esa placa ya está registrada en otra cuenta. Contacta a atención a clientes.',
+      });
+    }
 
     const repartidor = await Repartidor.create({
       usuario_id: req.usuario.id,

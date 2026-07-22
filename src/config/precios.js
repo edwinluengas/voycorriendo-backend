@@ -51,6 +51,11 @@ const FEE_RETIRO_DIARIO_NEGOCIO = num('FEE_RETIRO_DIARIO_NEGOCIO', 10);  // fee 
 // Baja permanente de repartidor por calificación reprobatoria
 const CALIFICACIONES_MIN_PARA_BAJA = num('CALIFICACIONES_MIN_PARA_BAJA', 6);
 const CALIFICACION_MIN_PROMEDIO    = num('CALIFICACION_MIN_PROMEDIO',    3);
+// Exige que las calificaciones vengan de al menos esta cantidad de
+// CLIENTES DISTINTOS — evita que un solo cliente, pidiendo varias veces al
+// mismo repartidor y calificando 1★ cada vez, fuerce por sí solo una baja
+// permanente (que es irreversible salvo revisión de admin).
+const CLIENTES_DISTINTOS_MIN_PARA_BAJA = num('CLIENTES_DISTINTOS_MIN_PARA_BAJA', 4);
 
 // ─── 5. Bonos al repartidor (fase 2) ────────────────────────
 const BONOS = {
@@ -81,6 +86,7 @@ module.exports = {
   FEE_RETIRO_DIARIO_NEGOCIO,
   CALIFICACIONES_MIN_PARA_BAJA,
   CALIFICACION_MIN_PROMEDIO,
+  CLIENTES_DISTINTOS_MIN_PARA_BAJA,
   BONOS,
   // Legacy exports para compatibilidad
   HORA_PICO_RANGOS,

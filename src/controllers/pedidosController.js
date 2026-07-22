@@ -4,7 +4,7 @@ const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
-const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO } = require('../config/precios');
+const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
@@ -664,19 +664,22 @@ const calificarPedido = async (req, res) => {
       if (repartidor) {
         const califsRep = await Pedido.findAll({
           where: { repartidor_id: pedido.repartidor_id, calificacion_repartidor: { [Op.not]: null } },
-          attributes: ['calificacion_repartidor'],
+          attributes: ['calificacion_repartidor', 'cliente_id'],
         });
         const sumaRep = califsRep.reduce((acc, p) => acc + p.calificacion_repartidor, 0);
         const promedioRep = sumaRep / califsRep.length;
+        const clientesDistintos = new Set(califsRep.map((p) => p.cliente_id)).size;
         await repartidor.update({ calificacion_promedio: promedioRep.toFixed(2) });
 
         // ─── Baja permanente por calificación reprobatoria ──────
-        // 6+ pedidos calificados y promedio < 3★ → se da de baja para
-        // siempre (no es una suspensión temporal). Su placa queda vetada
-        // permanentemente — ni él ni nadie más podrá volver a usarla.
+        // 6+ pedidos calificados (de al menos 4 clientes DISTINTOS, para
+        // que un solo cliente repitiendo pedidos no pueda forzar la baja
+        // por su cuenta) y promedio < 3★ → se da de baja para siempre (no
+        // es una suspensión temporal). Su placa queda vetada permanentemente.
         if (
           repartidor.estado_cuenta !== 'bloqueado' &&
           califsRep.length >= CALIFICACIONES_MIN_PARA_BAJA &&
+          clientesDistintos >= CLIENTES_DISTINTOS_MIN_PARA_BAJA &&
           promedioRep < CALIFICACION_MIN_PROMEDIO
         ) {
           await bloquearRepartidorPermanente(

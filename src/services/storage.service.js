@@ -129,6 +129,9 @@ const obtenerUrlFirmada = async (bucket, ruta_o_url, segundos = 3600) => {
 
 /**
  * Borra un archivo del bucket. No truena si no existe.
+ * @returns {Promise<boolean>} true si se borró (o ya no existía, 404),
+ *   false si falló de verdad — el llamador debe reintentar más tarde en
+ *   vez de asumir que el archivo ya no está.
  */
 const borrarImagen = async (bucket, ruta) => {
   validarConfig();
@@ -137,10 +140,11 @@ const borrarImagen = async (bucket, ruta) => {
     await axios.delete(url, {
       headers: { Authorization: `Bearer ${SUPABASE_KEY}` },
     });
+    return true;
   } catch (e) {
-    if (e.response?.status !== 404) {
-      console.error('Storage delete error:', e.response?.data || e.message);
-    }
+    if (e.response?.status === 404) return true;
+    console.error('Storage delete error:', e.response?.data || e.message);
+    return false;
   }
 };
 

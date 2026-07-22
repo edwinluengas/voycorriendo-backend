@@ -4,7 +4,7 @@ const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
 const tg = require('../services/telegram.service');
-const { claveDireccion, direccionBloqueadaPermanente, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
+const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -172,44 +172,28 @@ const actualizarMiPerfil = async (req, res) => {
     }
 
     // ─── Candado: la misma dirección no puede estar en dos cuentas ────
+    // Centralizado en seguridadCuentas.service — NO repetir a mano.
     if (req.body.direccion !== undefined || req.body.colonia !== undefined) {
       const direccionResultante = req.body.direccion !== undefined ? req.body.direccion : negocio.direccion;
       const coloniaResultante   = req.body.colonia   !== undefined ? req.body.colonia   : negocio.colonia;
-      const clave = claveDireccion(direccionResultante, coloniaResultante);
-      if (clave && clave !== '|') {
-        // 1) Lista negra permanente — dirección vetada para siempre.
-        const vetada = await direccionBloqueadaPermanente(direccionResultante, coloniaResultante);
-        if (vetada) {
-          if (req.body.direccion !== undefined) negocio.direccion = req.body.direccion;
-          if (req.body.colonia !== undefined) negocio.colonia = req.body.colonia;
+      const resultado = await validarDireccionNegocio(negocio.id, direccionResultante, coloniaResultante);
+      if (!resultado.ok) {
+        if (req.body.direccion !== undefined) negocio.direccion = req.body.direccion;
+        if (req.body.colonia !== undefined) negocio.colonia = req.body.colonia;
+        if (resultado.permanente) {
           negocio.estado_cuenta = 'bloqueado';
-          negocio.estado_motivo = `Dirección en lista negra permanente (${vetada.motivo}).`;
+          negocio.estado_motivo = `Dirección en lista negra permanente (${resultado.motivo}).`;
           await negocio.save();
           return res.status(403).json({
             ok: false,
             mensaje: 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.',
           });
         }
-        // 2) Duplicado activo — la misma dirección ya está en OTRA cuenta viva.
-        const otrosNegocios = await Negocio.findAll({
-          where: { id: { [Op.ne]: negocio.id }, direccion: { [Op.not]: null } },
-          attributes: ['id', 'direccion', 'colonia'],
+        await bloquearNegocioPermanente(negocio, resultado.motivo);
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'Esa dirección ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
         });
-        const duplicado = otrosNegocios.find(
-          (n) => claveDireccion(n.direccion, n.colonia) === clave
-        );
-        if (duplicado) {
-          if (req.body.direccion !== undefined) negocio.direccion = req.body.direccion;
-          if (req.body.colonia !== undefined) negocio.colonia = req.body.colonia;
-          await bloquearNegocioPermanente(
-            negocio,
-            `Dirección ya registrada en otra cuenta de negocio (id ${duplicado.id}) — bloqueado para revisión.`
-          );
-          return res.status(403).json({
-            ok: false,
-            mensaje: 'Esa dirección ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
-          });
-        }
       }
     }
 
@@ -308,16 +292,24 @@ const enviarARevision = async (req, res) => {
       });
     }
 
-    // Defensa en profundidad: la dirección ya se valida como única en
-    // actualizarMiPerfil, esto cubre cualquier otro camino que la haya fijado.
-    const vetada = await direccionBloqueadaPermanente(negocio.direccion, negocio.colonia);
-    if (vetada) {
-      negocio.estado_cuenta = 'bloqueado';
-      negocio.estado_motivo = `Dirección en lista negra permanente (${vetada.motivo}).`;
-      await negocio.save();
+    // Defensa en profundidad: la dirección ya se valida en actualizarMiPerfil
+    // (incluye lista negra Y duplicado activo — antes aquí solo se
+    // revisaba la lista negra, no duplicados colados por otro camino).
+    const resultadoDireccion = await validarDireccionNegocio(negocio.id, negocio.direccion, negocio.colonia);
+    if (!resultadoDireccion.ok) {
+      if (resultadoDireccion.permanente) {
+        negocio.estado_cuenta = 'bloqueado';
+        negocio.estado_motivo = `Dirección en lista negra permanente (${resultadoDireccion.motivo}).`;
+        await negocio.save();
+        return res.status(403).json({
+          ok: false,
+          mensaje: 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.',
+        });
+      }
+      await bloquearNegocioPermanente(negocio, resultadoDireccion.motivo);
       return res.status(403).json({
         ok: false,
-        mensaje: 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.',
+        mensaje: 'Esa dirección ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
       });
     }
 
@@ -474,6 +466,19 @@ const crearNegocio = async (req, res) => {
     const yaExiste = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (yaExiste) {
       return res.status(409).json({ ok: false, mensaje: 'Ya tienes un negocio registrado.' });
+    }
+
+    // Mismo candado que actualizarMiPerfil — este endpoint legacy se había
+    // quedado sin el chequeo, permitiendo evadir el bloqueo de dirección
+    // duplicada/vetada con solo registrar una cuenta nueva.
+    const resultadoDireccion = await validarDireccionNegocio(null, direccion, colonia);
+    if (!resultadoDireccion.ok) {
+      return res.status(403).json({
+        ok: false,
+        mensaje: resultadoDireccion.permanente
+          ? 'Este negocio y/o dirección están bloqueados permanentemente. Comunícate con atención a clientes.'
+          : 'Esa dirección ya está registrada en otra cuenta. Contacta a atención a clientes.',
+      });
     }
 
     const negocio = await Negocio.create({
