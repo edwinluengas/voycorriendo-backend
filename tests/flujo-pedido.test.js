@@ -205,7 +205,11 @@ describe('Flujo completo feliz: efectivo, pendiente → entregado', () => {
     // Revertir efectos económicos del pedido de prueba y borrarlo.
     if (pedidoId) {
       await db.query(`DELETE FROM ledger_conciliacion WHERE pedido_id = $1`, [pedidoId]);
-      await db.query(`UPDATE negocios SET deuda_plataforma = GREATEST(0, deuda_plataforma - 35) WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
+      // pedidos_efectivo_pendientes también lo incrementa procesarEntrega
+      // junto con deuda_plataforma (commit 9e00317) — revertir solo la
+      // deuda y no el contador lo dejaba creciendo sin límite cada vez que
+      // corría la suite, hasta bloquear la cuenta de prueba sola.
+      await db.query(`UPDATE negocios SET deuda_plataforma = GREATEST(0, deuda_plataforma - 35), pedidos_efectivo_pendientes = GREATEST(0, pedidos_efectivo_pendientes - 1) WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
       await db.query(`DELETE FROM pedidos WHERE id = $1`, [pedidoId]);
     }
   });
