@@ -115,6 +115,32 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.STRING(50),
     allowNull: true,
   },
+  // Perfil de usuario: direcciones guardadas, método de pago default, prefs
+  // notificaciones — existían como columnas en la DB (migración en
+  // server.js) pero nunca se declararon aquí. Sequelize ni las selecciona ni
+  // las persiste si no están en el modelo: usuariosController ya las lee y
+  // las escribe (direcciones guardadas, método de pago default,
+  // preferencias de notificación), pero esas operaciones eran no-ops
+  // silenciosos — el usuario nunca veía sus cambios guardados.
+  direcciones_guardadas: {
+    type: DataTypes.JSONB,
+    defaultValue: [],
+    allowNull: false,
+  },
+  metodo_pago_default: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+  },
+  notif_pedidos: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    allowNull: false,
+  },
+  notif_marketing: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    allowNull: false,
+  },
 }, {
   tableName: 'usuarios',
   timestamps: true,
