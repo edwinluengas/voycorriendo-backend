@@ -248,10 +248,30 @@ const eliminarTarjetaMP = async ({ usuario, mp_card_id }) => {
   );
 };
 
+// ─── Genera un token de un solo uso desde una tarjeta YA GUARDADA ──
+// IMPORTANTE: esto se hace del lado del BACKEND con el access token
+// (secreto), NO del lado de la app con la public key. Se probó en vivo
+// (2026-07-22) que MP responde "Customer not found" (código 2002) cuando
+// se intenta resolver un card_id de un customer desde la public key — esa
+// llamada necesita el contexto completo de la cuenta, que solo tiene el
+// access token. El CVV viaja de la app a este backend SOLO para esta
+// llamada puntual y nunca se guarda ni se loguea — se reenvía a MP y se
+// descarta, mismo estándar que cualquier procesador que soporte "pagar con
+// tarjeta guardada, solo pide el CVV".
+const generarTokenDesdeTarjetaGuardada = async ({ mp_card_id, security_code }) => {
+  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
+  const { data } = await axios.post(
+    `${MP_BASE_URL}/v1/card_tokens`,
+    { card_id: mp_card_id, security_code },
+    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+  );
+  return data.id;
+};
+
 // ─── Pago directo con tarjeta (Checkout API) ───────────────────
-// token: generado en la app con la public key, ya sea de una tarjeta nueva
-// (POST /v1/card_tokens con los datos capturados en el formulario) o de una
-// tarjeta guardada (POST /v1/card_tokens con {card_id, security_code}).
+// token: generado en la app con la public key (tarjeta NUEVA, capturada en
+// el formulario) o generado aquí mismo en el backend vía
+// generarTokenDesdeTarjetaGuardada (tarjeta guardada — ver nota arriba).
 const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
 
@@ -334,6 +354,7 @@ module.exports = {
   registrarTransferencia,
   guardarTarjetaMP,
   eliminarTarjetaMP,
+  generarTokenDesdeTarjetaGuardada,
   crearPagoConTarjeta,
   LIMITE_EFECTIVO,
 };

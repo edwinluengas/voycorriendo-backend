@@ -111,20 +111,21 @@ const webhookMercadoPago = async (req, res) => {
 
 // ─── POST /api/pagos/tarjeta ──────────────────────────────
 // Pago nativo con tarjeta dentro de la app (Checkout API), sin salir a
-// Mercado Pago. `token` viene de POST /v1/card_tokens tokenizado en el
-// cliente con la public key — el número/CVV nunca tocan este backend.
-// NOTA: `token` debe ser de UN SOLO USO válido para pago (MP invalida el
-// token tras usarlo). Si el cliente quiere guardar una tarjeta NUEVA, la app
-// debe guardarla primero (POST /api/tarjetas, que consume ese token) y luego
-// generar un token fresco desde la tarjeta ya guardada (card_id + cvv) para
-// pagar con ESTE endpoint — ver tokenizarTarjetaGuardada en la app. Por eso
-// aquí ya no existe un flag "guardar": guardar y pagar son dos pasos
-// separados en el cliente, nunca el mismo token para ambos.
+// Mercado Pago. Dos formas de mandar la tarjeta:
+//   a) `token` — tarjeta NUEVA, tokenizada en el cliente con la public key
+//      (el número/CVV nunca tocan este backend en este camino).
+//   b) `tarjeta_id` + `cvv` — tarjeta YA GUARDADA. El CVV viaja hasta aquí
+//      SOLO para este caso puntual (nunca se guarda ni se loguea) porque
+//      generar un token fresco desde un card_id guardado requiere el
+//      access token (secreto) — probado en vivo que la public key del
+//      lado del cliente responde "Customer not found" al intentarlo
+//      (2026-07-22). Ver generarTokenDesdeTarjetaGuardada.
+// NOTA: cualquier `token` es de UN SOLO USO (MP lo invalida tras usarlo).
 const pagarConTarjeta = async (req, res) => {
   let pedidoClaimed = null;
   try {
-    const { pedido_id, token, installments, payment_method_id, issuer_id, idempotency_key } = req.body;
-    if (!token || !payment_method_id) {
+    const { pedido_id, token: tokenNueva, tarjeta_id, cvv, installments, payment_method_id: pmIdNueva, issuer_id: issuerIdNueva, idempotency_key } = req.body;
+    if (!tokenNueva && !(tarjeta_id && cvv)) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan datos de la tarjeta.' });
     }
     const pedido = await Pedido.findByPk(pedido_id);
@@ -134,6 +135,24 @@ const pagarConTarjeta = async (req, res) => {
     }
     if (pedido.pago_estado === 'capturado') {
       return res.status(400).json({ ok: false, mensaje: 'Este pedido ya fue pagado.' });
+    }
+
+    // Resuelve token + payment_method_id + issuer_id según el camino.
+    let token = tokenNueva;
+    let payment_method_id = pmIdNueva;
+    let issuer_id = issuerIdNueva;
+    if (!token) {
+      const { TarjetaGuardada } = require('../models');
+      const tarjeta = await TarjetaGuardada.findByPk(tarjeta_id);
+      if (!tarjeta || tarjeta.usuario_id !== req.usuario.id) {
+        return res.status(404).json({ ok: false, mensaje: 'Tarjeta no encontrada.' });
+      }
+      token = await pagosService.generarTokenDesdeTarjetaGuardada({ mp_card_id: tarjeta.mp_card_id, security_code: cvv });
+      payment_method_id = tarjeta.payment_method_id;
+      issuer_id = tarjeta.issuer_id;
+    }
+    if (!payment_method_id) {
+      return res.status(400).json({ ok: false, mensaje: 'Faltan datos de la tarjeta.' });
     }
 
     // Claim atómico: evita que un doble-tap o reintento de red dispare dos
