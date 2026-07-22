@@ -1,5 +1,6 @@
-const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion } = require('../models');
+const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion, Liquidacion } = require('../models');
 const { Op, literal } = require('sequelize');
+const crypto = require('crypto');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
@@ -623,6 +624,17 @@ const gananciasNegocio = async (req, res) => {
     const plataformaDebeNegocio = ledgersSinConciliar.reduce(
       (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
     );
+    // De lo no conciliado: ya reservado en una liquidación pendiente de
+    // confirmar (retiro solicitado, esperando que un admin confirme el
+    // depósito real) vs. lo que sigue libre para pedir un retiro nuevo.
+    const ledgersEnProceso = ledgersSinConciliar.filter((l) => l.liquidacion_negocio_id);
+    const ledgersDisponibles = ledgersSinConciliar.filter((l) => !l.liquidacion_negocio_id);
+    const enProcesoPago = ledgersEnProceso.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+    );
+    const disponibleParaRetiro = ledgersDisponibles.reduce(
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+    );
 
     // ── Pagado vs generado ────────────────────────────────────
     // Efectivo: el negocio ya tiene el subtotal COMPLETO en mano (se lo dio
@@ -669,8 +681,12 @@ const gananciasNegocio = async (req, res) => {
         // Desglose
         subtotal_tarjeta:    subtotalTarjeta,
         subtotal_efectivo:   subtotalEfectivo,
-        // Plataforma debe al negocio (tarjeta pendiente de corte)
+        // Plataforma debe al negocio (tarjeta pendiente de corte, total)
         plataforma_debe:     Math.max(0, plataformaDebeNegocio),
+        // De lo anterior: reservado en un retiro ya solicitado, pendiente de
+        // que un admin confirme el depósito real, vs. libre para pedir otro.
+        en_proceso_pago:     Math.max(0, enProcesoPago),
+        disponible_retiro:   Math.max(0, disponibleParaRetiro),
         // Negocio debe a la plataforma (fees efectivo acumulados)
         deuda_plataforma:    deudaActual,
         bloqueado_por_deuda: negocio.bloqueado_por_deuda,
@@ -747,8 +763,11 @@ const retiroDiarioNegocio = async (req, res) => {
       attributes: ['id'],
     });
     const ids = pedidos.map((p) => p.id);
+    // Solo filas SIN reservar por otra liquidación aún pendiente — si ya
+    // están dentro de un retiro solicitado (aunque no confirmado todavía),
+    // no cuentan como "disponible" para pedir otro retiro encima.
     const ledgers = ids.length > 0
-      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false } })
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false, liquidacion_negocio_id: null } })
       : [];
 
     const disponible = Math.max(0, ledgers.reduce(
@@ -767,33 +786,57 @@ const retiroDiarioNegocio = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
     }
 
-    // Marcar conciliado_negocio de inmediato — el pago se procesa manualmente
-    // por SPEI. Re-chequea conciliado_negocio:false en el WHERE: si otra
-    // request ganó la carrera (doble-tap, reintento), este update no hace
-    // nada — no se duplica el pago. No toca conciliado_repartidor: es un
-    // pago independiente que el repartidor cobra por su propio camino.
-    const [marcados] = await LedgerConciliacion.update(
-      { conciliado_negocio: true, conciliado_negocio_en: new Date() },
-      { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_negocio: false } }
+    // Reserva atómica: "claim" de las filas del ledger dentro de esta
+    // liquidación (aún NO se marcan conciliado_negocio). Compara el conteo
+    // exacto contra lo intentado: si una request paralela ganó la carrera y
+    // alcanzó a reservar solo ALGUNAS de estas filas, se revierte esa
+    // reserva parcial huérfana en vez de dejarla inconsistente. No toca
+    // conciliado_repartidor ni liquidacion_repartidor_id: es un pago
+    // independiente que el repartidor cobra por su propio camino.
+    const liquidacionId = crypto.randomUUID();
+    const idsIntentados = ledgers.map((l) => l.id);
+    const [reservados] = await LedgerConciliacion.update(
+      { liquidacion_negocio_id: liquidacionId },
+      { where: { id: { [Op.in]: idsIntentados }, conciliado_negocio: false, liquidacion_negocio_id: null } }
     );
-    if (marcados === 0) {
-      return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un retiro para este saldo. Espera a que se procese.' });
+    if (reservados !== idsIntentados.length) {
+      if (reservados > 0) {
+        await LedgerConciliacion.update({ liquidacion_negocio_id: null }, { where: { liquidacion_negocio_id: liquidacionId } });
+      }
+      return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un retiro para parte de este saldo. Intenta de nuevo en unos segundos.' });
     }
+
+    // El pago real se hace manualmente por SPEI — la liquidación queda
+    // 'pendiente' hasta que un admin confirme el depósito real (monto y
+    // referencia) vía POST /api/admin/liquidaciones/:id/confirmar. Solo ahí
+    // se marca conciliado_negocio = true.
+    await Liquidacion.create({
+      id: liquidacionId,
+      entidad_tipo: 'negocio',
+      entidad_id: negocio.id,
+      tipo: 'retiro_diario',
+      estado: 'pendiente',
+      monto_calculado: neto,
+      pedidos_liquidados: ledgers.length,
+      ledger_ids: ledgers.map((l) => l.id),
+    });
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
       tg.enviar(adminChatId,
         `⚡ <b>Retiro diario solicitado (negocio)</b>\n` +
         `Negocio: ${negocio.nombre}\n` +
-        `ID: <code>${negocio.id}</code>\n` +
-        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO_NEGOCIO} | Neto: $${neto.toFixed(2)} MXN`
+        `ID negocio: <code>${negocio.id}</code>\n` +
+        `ID liquidación: <code>${liquidacionId}</code>\n` +
+        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO_NEGOCIO} | Neto: $${neto.toFixed(2)} MXN\n` +
+        `Confirma con POST /api/admin/liquidaciones/${liquidacionId}/confirmar`
       ).catch(() => {});
     }
 
     res.json({
       ok: true,
-      mensaje: `Retiro solicitado. Recibirás $${neto.toFixed(2)} MXN (se descontó el fee de $${FEE_RETIRO_DIARIO_NEGOCIO}).`,
-      data: { disponible, fee: FEE_RETIRO_DIARIO_NEGOCIO, neto },
+      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, fee de $${FEE_RETIRO_DIARIO_NEGOCIO} incluido). Pendiente de confirmación — lo recibirás por SPEI.`,
+      data: { liquidacion_id: liquidacionId, disponible, fee: FEE_RETIRO_DIARIO_NEGOCIO, neto },
     });
   } catch (error) {
     console.error('Error en retiroDiarioNegocio:', error);

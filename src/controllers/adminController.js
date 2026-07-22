@@ -7,9 +7,10 @@
  * Todas las rutas requieren middleware: proteger + restringirA('admin').
  */
 const { Op, fn, col, literal } = require('sequelize');
-const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion, FondoRepartidor } = require('../models');
+const { Usuario, Repartidor, Negocio, Pedido, PlatformRevenue, LedgerConciliacion, FondoRepartidor, Liquidacion } = require('../models');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
+const crypto = require('crypto');
 const { bloquearRepartidorPermanente, bloquearNegocioPermanente, liberarPlacaPropia, liberarDireccionPropia } = require('../services/seguridadCuentas.service');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
@@ -449,11 +450,19 @@ const confirmarPagoDeuda = async (req, res) => {
 };
 
 // ─── POST /api/admin/negocios/:id/liquidar-semanal ───────────
-// El admin marca como pagadas (corte del viernes) las ganancias de
-// tarjeta/MP de un negocio tras enviar la transferencia SPEI real.
+// El admin registra el corte del viernes DESPUÉS de haber enviado la
+// transferencia SPEI real — por eso exige monto_depositado y
+// referencia_spei en el body (no se asume que coincide con lo calculado).
+// Crea la Liquidacion ya 'confirmado' en el mismo paso: a diferencia del
+// retiro diario (que el negocio solicita y un admin confirma después), acá
+// el admin ya transfirió antes de llamar este endpoint.
 const liquidarSemanalNegocio = async (req, res) => {
   try {
     const { id } = req.params;
+    const { monto_depositado, referencia_spei } = req.body;
+    if (monto_depositado === undefined || monto_depositado === null || isNaN(parseFloat(monto_depositado))) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta monto_depositado (el monto real que se transfirió por SPEI).' });
+    }
     const negocio = await Negocio.findByPk(id);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
@@ -462,38 +471,135 @@ const liquidarSemanalNegocio = async (req, res) => {
       attributes: ['id'],
     });
     const ids = pedidos.map((p) => p.id);
+    // Solo filas libres — las ya reservadas por un retiro diario pendiente
+    // de confirmar no se incluyen en el corte semanal (se confirman aparte).
     const ledgers = ids.length > 0
-      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false } })
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false, liquidacion_negocio_id: null } })
       : [];
 
     const { COMISION_FLAT } = require('../config/precios');
-    const monto = Math.max(0, ledgers.reduce(
+    const montoCalculado = Math.max(0, ledgers.reduce(
       (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
     ));
+    const montoDepositado = parseFloat(monto_depositado);
+    const diferencia = montoDepositado - montoCalculado;
 
+    const liquidacionId = crypto.randomUUID();
     if (ledgers.length > 0) {
       // Solo marca el lado del negocio — el repartidor cobra su parte de
       // estos mismos pedidos por un camino independiente (conciliado_repartidor).
       await LedgerConciliacion.update(
-        { conciliado_negocio: true, conciliado_negocio_en: new Date() },
+        { conciliado_negocio: true, conciliado_negocio_en: new Date(), liquidacion_negocio_id: liquidacionId },
         { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_negocio: false } }
       );
     }
 
+    await Liquidacion.create({
+      id: liquidacionId,
+      entidad_tipo: 'negocio',
+      entidad_id: negocio.id,
+      tipo: 'corte_semanal',
+      estado: 'confirmado',
+      monto_calculado: montoCalculado,
+      monto_depositado: montoDepositado,
+      diferencia,
+      referencia_spei: referencia_spei || null,
+      pedidos_liquidados: ledgers.length,
+      ledger_ids: ledgers.map((l) => l.id),
+      admin_id: req.usuario.id,
+      confirmado_en: new Date(),
+    });
+
     logAdmin({
       adminId: req.usuario.id, accion: 'liquidar_semanal_negocio', entidadTipo: 'negocio',
-      entidadId: negocio.id, estadoAntes: { pendiente: monto },
-      estadoDespues: { conciliado_negocio: true }, ip: req.ip,
+      entidadId: negocio.id, estadoAntes: { pendiente: montoCalculado },
+      estadoDespues: { conciliado_negocio: true, monto_depositado: montoDepositado, diferencia }, ip: req.ip,
     });
 
     res.json({
       ok: true,
-      mensaje: `Corte semanal liquidado: $${monto.toFixed(2)} MXN marcado como pagado.`,
-      data: { negocio_id: id, monto_liquidado: monto, pedidos_conciliados: ledgers.length },
+      mensaje: Math.abs(diferencia) < 0.01
+        ? `Corte semanal liquidado: $${montoDepositado.toFixed(2)} MXN marcado como pagado.`
+        : `Corte semanal liquidado con diferencia de $${diferencia.toFixed(2)} MXN entre lo calculado ($${montoCalculado.toFixed(2)}) y lo depositado ($${montoDepositado.toFixed(2)}). Revisar.`,
+      data: { liquidacion_id: liquidacionId, negocio_id: id, monto_calculado: montoCalculado, monto_depositado: montoDepositado, diferencia, pedidos_conciliados: ledgers.length },
     });
   } catch (e) {
     console.error('Error liquidarSemanalNegocio:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al liquidar el corte semanal.' });
+  }
+};
+
+// ─── POST /api/admin/liquidaciones/:id/confirmar ──────────────
+// Confirma el depósito real de una Liquidacion 'pendiente' (creada por un
+// retiro diario de negocio o repartidor) con el monto que de verdad se
+// transfirió por SPEI. Solo AQUÍ se marca conciliado_negocio/repartidor en
+// las filas del ledger que cubre — hasta este punto la cuenta por pagar
+// sigue abierta (reservada, no cancelada). Si el monto depositado no
+// coincide con el calculado, igual se cierra (el dinero SÍ se mandó, cubre
+// esos pedidos) pero queda la diferencia registrada para revisión.
+const confirmarLiquidacion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { monto_depositado, referencia_spei } = req.body;
+    if (monto_depositado === undefined || monto_depositado === null || isNaN(parseFloat(monto_depositado))) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta monto_depositado (el monto real que se transfirió por SPEI).' });
+    }
+
+    const liquidacion = await Liquidacion.findByPk(id);
+    if (!liquidacion) return res.status(404).json({ ok: false, mensaje: 'Liquidación no encontrada.' });
+    if (liquidacion.estado === 'confirmado') {
+      return res.status(400).json({ ok: false, mensaje: 'Esta liquidación ya fue confirmada.' });
+    }
+
+    const montoDepositado = parseFloat(monto_depositado);
+    const diferencia = montoDepositado - parseFloat(liquidacion.monto_calculado);
+    const campoConciliado   = liquidacion.entidad_tipo === 'negocio' ? 'conciliado_negocio'    : 'conciliado_repartidor';
+    const campoConciliadoEn = liquidacion.entidad_tipo === 'negocio' ? 'conciliado_negocio_en'  : 'conciliado_repartidor_en';
+
+    await LedgerConciliacion.update(
+      { [campoConciliado]: true, [campoConciliadoEn]: new Date() },
+      { where: { id: { [Op.in]: liquidacion.ledger_ids }, [campoConciliado]: false } }
+    );
+
+    await liquidacion.update({
+      estado: 'confirmado',
+      monto_depositado: montoDepositado,
+      diferencia,
+      referencia_spei: referencia_spei || liquidacion.referencia_spei,
+      admin_id: req.usuario.id,
+      confirmado_en: new Date(),
+    });
+
+    // Repartidor: además de cerrar el ledger, liquida el fondo (retiro_pendiente,
+    // total histórico) — mismo efecto que el viejo confirmar-retiro, ahora
+    // atado a un registro de liquidación con monto real y referencia.
+    if (liquidacion.entidad_tipo === 'repartidor') {
+      const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: liquidacion.entidad_id } });
+      if (fondo) {
+        await fondo.update({
+          retiro_pendiente: false,
+          monto_pendiente_confirmar: 0,
+          total_pagado_historico: parseFloat(fondo.total_pagado_historico || 0) + montoDepositado,
+        });
+      }
+    }
+
+    logAdmin({
+      adminId: req.usuario.id, accion: 'confirmar_liquidacion', entidadTipo: liquidacion.entidad_tipo,
+      entidadId: liquidacion.entidad_id, estadoAntes: { estado: 'pendiente', monto_calculado: liquidacion.monto_calculado },
+      estadoDespues: { estado: 'confirmado', monto_depositado: montoDepositado, diferencia }, ip: req.ip,
+    });
+
+    res.json({
+      ok: true,
+      mensaje: Math.abs(diferencia) < 0.01
+        ? `Liquidación confirmada: $${montoDepositado.toFixed(2)} MXN.`
+        : `Liquidación confirmada con diferencia de $${diferencia.toFixed(2)} MXN entre lo calculado y lo depositado. Revisar.`,
+      data: { liquidacion },
+    });
+  } catch (e) {
+    console.error('Error confirmarLiquidacion:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al confirmar la liquidación.' });
   }
 };
 
@@ -532,17 +638,51 @@ const confirmarPagoPedido = async (req, res) => {
 // ─── POST /api/admin/repartidores/:id/confirmar-retiro ───────
 // El admin confirma que ya transfirió el retiro diario/semanal pendiente —
 // sin esto, retiro_pendiente=true se queda para siempre y el repartidor
-// jamás puede volver a pedir un retiro.
+// jamás puede volver a pedir un retiro. Body opcional: monto_depositado,
+// referencia_spei — si no se manda monto_depositado se asume que coincide
+// con lo calculado (compatibilidad con el flujo anterior).
+// Además de liquidar el fondo (efectivo/propinas), cierra la Liquidacion
+// 'pendiente' de la porción de tarjeta (si existe) — marca conciliado_repartidor
+// en el ledger y deja registro de lo calculado vs. lo realmente depositado.
+// solicitarDeposito/retiroDiario bloquean una segunda solicitud mientras
+// retiro_pendiente=true, así que en el caso normal hay a lo más UNA
+// Liquidacion pendiente por repartidor.
 const confirmarRetiroRepartidor = async (req, res) => {
   try {
     const { id } = req.params;
+    const { monto_depositado, referencia_spei } = req.body;
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: id } });
     if (!fondo) return res.status(404).json({ ok: false, mensaje: 'Repartidor sin fondo registrado.' });
     if (!fondo.retiro_pendiente) {
       return res.status(400).json({ ok: false, mensaje: 'Este repartidor no tiene ningún retiro pendiente.' });
     }
 
-    const montoConfirmado = parseFloat(fondo.monto_pendiente_confirmar || 0);
+    const montoConfirmado = (monto_depositado !== undefined && monto_depositado !== null && !isNaN(parseFloat(monto_depositado)))
+      ? parseFloat(monto_depositado)
+      : parseFloat(fondo.monto_pendiente_confirmar || 0);
+
+    // Este endpoint liquida el monto COMBINADO (efectivo/propinas + tarjeta)
+    // en un solo depósito, así que la porción de tarjeta de cada Liquidacion
+    // pendiente se cierra por lo calculado (no hay forma de separar la
+    // diferencia del combinado sin un desglose aparte) — para reconciliación
+    // centavo a centavo, usar POST /api/admin/liquidaciones/:id/confirmar
+    // directamente con el monto exacto de esa liquidación.
+    const pendientes = await Liquidacion.findAll({ where: { entidad_tipo: 'repartidor', entidad_id: id, estado: 'pendiente' } });
+    for (const liq of pendientes) {
+      await LedgerConciliacion.update(
+        { conciliado_repartidor: true, conciliado_repartidor_en: new Date() },
+        { where: { id: { [Op.in]: liq.ledger_ids }, conciliado_repartidor: false } }
+      );
+      await liq.update({
+        estado: 'confirmado',
+        monto_depositado: liq.monto_calculado,
+        diferencia: 0,
+        referencia_spei: referencia_spei || liq.referencia_spei,
+        admin_id: req.usuario.id,
+        confirmado_en: new Date(),
+      });
+    }
+
     await fondo.update({
       retiro_pendiente: false,
       monto_pendiente_confirmar: 0,
@@ -551,8 +691,8 @@ const confirmarRetiroRepartidor = async (req, res) => {
 
     logAdmin({
       adminId: req.usuario.id, accion: 'confirmar_retiro_repartidor', entidadTipo: 'repartidor',
-      entidadId: id, estadoAntes: { retiro_pendiente: true, monto: montoConfirmado },
-      estadoDespues: { retiro_pendiente: false }, ip: req.ip,
+      entidadId: id, estadoAntes: { retiro_pendiente: true, monto_calculado: fondo.monto_pendiente_confirmar },
+      estadoDespues: { retiro_pendiente: false, monto_depositado: montoConfirmado, referencia_spei: referencia_spei || null }, ip: req.ip,
     });
 
     res.json({ ok: true, mensaje: `Retiro de $${montoConfirmado.toFixed(2)} MXN marcado como transferido. El repartidor ya puede solicitar otro.` });
@@ -574,6 +714,40 @@ const listarBloqueosPermanentes = async (req, res) => {
   } catch (e) {
     console.error('Error listar bloqueos permanentes:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al listar bloqueos.' });
+  }
+};
+
+// ─── GET /api/admin/liquidaciones ──────────────────────────────
+// Query: estado=pendiente|confirmado (default: pendiente), entidad_tipo=negocio|repartidor
+const listarLiquidaciones = async (req, res) => {
+  try {
+    const { estado = 'pendiente', entidad_tipo } = req.query;
+    const where = {};
+    if (estado && estado !== 'todas') where.estado = estado;
+    if (entidad_tipo) where.entidad_tipo = entidad_tipo;
+
+    const liquidaciones = await Liquidacion.findAll({ where, order: [['creado_en', 'DESC']], limit: 100 });
+
+    // Adjunta el nombre de la entidad (negocio o repartidor) para que no
+    // haya que resolverlo aparte en el panel admin.
+    const negocioIds    = liquidaciones.filter(l => l.entidad_tipo === 'negocio').map(l => l.entidad_id);
+    const repartidorIds = liquidaciones.filter(l => l.entidad_tipo === 'repartidor').map(l => l.entidad_id);
+    const [negocios, repartidores] = await Promise.all([
+      negocioIds.length ? Negocio.findAll({ where: { id: { [Op.in]: negocioIds } }, attributes: ['id', 'nombre'] }) : [],
+      repartidorIds.length ? Repartidor.findAll({ where: { id: { [Op.in]: repartidorIds } }, include: [{ model: Usuario, as: 'usuario', attributes: ['nombre'] }] }) : [],
+    ]);
+    const nombreNegocio = Object.fromEntries(negocios.map(n => [n.id, n.nombre]));
+    const nombreRepartidor = Object.fromEntries(repartidores.map(r => [r.id, r.usuario?.nombre]));
+
+    const data = liquidaciones.map(l => ({
+      ...l.toJSON(),
+      entidad_nombre: l.entidad_tipo === 'negocio' ? nombreNegocio[l.entidad_id] : nombreRepartidor[l.entidad_id],
+    }));
+
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('Error listarLiquidaciones:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar liquidaciones.' });
   }
 };
 
@@ -616,6 +790,8 @@ module.exports = {
   liquidarSemanalNegocio,
   confirmarPagoPedido,
   confirmarRetiroRepartidor,
+  confirmarLiquidacion,
+  listarLiquidaciones,
   // Usuarios
   listarUsuarios,
   // Bloqueos permanentes

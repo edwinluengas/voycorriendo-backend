@@ -38,6 +38,10 @@ router.post  ('/negocios/:id/liquidar-semanal', ctrl.liquidarSemanalNegocio);
 // ─── Pedidos ──────────────────────────────────────────────────
 router.patch ('/pedidos/:id/confirmar-pago',   ctrl.confirmarPagoPedido);
 
+// ─── Liquidaciones (negocio y repartidor) ──────────────────────
+router.get   ('/liquidaciones',               ctrl.listarLiquidaciones);
+router.post  ('/liquidaciones/:id/confirmar', ctrl.confirmarLiquidacion);
+
 // ─── Usuarios (busqueda) ────────────────────────────────────
 router.get   ('/usuarios',                     ctrl.listarUsuarios);
 

@@ -23,6 +23,12 @@ const LedgerConciliacion = sequelize.define('LedgerConciliacion', {
   conciliado_negocio_en:   { type: DataTypes.DATE, allowNull: true },
   conciliado_repartidor:   { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   conciliado_repartidor_en: { type: DataTypes.DATE, allowNull: true },
+  // "Reserva" temporal: id de la Liquidacion pendiente que ya reclamó esta
+  // fila (evita que dos solicitudes de retiro simultáneas cobren el mismo
+  // pedido dos veces). Se limpia solo al confirmar o nunca se reintenta si
+  // queda huérfana — un admin puede liberar manualmente si hace falta.
+  liquidacion_negocio_id:    { type: DataTypes.UUID, allowNull: true },
+  liquidacion_repartidor_id: { type: DataTypes.UUID, allowNull: true },
 }, {
   tableName:  'ledger_conciliacion',
   timestamps: true,

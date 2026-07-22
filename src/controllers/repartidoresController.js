@@ -1,5 +1,6 @@
-const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor, LedgerConciliacion } = require('../models');
+const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor, LedgerConciliacion, Liquidacion } = require('../models');
 const { Op } = require('sequelize');
+const crypto = require('crypto');
 const { validationResult } = require('express-validator');
 const { subirImagen } = require('../services/storage.service');
 
@@ -731,11 +732,43 @@ const calcularPorDepositarRepartidor = async (repartidorId) => {
   const ids = entregados.map((p) => p.id);
   if (ids.length === 0) return { total: 0, ledgers: [] };
 
+  // Solo filas SIN reservar por otra liquidación aún pendiente de confirmar.
   const ledgers = await LedgerConciliacion.findAll({
-    where: { pedido_id: { [Op.in]: ids }, conciliado_repartidor: false },
+    where: { pedido_id: { [Op.in]: ids }, conciliado_repartidor: false, liquidacion_repartidor_id: null },
   });
   const total = ledgers.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
   return { total, ledgers };
+};
+
+// Reserva atómica de filas del ledger dentro de una nueva Liquidacion
+// 'pendiente' — compartida entre solicitarDeposito y retiroDiario. No marca
+// conciliado_repartidor: eso solo pasa cuando un admin confirma el depósito
+// real (POST /api/admin/liquidaciones/:id/confirmar o /confirmar-retiro).
+const reservarLedgersRepartidor = async ({ repartidorId, ledgers, montoCalculado, tipo }) => {
+  const liquidacionId = crypto.randomUUID();
+  const idsIntentados = ledgers.map((l) => l.id);
+  if (idsIntentados.length === 0) {
+    await Liquidacion.create({
+      id: liquidacionId, entidad_tipo: 'repartidor', entidad_id: repartidorId, tipo,
+      estado: 'pendiente', monto_calculado: montoCalculado, pedidos_liquidados: 0, ledger_ids: [],
+    });
+    return { ok: true, liquidacionId };
+  }
+  const [reservados] = await LedgerConciliacion.update(
+    { liquidacion_repartidor_id: liquidacionId },
+    { where: { id: { [Op.in]: idsIntentados }, conciliado_repartidor: false, liquidacion_repartidor_id: null } }
+  );
+  if (reservados !== idsIntentados.length) {
+    if (reservados > 0) {
+      await LedgerConciliacion.update({ liquidacion_repartidor_id: null }, { where: { liquidacion_repartidor_id: liquidacionId } });
+    }
+    return { ok: false };
+  }
+  await Liquidacion.create({
+    id: liquidacionId, entidad_tipo: 'repartidor', entidad_id: repartidorId, tipo,
+    estado: 'pendiente', monto_calculado: montoCalculado, pedidos_liquidados: ledgers.length, ledger_ids: idsIntentados,
+  });
+  return { ok: true, liquidacionId };
 };
 
 // ─── POST /api/repartidores/solicitar-deposito ────────────
@@ -768,19 +801,17 @@ const solicitarDeposito = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
     }
 
+    // Reserva atómica de la porción de tarjeta ANTES de comprometer el fondo
+    // — si la reserva falla por carrera (doble-tap), no se toca el fondo.
+    const reserva = await reservarLedgersRepartidor({
+      repartidorId: repartidor.id, ledgers, montoCalculado: montoTarjeta, tipo: 'corte_semanal',
+    });
+    if (!reserva.ok) {
+      return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un depósito para parte de este saldo. Intenta de nuevo en unos segundos.' });
+    }
+
     if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
     else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
-
-    let ledgersConciliados = 0;
-    if (ledgers.length > 0) {
-      // Re-chequea conciliado_repartidor:false en el WHERE del UPDATE — si
-      // otra request ganó la carrera y ya los marcó, este update no hace
-      // nada (no duplica). No toca conciliado_negocio: pago independiente.
-      [ledgersConciliados] = await LedgerConciliacion.update(
-        { conciliado_repartidor: true, conciliado_repartidor_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_repartidor: false } }
-      );
-    }
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
@@ -790,7 +821,8 @@ const solicitarDeposito = async (req, res) => {
         `Teléfono: ${repartidor.usuario?.telefono || 'N/A'}\n` +
         `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
         `Monto total: $${monto.toFixed(2)} MXN\n` +
-        `ID: ${repartidor.id}`
+        `ID repartidor: ${repartidor.id} | ID liquidación: ${reserva.liquidacionId}\n` +
+        `Confirma con POST /api/admin/repartidores/${repartidor.id}/confirmar-retiro`
       ).catch(() => {});
     }
     console.log(`[deposito] Solicitud de ${repartidor.usuario?.nombre} (${repartidor.id}) por $${monto}`);
@@ -839,17 +871,22 @@ const retiroDiario = async (req, res) => {
       });
     }
 
-    // Descontar el saldo, conciliar tarjeta y marcar retiro pendiente
-    // (monto_pendiente_confirmar = neto, lo que realmente recibirá el
-    // repartidor — el fee se lo queda la plataforma, no cuenta como "pagado")
+    // Reserva atómica de la porción de tarjeta ANTES de comprometer el fondo
+    // — si la reserva falla por carrera (doble-tap), no se toca el fondo.
+    // Solo se marca conciliado_repartidor cuando un admin confirme el
+    // depósito real (nunca al solo solicitarlo).
+    const reserva = await reservarLedgersRepartidor({
+      repartidorId: repartidor.id, ledgers, montoCalculado: neto, tipo: 'retiro_diario',
+    });
+    if (!reserva.ok) {
+      return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un retiro para parte de este saldo. Intenta de nuevo en unos segundos.' });
+    }
+
+    // Descontar el saldo y marcar retiro pendiente (monto_pendiente_confirmar
+    // = neto, lo que realmente recibirá el repartidor — el fee se lo queda
+    // la plataforma, no cuenta como "pagado")
     if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
     else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
-    if (ledgers.length > 0) {
-      await LedgerConciliacion.update(
-        { conciliado_repartidor: true, conciliado_repartidor_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_repartidor: false } }
-      );
-    }
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
     if (adminChatId) {
@@ -858,14 +895,15 @@ const retiroDiario = async (req, res) => {
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
         `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
         `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO} | Neto: $${neto.toFixed(2)} MXN\n` +
-        `ID: ${repartidor.id}`
+        `ID repartidor: ${repartidor.id} | ID liquidación: ${reserva.liquidacionId}\n` +
+        `Confirma con POST /api/admin/repartidores/${repartidor.id}/confirmar-retiro`
       ).catch(() => {});
     }
 
     res.json({
       ok: true,
-      mensaje: `Retiro solicitado. Recibirás $${neto.toFixed(2)} MXN (se descontó el fee de $${FEE_RETIRO_DIARIO}).`,
-      data: { disponible, fee: FEE_RETIRO_DIARIO, neto },
+      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, fee de $${FEE_RETIRO_DIARIO} incluido). Pendiente de confirmación — lo recibirás por SPEI.`,
+      data: { liquidacion_id: reserva.liquidacionId, disponible, fee: FEE_RETIRO_DIARIO, neto },
     });
   } catch (error) {
     console.error('Error retiroDiario:', error);

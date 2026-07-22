@@ -430,6 +430,36 @@ const migrarDB = async () => {
     END $$;
   `);
 
+  // Registro de liquidaciones (depósitos reales) a negocio y repartidor —
+  // separado del ledger para dejar constancia de cada pago: cuánto se debía
+  // (monto_calculado) vs cuánto se depositó de verdad (monto_depositado,
+  // confirmado por un admin con referencia SPEI). Queda 'pendiente' desde que
+  // se solicita/ejecuta el corte hasta que un admin confirma el depósito real.
+  await run(`CREATE TABLE IF NOT EXISTS liquidaciones (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entidad_tipo VARCHAR(20) NOT NULL CHECK (entidad_tipo IN ('negocio', 'repartidor')),
+    entidad_id UUID NOT NULL,
+    tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('retiro_diario', 'corte_semanal')),
+    estado VARCHAR(20) NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'confirmado')),
+    monto_calculado NUMERIC(10,2) NOT NULL,
+    monto_depositado NUMERIC(10,2),
+    diferencia NUMERIC(10,2),
+    referencia_spei VARCHAR(100),
+    pedidos_liquidados INTEGER NOT NULL DEFAULT 0,
+    ledger_ids JSONB NOT NULL DEFAULT '[]',
+    admin_id UUID,
+    confirmado_en TIMESTAMPTZ,
+    creado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_liquidaciones_entidad ON liquidaciones (entidad_tipo, entidad_id, estado)`);
+
+  // Reserva ledger rows dentro de una liquidación pendiente (evita que dos
+  // solicitudes simultáneas — negocio/repartidor pidiendo retiro dos veces
+  // seguidas — reclamen el mismo pedido dos veces antes de que un admin
+  // confirme el primero).
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS liquidacion_negocio_id UUID`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS liquidacion_repartidor_id UUID`);
+
   // Control de retiros pendientes — evita doble retiro del mismo saldo
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS retiro_pendiente BOOLEAN NOT NULL DEFAULT false`);
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS total_pagado_historico NUMERIC(10,2) NOT NULL DEFAULT 0`);
