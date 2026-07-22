@@ -678,7 +678,7 @@ const ganancias = async (req, res) => {
     let porDepositar = 0;
     if (idsEntregados.length > 0) {
       const ledgersPendientes = await LedgerConciliacion.findAll({
-        where: { pedido_id: { [Op.in]: idsEntregados }, conciliado: false },
+        where: { pedido_id: { [Op.in]: idsEntregados }, conciliado_repartidor: false },
         attributes: ['pago_repartidor'],
       });
       porDepositar = ledgersPendientes.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
@@ -732,7 +732,7 @@ const calcularPorDepositarRepartidor = async (repartidorId) => {
   if (ids.length === 0) return { total: 0, ledgers: [] };
 
   const ledgers = await LedgerConciliacion.findAll({
-    where: { pedido_id: { [Op.in]: ids }, conciliado: false },
+    where: { pedido_id: { [Op.in]: ids }, conciliado_repartidor: false },
   });
   const total = ledgers.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
   return { total, ledgers };
@@ -773,11 +773,12 @@ const solicitarDeposito = async (req, res) => {
 
     let ledgersConciliados = 0;
     if (ledgers.length > 0) {
-      // Re-chequea conciliado:false en el WHERE del UPDATE — si otra request
-      // ganó la carrera y ya los marcó, este update no hace nada (no duplica).
+      // Re-chequea conciliado_repartidor:false en el WHERE del UPDATE — si
+      // otra request ganó la carrera y ya los marcó, este update no hace
+      // nada (no duplica). No toca conciliado_negocio: pago independiente.
       [ledgersConciliados] = await LedgerConciliacion.update(
-        { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
+        { conciliado_repartidor: true, conciliado_repartidor_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_repartidor: false } }
       );
     }
 
@@ -845,8 +846,8 @@ const retiroDiario = async (req, res) => {
     else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
     if (ledgers.length > 0) {
       await LedgerConciliacion.update(
-        { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
+        { conciliado_repartidor: true, conciliado_repartidor_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_repartidor: false } }
       );
     }
 

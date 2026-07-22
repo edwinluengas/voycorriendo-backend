@@ -12,8 +12,17 @@ const LedgerConciliacion = sequelize.define('LedgerConciliacion', {
   tipo_envio:          { type: DataTypes.STRING(20), allowNull: false },
   liquidacion_comida:  { type: DataTypes.STRING(50), allowNull: true },
   distancia_km:        { type: DataTypes.DECIMAL(6, 2), allowNull: true },
-  conciliado:          { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-  conciliado_en:       { type: DataTypes.DATE, allowNull: true },
+  // Dos banderas INDEPENDIENTES: el corte al negocio (subtotal - $35) y el
+  // depósito al repartidor (pago_repartidor) se liquidan en momentos
+  // distintos y por caminos distintos (negocio: retiro diario o corte
+  // semanal admin; repartidor: retiro diario o depósito semanal). Antes
+  // compartían una sola columna `conciliado`, así que quien se pagara
+  // primero marcaba la fila como liquidada y el otro perdía su parte de
+  // ese pedido para siempre (nunca volvía a aparecer como pendiente).
+  conciliado_negocio:      { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  conciliado_negocio_en:   { type: DataTypes.DATE, allowNull: true },
+  conciliado_repartidor:   { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  conciliado_repartidor_en: { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName:  'ledger_conciliacion',
   timestamps: true,

@@ -407,9 +407,28 @@ const migrarDB = async () => {
   await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'standard' AND max_km != 5`);
   await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'express'  AND max_km != 5`);
   // Pedido mínimo actualizado a $150 (solo si la tabla config_zonas es la fuente — el check principal está en precios.js)
-  // Columna en ledger para identificar si el fee ya fue conciliado en el corte semanal
-  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado BOOLEAN NOT NULL DEFAULT false`);
-  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_en TIMESTAMPTZ`);
+  // Ledger: liquidación al negocio y al repartidor son pagos INDEPENDIENTES
+  // (montos y fechas distintas) — antes compartían una sola columna
+  // `conciliado`, así que el que se pagara primero (negocio o repartidor)
+  // marcaba la fila como liquidada y el otro perdía su parte de ese pedido
+  // para siempre. Se reemplaza por dos banderas separadas.
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_negocio BOOLEAN NOT NULL DEFAULT false`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_negocio_en TIMESTAMPTZ`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_repartidor BOOLEAN NOT NULL DEFAULT false`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS conciliado_repartidor_en TIMESTAMPTZ`);
+  // Migra el estado de la columna legacy (si alguna fila ya estaba marcada,
+  // se asume liquidada en ambos lados para no perder ni duplicar pagos) y la
+  // elimina — ya no se usa en ningún camino de código.
+  await run(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'ledger_conciliacion' AND column_name = 'conciliado') THEN
+        UPDATE ledger_conciliacion SET conciliado_negocio = true, conciliado_negocio_en = conciliado_en, conciliado_repartidor = true, conciliado_repartidor_en = conciliado_en WHERE conciliado = true;
+        ALTER TABLE ledger_conciliacion DROP COLUMN conciliado;
+        ALTER TABLE ledger_conciliacion DROP COLUMN conciliado_en;
+      END IF;
+    END $$;
+  `);
 
   // Control de retiros pendientes — evita doble retiro del mismo saldo
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS retiro_pendiente BOOLEAN NOT NULL DEFAULT false`);

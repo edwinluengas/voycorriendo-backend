@@ -463,7 +463,7 @@ const liquidarSemanalNegocio = async (req, res) => {
     });
     const ids = pedidos.map((p) => p.id);
     const ledgers = ids.length > 0
-      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado: false } })
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false } })
       : [];
 
     const { COMISION_FLAT } = require('../config/precios');
@@ -472,16 +472,18 @@ const liquidarSemanalNegocio = async (req, res) => {
     ));
 
     if (ledgers.length > 0) {
+      // Solo marca el lado del negocio — el repartidor cobra su parte de
+      // estos mismos pedidos por un camino independiente (conciliado_repartidor).
       await LedgerConciliacion.update(
-        { conciliado: true, conciliado_en: new Date() },
-        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
+        { conciliado_negocio: true, conciliado_negocio_en: new Date() },
+        { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_negocio: false } }
       );
     }
 
     logAdmin({
       adminId: req.usuario.id, accion: 'liquidar_semanal_negocio', entidadTipo: 'negocio',
       entidadId: negocio.id, estadoAntes: { pendiente: monto },
-      estadoDespues: { conciliado: true }, ip: req.ip,
+      estadoDespues: { conciliado_negocio: true }, ip: req.ip,
     });
 
     res.json({
@@ -712,21 +714,30 @@ async function revenueReport(req, res) {
     const negociosBloqueados     = negociosConDeuda.filter(n => n.bloqueado_por_deuda).length;
 
     // ── Por pagar el próximo viernes ─────────────────────────
-    // A restaurantes: suma de (subtotal - $35) de pedidos tarjeta no conciliados
-    // A repartidores: suma de pago_repartidor de pedidos tarjeta no conciliados
-    const [ledgerPendienteTarjeta] = await LedgerConciliacion.findAll({
-      where: { metodo_pago: { [Op.ne]: 'efectivo' }, conciliado: false },
+    // A restaurantes y a repartidores se les liquida por caminos
+    // independientes (conciliado_negocio vs conciliado_repartidor) — el set
+    // de pedidos pendientes de cada uno puede ser distinto, así que se
+    // consultan por separado.
+    const [ledgerPendienteNegocio] = await LedgerConciliacion.findAll({
+      where: { metodo_pago: { [Op.ne]: 'efectivo' }, conciliado_negocio: false },
       attributes: [
         [fn('SUM', col('subtotal_productos')),  'sum_subtotal'],
-        [fn('SUM', col('pago_repartidor')),     'sum_repartidor'],
         [fn('SUM', col('comision_plataforma')), 'sum_comision'],
         [fn('COUNT', col('id')),               'count'],
       ],
     });
-    const lp = ledgerPendienteTarjeta?.dataValues || {};
-    const porPagarRestaurantes  = Math.max(0, parseFloat(lp.sum_subtotal || 0) - parseFloat(lp.sum_comision || 0));
-    const porPagarRepartidores  = parseFloat(lp.sum_repartidor || 0);
-    const pedidosTarjetaPendientes = parseInt(lp.count || 0);
+    const [ledgerPendienteRepartidor] = await LedgerConciliacion.findAll({
+      where: { metodo_pago: { [Op.ne]: 'efectivo' }, conciliado_repartidor: false },
+      attributes: [
+        [fn('SUM', col('pago_repartidor')), 'sum_repartidor'],
+        [fn('COUNT', col('id')),           'count'],
+      ],
+    });
+    const lpn = ledgerPendienteNegocio?.dataValues || {};
+    const lpr = ledgerPendienteRepartidor?.dataValues || {};
+    const porPagarRestaurantes  = Math.max(0, parseFloat(lpn.sum_subtotal || 0) - parseFloat(lpn.sum_comision || 0));
+    const porPagarRepartidores  = parseFloat(lpr.sum_repartidor || 0);
+    const pedidosTarjetaPendientes = parseInt(lpn.count || 0);
 
     // ── Fees del período desde ledger (fuente de verdad) ─────
     const ledgerPeriodo = await LedgerConciliacion.findAll({

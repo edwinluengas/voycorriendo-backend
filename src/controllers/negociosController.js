@@ -618,8 +618,8 @@ const gananciasNegocio = async (req, res) => {
     const totalLiquidacion = subtotalEfectivo + Math.max(0, subtotalTarjeta - ledgersTarjeta.length * COMISION_FLAT);
 
     // ── Pendientes de corte del viernes (tarjeta no conciliada) ─
-    const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado);
-    const ledgersTarjetaConciliada = ledgersTarjeta.filter((l) => l.conciliado);
+    const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado_negocio);
+    const ledgersTarjetaConciliada = ledgersTarjeta.filter((l) => l.conciliado_negocio);
     const plataformaDebeNegocio = ledgersSinConciliar.reduce(
       (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
     );
@@ -748,7 +748,7 @@ const retiroDiarioNegocio = async (req, res) => {
     });
     const ids = pedidos.map((p) => p.id);
     const ledgers = ids.length > 0
-      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado: false } })
+      ? await LedgerConciliacion.findAll({ where: { pedido_id: { [Op.in]: ids }, conciliado_negocio: false } })
       : [];
 
     const disponible = Math.max(0, ledgers.reduce(
@@ -767,12 +767,14 @@ const retiroDiarioNegocio = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Tu negocio está bloqueado por deuda. Liquida tu saldo primero.' });
     }
 
-    // Marcar conciliado de inmediato — el pago se procesa manualmente por SPEI.
-    // Re-chequea conciliado:false en el WHERE: si otra request ganó la carrera
-    // (doble-tap, reintento), este update no hace nada — no se duplica el pago.
+    // Marcar conciliado_negocio de inmediato — el pago se procesa manualmente
+    // por SPEI. Re-chequea conciliado_negocio:false en el WHERE: si otra
+    // request ganó la carrera (doble-tap, reintento), este update no hace
+    // nada — no se duplica el pago. No toca conciliado_repartidor: es un
+    // pago independiente que el repartidor cobra por su propio camino.
     const [marcados] = await LedgerConciliacion.update(
-      { conciliado: true, conciliado_en: new Date() },
-      { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado: false } }
+      { conciliado_negocio: true, conciliado_negocio_en: new Date() },
+      { where: { id: { [Op.in]: ledgers.map((l) => l.id) }, conciliado_negocio: false } }
     );
     if (marcados === 0) {
       return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un retiro para este saldo. Espera a que se procese.' });
