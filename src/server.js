@@ -286,11 +286,20 @@ const migrarDB = async () => {
     surcharge_por_km NUMERIC(10,2),
     activo BOOLEAN NOT NULL DEFAULT true
   )`);
+  // Defensivo: esta tabla se creó alguna vez SIN este default (versión vieja
+  // del código, antes de que existiera "DEFAULT gen_random_uuid()" aquí) y
+  // como CREATE TABLE IF NOT EXISTS nunca la vuelve a tocar, el INSERT de
+  // abajo llevaba fallando en silencio desde entonces — la tabla quedó
+  // vacía y todo corrió sobre el fallback hardcodeado (ver hallazgo real
+  // del mismo bug en config_comisiones, 2026-07-22). Este ALTER se
+  // autorepara sin importar en qué estado esté la tabla.
+  await run(`ALTER TABLE config_zonas ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
   await run(`INSERT INTO config_zonas (tipo_envio, max_km, fee_base, surcharge_inicio_km, surcharge_por_km)
     VALUES
       ('standard', 5, 35, 3, 5),
       ('express',  4, 60, NULL, NULL)
-    ON CONFLICT (tipo_envio) DO NOTHING`);
+    ON CONFLICT (tipo_envio) DO UPDATE SET max_km = EXCLUDED.max_km, fee_base = EXCLUDED.fee_base,
+      surcharge_inicio_km = EXCLUDED.surcharge_inicio_km, surcharge_por_km = EXCLUDED.surcharge_por_km`);
 
   // Configuración de comisiones por método de pago y tipo de envío
   await run(`CREATE TABLE IF NOT EXISTS config_comisiones (
@@ -301,13 +310,21 @@ const migrarDB = async () => {
     pago_repartidor NUMERIC(10,2) NOT NULL,
     UNIQUE(metodo_pago, tipo_envio)
   )`);
+  // Defensivo — mismo motivo que config_zonas arriba. Este fue el bug REAL
+  // que causó que los repartidores cobraran $30 en vez de $35: el INSERT de
+  // abajo (y el UPDATE del modelo v1.2.17 más adelante) llevaban fallando en
+  // silencio desde siempre porque la tabla nunca tuvo el default de id, así
+  // que quedaba vacía y economia.service usaba el fallback viejo de
+  // config.service.getComision(). Corregido en producción + aquí para que
+  // se autorepare en cualquier entorno.
+  await run(`ALTER TABLE config_comisiones ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
   await run(`INSERT INTO config_comisiones (metodo_pago, tipo_envio, comision_plataforma, pago_repartidor)
     VALUES
-      ('digital',  'standard', 5,  30),
-      ('digital',  'express',  10, 50),
-      ('efectivo', 'standard', 5,  30),
-      ('efectivo', 'express',  10, 50)
-    ON CONFLICT (metodo_pago, tipo_envio) DO NOTHING`);
+      ('digital',  'standard', 35, 35),
+      ('digital',  'express',  35, 60),
+      ('efectivo', 'standard', 35, 35),
+      ('efectivo', 'express',  35, 60)
+    ON CONFLICT (metodo_pago, tipo_envio) DO UPDATE SET comision_plataforma = EXCLUDED.comision_plataforma, pago_repartidor = EXCLUDED.pago_repartidor`);
 
   // Tabla de promociones configurables
   await run(`CREATE TABLE IF NOT EXISTS promo_config (
@@ -318,6 +335,8 @@ const migrarDB = async () => {
     descripcion TEXT,
     updated_at TIMESTAMPTZ DEFAULT NOW()
   )`);
+  // Defensivo — mismo bug de default faltante que config_zonas/config_comisiones.
+  await run(`ALTER TABLE promo_config ALTER COLUMN updated_at SET DEFAULT NOW()`);
   await run(`INSERT INTO promo_config (clave, activo, fecha_inicio, descripcion)
     VALUES ('promo_efectivo_sin_comision', true, NOW(),
       'Pedidos en efectivo: repartidor recibe tarifa completa, sin comisión de plataforma')
