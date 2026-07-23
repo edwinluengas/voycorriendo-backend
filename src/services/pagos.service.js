@@ -272,12 +272,18 @@ const generarTokenDesdeTarjetaGuardada = async ({ mp_card_id, security_code }) =
 // token: generado en la app con la public key (tarjeta NUEVA, capturada en
 // el formulario) o generado aquí mismo en el backend vía
 // generarTokenDesdeTarjetaGuardada (tarjeta guardada — ver nota arriba).
-const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey }) => {
+const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey, mpCustomerId }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
 
   const cuotas = Number.isInteger(Number(installments)) && installments >= 1 && installments <= 24
     ? Number(installments) : 1;
 
+  // Cuando el token proviene de una tarjeta GUARDADA (Customers & Cards),
+  // MP exige que el pagador sea ese customer: payer {type:'customer', id}.
+  // Mandar payer {email} (formato de pago de invitado) con un token de
+  // tarjeta de customer hace que MP rechace con 2002 "Customer not found"
+  // — verificado en producción 2026-07-22: la tokenización desde card_id
+  // funcionaba y el cobro reventaba justo después.
   const payload = {
     transaction_amount: parseFloat(pedido.total),
     token,
@@ -285,9 +291,9 @@ const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payme
     installments: cuotas,
     payment_method_id,
     ...(issuer_id ? { issuer_id } : {}),
-    payer: {
-      email: cliente?.email || `usuario-${cliente.id}@voycorriendo.mx`,
-    },
+    payer: mpCustomerId
+      ? { type: 'customer', id: mpCustomerId }
+      : { email: cliente?.email || `usuario-${cliente.id}@voycorriendo.mx` },
     external_reference: pedido.numero,
     notification_url: `${API_PUBLIC_URL}/api/pagos/webhook/mercado-pago`,
     statement_descriptor: 'VOYCORRIENDO',

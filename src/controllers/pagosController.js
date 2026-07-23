@@ -141,6 +141,7 @@ const pagarConTarjeta = async (req, res) => {
     let token = tokenNueva;
     let payment_method_id = pmIdNueva;
     let issuer_id = issuerIdNueva;
+    let mpCustomerId = null; // solo se llena en el camino de tarjeta guardada
     if (!token) {
       const { TarjetaGuardada } = require('../models');
       const tarjeta = await TarjetaGuardada.findByPk(tarjeta_id);
@@ -150,6 +151,9 @@ const pagarConTarjeta = async (req, res) => {
       token = await pagosService.generarTokenDesdeTarjetaGuardada({ mp_card_id: tarjeta.mp_card_id, security_code: cvv });
       payment_method_id = tarjeta.payment_method_id;
       issuer_id = tarjeta.issuer_id;
+      // El dueño de la tarjeta es req.usuario (ownership ya verificado
+      // arriba) — su customer de MP es obligatorio como payer del cobro.
+      mpCustomerId = req.usuario.mp_customer_id;
     }
     if (!payment_method_id) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan datos de la tarjeta.' });
@@ -169,7 +173,7 @@ const pagarConTarjeta = async (req, res) => {
 
     const cliente = await Usuario.findByPk(pedido.cliente_id);
     const result = await pagosService.crearPagoConTarjeta({
-      pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey: idempotency_key,
+      pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey: idempotency_key, mpCustomerId,
     });
 
     if (!result.ok) {
