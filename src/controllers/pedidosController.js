@@ -184,7 +184,15 @@ const crearPedido = async (req, res) => {
       ? calcularFeeCliente({ tipoEnvio: tipo_envio })
       : tarifaResult.costo;
 
-    const total = subtotal + fee_cliente;
+    // Propina elegida en el CHECKOUT (solo pagos con tarjeta): se suma al
+    // total para que el cargo real a la tarjeta la incluya — antes se
+    // elegía al calificar y nunca se cobraba (la pagaba la plataforma).
+    // En efectivo se da en mano al entregar, no entra al total.
+    const propinaNum = Number(req.body.propina) || 0;
+    const propina = (metodo_pago !== 'efectivo' && Number.isFinite(propinaNum) && propinaNum > 0 && propinaNum <= 1000)
+      ? Math.round(propinaNum * 100) / 100 : 0;
+
+    const total = subtotal + fee_cliente + propina;
 
     // 6. Límite efectivo: productos ≤ $500 (el envío se suma encima)
     if (metodo_pago === 'efectivo' && subtotal > 500) {
@@ -204,6 +212,7 @@ const crearPedido = async (req, res) => {
         subtotal,
         costo_envio:      fee_cliente,
         total,
+        propina,
         distancia_km:     distanciaKm,
         metodo_pago,
         pago_estado:      'pendiente',
@@ -671,30 +680,19 @@ const calificarPedido = async (req, res) => {
     if (pedido.calificacion_negocio !== null || pedido.calificacion_repartidor !== null) {
       return res.status(400).json({ ok: false, mensaje: 'Ya calificaste este pedido.' });
     }
+    // Propina al calificar: SOLO para pedidos en EFECTIVO (se da en mano al
+    // entregar — aquí solo se registra para estadísticas, nunca toca el
+    // fondo). En tarjeta la propina se elige en el CHECKOUT, viaja dentro
+    // del cargo real a la tarjeta y se acredita al fondo del repartidor en
+    // procesarEntrega — aceptar otra aquí duplicaría o acreditaría dinero
+    // nunca cobrado (bug corregido 2026-07-23).
+    const propinaFinal = (pedido.metodo_pago === 'efectivo' && propinaNum > 0) ? propinaNum : parseFloat(pedido.propina || 0);
     await pedido.update({
       calificacion_repartidor: calificacion_repartidor || null,
       calificacion_negocio,
       comentario,
-      propina: propinaNum > 0 ? propinaNum : 0,
+      propina: propinaFinal,
     });
-
-    // Propina va al fondo RETIRABLE del repartidor — pero solo si el pedido
-    // fue pago en línea. En efectivo, el cliente ya se la dio en mano junto
-    // con el total del pedido; sumarla también al fondo retirable duplicaría
-    // el pago cuando el repartidor pida su retiro/depósito.
-    if (propinaNum > 0 && pedido.repartidor_id && pedido.metodo_pago !== 'efectivo') {
-      const [fondo] = await FondoRepartidor.findOrCreate({
-        where: { repartidor_id: pedido.repartidor_id },
-        defaults: { monto_disponible: 0, monto_reservado: 0 },
-      });
-      // Prorrateo de comisión MP sobre la propina (decisión del dueño
-      // 2026-07-23: la propina también paga su porción del fee). Solo el
-      // porcentaje — sin el cargo fijo de $4, que ya absorbe el cobro
-      // principal del pedido.
-      const { MP_FEE_PCT, IVA_PCT } = require('../config/precios');
-      const propinaNeta = Math.round(propinaNum * (1 - MP_FEE_PCT * (1 + IVA_PCT)) * 100) / 100;
-      await fondo.increment('monto_disponible', { by: propinaNeta });
-    }
 
     if (calificacion_negocio) {
       const negocio = await Negocio.findByPk(pedido.negocio_id);

@@ -29,9 +29,12 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
   // proporcional a su ingreso bruto dentro del cobro: negocio → subtotal,
   // repartidor → envío. (La propina se cobra en un cargo aparte y se
   // prorratea al acreditarse en calificarPedido.)
+  // La propina (elegida en checkout, cobrada dentro del cargo a la tarjeta)
+  // es ingreso del repartidor y entra al prorrateo como parte de su porción.
+  const propina = metodoPago !== 'efectivo' ? parseFloat(pedido.propina || 0) : 0;
   let feeMpNegocio = 0, feeMpRepartidor = 0;
   if (metodoPago !== 'efectivo') {
-    const montoCobrado = subtotal + feeCliente;
+    const montoCobrado = subtotal + feeCliente + propina;
     if (montoCobrado > 0) {
       const feeMP = (MP_FEE_PCT * montoCobrado + MP_FEE_FIJO) * (1 + IVA_PCT);
       feeMpNegocio    = Math.round(feeMP * (subtotal / montoCobrado) * 100) / 100;
@@ -59,6 +62,24 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
     await pedido.update({ pago_repartidor: pagoRepa });
   } catch (e) {
     console.warn('[economia] No se pudo actualizar pago_repartidor en pedido:', e.message);
+  }
+
+  // Propina de pago digital: YA se cobró al cliente dentro del cargo — se
+  // acredita al fondo retirable del repartidor al entregar (neta de su
+  // porción del fee de MP, que ya viene incluida en fee_mp_repartidor vía
+  // el prorrateo de arriba... la propina se acredita ÍNTEGRA aquí y su fee
+  // se descuenta junto con el del envío al liquidar el ledger).
+  if (propina > 0 && repartidor) {
+    try {
+      const { FondoRepartidor } = require('../models');
+      const [fondo] = await FondoRepartidor.findOrCreate({
+        where: { repartidor_id: repartidor.id },
+        defaults: { monto_disponible: 0, monto_reservado: 0 },
+      });
+      await fondo.increment('monto_disponible', { by: propina });
+    } catch (e) {
+      console.error('[economia] Error acreditando propina al fondo:', e.message);
+    }
   }
 
   // Compatibilidad platform_revenue
