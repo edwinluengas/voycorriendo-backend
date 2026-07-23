@@ -3,6 +3,24 @@ const { Op } = require('sequelize');
 const { Pedido, Usuario } = require('../models');
 const push = require('../services/notificaciones.service');
 const tg = require('../services/telegram.service');
+const pagosService = require('../services/pagos.service');
+
+// Reembolso automático al cliente cuando un pedido con cobro digital YA
+// capturado se cancela por timeout. Sin repartidor involucrado en estos dos
+// caminos (pendiente/listo sin asignar) — no genera saldo por cobrar.
+async function reembolsarSiAplica(pedido, motivo) {
+  if (!['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago) || pedido.pago_estado !== 'capturado') return;
+  try {
+    const r = await pagosService.reembolsarPagoMP(pedido);
+    if (r.ok) {
+      console.log(`[PedidoTimeout] ${pedido.numero} — $${pedido.total} reembolsados automáticamente (${motivo}).`);
+      tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) — se reembolsaron $${pedido.total} al cliente automáticamente.`).catch(() => {});
+    }
+  } catch (e) {
+    console.error(`[PedidoTimeout] FALLO reembolso de ${pedido.numero}:`, e.response?.data || e.message);
+    tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
+  }
+}
 
 const TIMEOUT_MIN = parseInt(process.env.PEDIDO_TIMEOUT_MIN || '15');
 // Si el negocio nunca confirma/rechaza (no vio la notificación, está
@@ -30,6 +48,7 @@ async function cancelarPedidosExpirados() {
       estado: 'cancelado',
       nota_cancelacion: `Sin repartidor disponible tras ${TIMEOUT_MIN} minutos.`,
     });
+    await reembolsarSiAplica(pedido, 'sin repartidor');
 
     try {
       const cliente = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });
@@ -50,18 +69,11 @@ async function cancelarPedidosPendientesSinRespuesta() {
   });
 
   for (const pedido of pedidos) {
-    const notaPago = pedido.metodo_pago !== 'efectivo' && pedido.pago_estado === 'capturado'
-      ? ' — pago ya capturado, requiere reembolso manual.'
-      : '';
     await pedido.update({
       estado: 'cancelado',
-      nota_cancelacion: `El negocio no respondió en ${PENDIENTE_TIMEOUT_MIN} minutos.${notaPago}`,
+      nota_cancelacion: `El negocio no respondió en ${PENDIENTE_TIMEOUT_MIN} minutos.`,
     });
-
-    if (notaPago) {
-      console.warn(`[PedidoTimeout] ${pedido.numero} cancelado con pago ya capturado — revisar reembolso manual.`);
-      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> cancelado por timeout con pago ya capturado — requiere reembolso manual.`).catch(() => {});
-    }
+    await reembolsarSiAplica(pedido, 'negocio sin responder');
 
     try {
       const cliente = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });

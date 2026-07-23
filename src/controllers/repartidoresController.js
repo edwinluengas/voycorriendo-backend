@@ -708,6 +708,9 @@ const ganancias = async (req, res) => {
         fondo_efectivo:      parseFloat(fondo?.monto_disponible || 0),
         por_depositar:       porDepositar,
         retiro_pendiente:    !!fondo?.retiro_pendiente,
+        // Deuda con la plataforma por pedidos asignados no entregados que
+        // hubo que reembolsar — se descuenta de los próximos retiros.
+        saldo_por_cobrar:    parseFloat(fondo?.saldo_por_cobrar || 0),
         pedidos_recientes:   entregados.slice(0, 30),
         // Reputación — baja permanente automática si promedio < 3★ en 6+ pedidos
         calificacion_promedio: parseFloat(repartidor.calificacion_promedio || 0),
@@ -795,10 +798,23 @@ const solicitarDeposito = async (req, res) => {
 
     const montoFondo = parseFloat(fondo?.monto_disponible || 0);
     const { total: montoTarjeta, ledgers } = await calcularPorDepositarRepartidor(repartidor.id);
-    const monto = montoFondo + montoTarjeta;
+    const bruto = montoFondo + montoTarjeta;
+
+    if (bruto <= 0) {
+      return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
+    }
+
+    // Neteo del saldo por cobrar (pedidos asignados no entregados que se
+    // reembolsaron al cliente): se descuenta ANTES de pagar.
+    const saldoPorCobrar = parseFloat(fondo?.saldo_por_cobrar || 0);
+    const recuperado = Math.min(bruto, saldoPorCobrar);
+    const monto = bruto - recuperado;
 
     if (monto <= 0) {
-      return res.status(400).json({ ok: false, mensaje: 'No tienes saldo disponible para solicitar depósito.' });
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Tu saldo por cobrar con la plataforma ($${saldoPorCobrar.toFixed(2)}) es mayor o igual a tus ganancias disponibles ($${bruto.toFixed(2)}). Se seguirá descontando de tus próximas entregas.`,
+      });
     }
 
     // Reserva atómica de la porción de tarjeta ANTES de comprometer el fondo
@@ -810,7 +826,7 @@ const solicitarDeposito = async (req, res) => {
       return res.status(409).json({ ok: false, mensaje: 'Ya se solicitó un depósito para parte de este saldo. Intenta de nuevo en unos segundos.' });
     }
 
-    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto, saldo_por_cobrar: saldoPorCobrar - recuperado });
     else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: monto });
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -820,6 +836,7 @@ const solicitarDeposito = async (req, res) => {
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
         `Teléfono: ${repartidor.usuario?.telefono || 'N/A'}\n` +
         `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
+        (recuperado > 0 ? `Recuperado de saldo por cobrar: -$${recuperado.toFixed(2)} (resta $${(saldoPorCobrar - recuperado).toFixed(2)})\n` : '') +
         `Monto total: $${monto.toFixed(2)} MXN\n` +
         `ID repartidor: ${repartidor.id} | ID liquidación: ${reserva.liquidacionId}\n` +
         `Confirma con POST /api/admin/repartidores/${repartidor.id}/confirmar-retiro`
@@ -854,13 +871,19 @@ const retiroDiario = async (req, res) => {
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
     const montoFondo = parseFloat(fondo?.monto_disponible || 0);
     const { total: montoTarjeta, ledgers } = await calcularPorDepositarRepartidor(repartidor.id);
-    const disponible = montoFondo + montoTarjeta;
+    // Neteo del saldo por cobrar (pedidos asignados no entregados que se
+    // reembolsaron al cliente) ANTES del fee.
+    const saldoPorCobrar = parseFloat(fondo?.saldo_por_cobrar || 0);
+    const recuperado = Math.min(montoFondo + montoTarjeta, saldoPorCobrar);
+    const disponible = montoFondo + montoTarjeta - recuperado;
     const neto       = disponible - FEE_RETIRO_DIARIO;
 
     if (neto <= 0) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Necesitas al menos $${FEE_RETIRO_DIARIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
+        mensaje: recuperado > 0
+          ? `Tras descontar tu saldo por cobrar ($${saldoPorCobrar.toFixed(2)}) no te queda saldo suficiente para el retiro. Se seguirá descontando de tus próximas entregas.`
+          : `Necesitas al menos $${FEE_RETIRO_DIARIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
       });
     }
 
@@ -885,7 +908,7 @@ const retiroDiario = async (req, res) => {
     // Descontar el saldo y marcar retiro pendiente (monto_pendiente_confirmar
     // = neto, lo que realmente recibirá el repartidor — el fee se lo queda
     // la plataforma, no cuenta como "pagado")
-    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
+    if (fondo) await fondo.update({ monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto, saldo_por_cobrar: saldoPorCobrar - recuperado });
     else await FondoRepartidor.create({ repartidor_id: repartidor.id, monto_disponible: 0, retiro_pendiente: true, monto_pendiente_confirmar: neto });
 
     const adminChatId = process.env.TELEGRAM_ADMIN_CHAT_ID;
@@ -894,6 +917,7 @@ const retiroDiario = async (req, res) => {
         `⚡ <b>Retiro diario solicitado</b>\n` +
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
         `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
+        (recuperado > 0 ? `Recuperado de saldo por cobrar: -$${recuperado.toFixed(2)} (resta $${(saldoPorCobrar - recuperado).toFixed(2)})\n` : '') +
         `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO} | Neto: $${neto.toFixed(2)} MXN\n` +
         `ID repartidor: ${repartidor.id} | ID liquidación: ${reserva.liquidacionId}\n` +
         `Confirma con POST /api/admin/repartidores/${repartidor.id}/confirmar-retiro`

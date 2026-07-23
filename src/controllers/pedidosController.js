@@ -6,6 +6,7 @@ const { calcularDistanciaKm } = require('../utils/distancia');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
+const pagosService = require('../services/pagos.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
@@ -520,6 +521,34 @@ const actualizarEstado = async (req, res) => {
     Object.assign(pedido, camposActualizar);
 
     const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
+
+    // Al cancelar/rechazar un pedido cuyo cobro digital YA se capturó:
+    // reembolso automático al cliente vía la Refunds API de MP. Si además
+    // había repartidor asignado (tomó el pedido y no lo entregó), el monto
+    // reembolsado se le carga como saldo por cobrar — se netea contra sus
+    // ganancias en sus próximos retiros (solicitarDeposito/retiroDiario).
+    if (['cancelado', 'rechazado'].includes(estado)
+        && ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago)
+        && pedido.pago_estado === 'capturado') {
+      try {
+        const reembolso = await pagosService.reembolsarPagoMP(pedido);
+        if (reembolso.ok) {
+          console.log(`[reembolso] ${pedido.numero} ${estado} — $${pedido.total} reembolsados al cliente.`);
+          tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${pedido.total} al cliente automáticamente.`).catch(() => {});
+          if (pedido.repartidor_id) {
+            const [fondo] = await FondoRepartidor.findOrCreate({
+              where: { repartidor_id: pedido.repartidor_id },
+              defaults: {},
+            });
+            await fondo.increment('saldo_por_cobrar', { by: parseFloat(pedido.total) });
+            tg.enviarAdmin(`📒 $${pedido.total} cargados como saldo por cobrar al repartidor del pedido <b>${pedido.numero}</b> (asignado y no entregado) — se neteará contra sus próximos retiros.`).catch(() => {});
+          }
+        }
+      } catch (e) {
+        console.error(`[reembolso] FALLO en ${pedido.numero}:`, e.response?.data || e.message);
+        tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
+      }
+    }
 
     // Al entregar: economía
     if (estado === 'entregado') {

@@ -464,6 +464,7 @@ const migrarDB = async () => {
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS retiro_pendiente BOOLEAN NOT NULL DEFAULT false`);
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS total_pagado_historico NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS monto_pendiente_confirmar NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS saldo_por_cobrar NUMERIC(10,2) NOT NULL DEFAULT 0`);
 
   // Perfil de usuario: direcciones guardadas, método de pago default, prefs notificaciones
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS direcciones_guardadas JSONB NOT NULL DEFAULT '[]'`);

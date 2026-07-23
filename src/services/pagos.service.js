@@ -320,6 +320,32 @@ const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payme
   return aplicarResultadoPago(pedido, pago);
 };
 
+// ─── Reembolso TOTAL de un cobro con tarjeta capturado ─────────
+// Para pedidos cobrados que se cancelan/rechazan SIN entregarse: regresa el
+// dinero al cliente vía la Refunds API de MP. Solo aplica a pagos de MP
+// (tarjeta / mercado_pago) con pago_estado='capturado' y pago_referencia
+// (el payment id real de MP). La transferencia SPEI se reembolsa manual —
+// no pasa por MP. Idempotente: clave estable por pedido, y MP rechaza un
+// segundo reembolso total del mismo pago de todos modos.
+const reembolsarPagoMP = async (pedido) => {
+  if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
+  const esPagoMP = ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago);
+  if (!esPagoMP || pedido.pago_estado !== 'capturado' || !pedido.pago_referencia) {
+    return { ok: false, mensaje: 'Este pedido no tiene un cobro de Mercado Pago reembolsable.' };
+  }
+  const { data } = await axios.post(
+    `${MP_BASE_URL}/v1/payments/${pedido.pago_referencia}/refunds`,
+    {},
+    { headers: {
+        Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
+        'X-Idempotency-Key': `reembolso-${pedido.id}`,
+      } }
+  );
+  pedido.pago_estado = 'reembolsado';
+  await pedido.save();
+  return { ok: true, refund_id: data?.id || null };
+};
+
 // ─── Registrar pago en efectivo (al entregar) ─────────────────
 const registrarPagoEfectivo = async ({ pedido, monto_recibido }) => {
   if (pedido.metodo_pago !== 'efectivo') {
@@ -362,5 +388,6 @@ module.exports = {
   eliminarTarjetaMP,
   generarTokenDesdeTarjetaGuardada,
   crearPagoConTarjeta,
+  reembolsarPagoMP,
   LIMITE_EFECTIVO,
 };

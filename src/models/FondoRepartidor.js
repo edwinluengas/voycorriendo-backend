@@ -14,6 +14,10 @@ const FondoRepartidor = sequelize.define('FondoRepartidor', {
   // retiro_pendiente jamás se persistía de verdad: el candado anti
   // doble-retiro (solicitarDeposito/retiroDiario) nunca funcionó.
   retiro_pendiente: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  // Deuda del repartidor con la plataforma: se carga cuando un pedido que él
+  // tenía asignado se cancela sin entregarse y hubo que reembolsar al cliente.
+  // Se netea contra sus ganancias en solicitarDeposito/retiroDiario.
+  saldo_por_cobrar: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
 }, {
   tableName:  'fondo_repartidor',
   timestamps: true,
