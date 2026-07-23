@@ -689,6 +689,10 @@ const ganancias = async (req, res) => {
     // Pagado = efectivo (ya en mano) + lo que un admin ya confirmó transferido
     // (retiros/depósitos ya procesados vía confirmar-retiro).
     const ingresoPagado = gananciaEfectivo + parseFloat(fondo?.total_pagado_historico || 0);
+    // Deuda con la plataforma (pedido asignado no entregado que se reembolsó
+    // al cliente): "por pagar" la NETEA y puede quedar negativo — el
+    // repartidor debe más de lo que tiene pendiente de cobro.
+    const saldoPorCobrar = parseFloat(fondo?.saldo_por_cobrar || 0);
 
     const pedidosCalificados = await Pedido.count({
       where: { repartidor_id: repartidor.id, calificacion_repartidor: { [Op.not]: null } },
@@ -704,7 +708,7 @@ const ganancias = async (req, res) => {
         total_ganado:        ingresoGenerado,
         ingreso_generado:    ingresoGenerado,
         ingreso_pagado:      ingresoPagado,
-        ingreso_por_pagar:   Math.max(0, ingresoGenerado - ingresoPagado),
+        ingreso_por_pagar:   Math.max(0, ingresoGenerado - ingresoPagado) - saldoPorCobrar,
         fondo_efectivo:      parseFloat(fondo?.monto_disponible || 0),
         por_depositar:       porDepositar,
         retiro_pendiente:    !!fondo?.retiro_pendiente,
