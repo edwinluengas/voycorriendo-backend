@@ -198,6 +198,38 @@ const rechazarRepartidor = async (req, res) => {
   }
 };
 
+// ─── PATCH /api/admin/usuarios/:id/estado ─────────────────
+// Suspende o reactiva una cuenta de USUARIO (clientes incluidos). El
+// middleware `proteger` ya rechaza con 403 cualquier request de un usuario
+// 'suspendido' — este endpoint era la pieza que faltaba para poder aplicarlo
+// sin tocar la DB a mano (gap detectado en auditoría 2026-07-23: negocios y
+// repartidores tenían estado_cuenta administrable, los clientes no).
+const cambiarEstadoUsuario = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { estado, motivo } = req.body;
+    const validos = ['activo', 'suspendido'];
+    if (!validos.includes(estado)) {
+      return res.status(400).json({ ok: false, mensaje: "Estado invalido: usa 'activo' o 'suspendido'." });
+    }
+    const u = await Usuario.findByPk(id);
+    if (!u) return res.status(404).json({ ok: false, mensaje: 'Usuario no encontrado.' });
+    if (u.rol === 'admin' || u.modo_activo === 'admin') {
+      return res.status(403).json({ ok: false, mensaje: 'No se puede suspender una cuenta admin por esta vía.' });
+    }
+    const estadoAntes = { estado: u.estado };
+    u.estado = estado;
+    // Revocar sesiones activas al suspender: el JWT vigente muere al instante.
+    if (estado === 'suspendido') u.token_version = (u.token_version || 0) + 1;
+    await u.save();
+    logAdmin({ adminId: req.usuario.id, accion: 'cambiar_estado_usuario', entidadTipo: 'usuario', entidadId: u.id, estadoAntes, estadoDespues: { estado, motivo }, ip: req.ip });
+    res.json({ ok: true, data: { usuario: { id: u.id, estado: u.estado } } });
+  } catch (e) {
+    console.error('Error cambiar estado usuario:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al cambiar estado.' });
+  }
+};
+
 // ─── PATCH /api/admin/repartidores/:id/cuenta ─────────────
 // Cambia estado_cuenta: normal | observacion | probation | suspendido | bloqueado
 const cambiarEstadoCuentaRepartidor = async (req, res) => {
@@ -774,6 +806,8 @@ const eliminarBloqueoPermanente = async (req, res) => {
 
 module.exports = {
   dashboard,
+  // Usuarios (clientes incluidos)
+  cambiarEstadoUsuario,
   // Repartidores
   listarRepartidores,
   obtenerRepartidor,

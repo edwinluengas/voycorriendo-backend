@@ -24,6 +24,7 @@ router.get   ('/repartidores/:id',             ctrl.obtenerRepartidor);
 router.patch ('/repartidores/:id/aprobar',     ctrl.aprobarRepartidor);
 router.patch ('/repartidores/:id/rechazar',    ctrl.rechazarRepartidor);
 router.patch ('/repartidores/:id/cuenta',      ctrl.cambiarEstadoCuentaRepartidor);
+router.patch ('/usuarios/:id/estado',          ctrl.cambiarEstadoUsuario);
 router.post  ('/repartidores/:id/confirmar-retiro', ctrl.confirmarRetiroRepartidor);
 
 // ─── Negocios ───────────────────────────────────────────────
