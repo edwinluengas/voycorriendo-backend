@@ -57,6 +57,25 @@ const CALIFICACION_MIN_PROMEDIO    = num('CALIFICACION_MIN_PROMEDIO',    3);
 // permanente (que es irreversible salvo revisión de admin).
 const CLIENTES_DISTINTOS_MIN_PARA_BAJA = num('CLIENTES_DISTINTOS_MIN_PARA_BAJA', 4);
 
+// ─── 4b. Modelo de liquidación cuenta concentradora (2026-07-23) ──
+// Comisión real de Mercado Pago (verificada contra pago real en producción:
+// $185 → $12.13 exacto con liberación inmediata) + IVA. Se prorratea entre
+// las partes según su ingreso bruto en la transacción.
+const MP_FEE_PCT  = num('MP_FEE_PCT',  0.0349);
+const MP_FEE_FIJO = num('MP_FEE_FIJO', 4.00);
+const IVA_PCT     = num('IVA_PCT',     0.16);
+// Pedidos perdidos: default 50% restaurante / 50% plataforma. Si un admin
+// determina pérdida INTENCIONAL del repartidor: 60% repartidor / 40%
+// plataforma / 0% restaurante.
+const PCT_PERDIDA_RESTAURANTE     = num('PCT_PERDIDA_RESTAURANTE', 0.50);
+const PCT_PERDIDA_REP_INTENCIONAL = num('PCT_PERDIDA_REP_INTENCIONAL', 0.60);
+// Bloqueo permanente del repartidor (cuenta + vehículo) al superar este
+// número de pedidos perdidos activos (es decir, al 3ro con default 2).
+const LIMITE_PEDIDOS_PERDIDOS = num('LIMITE_PEDIDOS_PERDIDOS', 2);
+// Pago diario anticipado: 5% de descuento sobre el saldo pendiente (ambos
+// roles). Reemplaza el fee fijo de $10 anterior.
+const PCT_DESCUENTO_PAGO_DIARIO = num('PCT_DESCUENTO_PAGO_DIARIO', 0.05);
+
 // ─── 5. Bonos al repartidor (fase 2) ────────────────────────
 const BONOS = {
   METAS_10: num('BONUS_METAS_10', 50),
@@ -84,6 +103,13 @@ module.exports = {
   AVISO_PEDIDOS_DEUDA,
   FEE_RETIRO_DIARIO,
   FEE_RETIRO_DIARIO_NEGOCIO,
+  MP_FEE_PCT,
+  MP_FEE_FIJO,
+  IVA_PCT,
+  PCT_PERDIDA_RESTAURANTE,
+  PCT_PERDIDA_REP_INTENCIONAL,
+  LIMITE_PEDIDOS_PERDIDOS,
+  PCT_DESCUENTO_PAGO_DIARIO,
   CALIFICACIONES_MIN_PARA_BAJA,
   CALIFICACION_MIN_PROMEDIO,
   CLIENTES_DISTINTOS_MIN_PARA_BAJA,

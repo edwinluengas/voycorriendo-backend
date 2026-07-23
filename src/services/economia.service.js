@@ -1,7 +1,7 @@
 const PlatformRevenue    = require('../models/PlatformRevenue');
 const LedgerConciliacion = require('../models/LedgerConciliacion');
 const { getComision }    = require('./config.service');
-const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA, AVISO_PEDIDOS_DEUDA } = require('../config/precios');
+const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA, AVISO_PEDIDOS_DEUDA, MP_FEE_PCT, MP_FEE_FIJO, IVA_PCT } = require('../config/precios');
 const tg = require('./telegram.service');
 
 // ─── Procesar entrega ─────────────────────────────────────
@@ -23,6 +23,22 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
   // Modo de liquidación de comida
   const liquidacion = metodoPago === 'efectivo' ? 'efectivo_repartidor' : 'mp_directo';
 
+  // ── Prorrateo de la comisión de MP + IVA (solo pagos digitales) ──
+  // feeMP = (3.49% × total + $4.00) × 1.16 — verificada contra un pago real
+  // en producción ($185 → $12.13 exacto). Cada parte absorbe la porción
+  // proporcional a su ingreso bruto dentro del cobro: negocio → subtotal,
+  // repartidor → envío. (La propina se cobra en un cargo aparte y se
+  // prorratea al acreditarse en calificarPedido.)
+  let feeMpNegocio = 0, feeMpRepartidor = 0;
+  if (metodoPago !== 'efectivo') {
+    const montoCobrado = subtotal + feeCliente;
+    if (montoCobrado > 0) {
+      const feeMP = (MP_FEE_PCT * montoCobrado + MP_FEE_FIJO) * (1 + IVA_PCT);
+      feeMpNegocio    = Math.round(feeMP * (subtotal / montoCobrado) * 100) / 100;
+      feeMpRepartidor = Math.round((feeMP - feeMpNegocio) * 100) / 100;
+    }
+  }
+
   // Ledger de conciliación
   await LedgerConciliacion.upsert({
     pedido_id:           pedido.id,
@@ -30,6 +46,8 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
     subtotal_productos:  subtotal,
     pago_repartidor:     pagoRepa,
     comision_plataforma: netPlat,
+    fee_mp_negocio:      feeMpNegocio,
+    fee_mp_repartidor:   feeMpRepartidor,
     metodo_pago:         metodoPago,
     tipo_envio:          tipoEnvio,
     liquidacion_comida:  liquidacion,

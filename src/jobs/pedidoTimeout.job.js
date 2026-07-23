@@ -49,6 +49,14 @@ async function cancelarPedidosExpirados() {
       nota_cancelacion: `Sin repartidor disponible tras ${TIMEOUT_MIN} minutos.`,
     });
     await reembolsarSiAplica(pedido, 'sin repartidor');
+    // La comida ya estaba lista — es un pedido PERDIDO (50% restaurante /
+    // 50% plataforma, sin repartidor involucrado).
+    try {
+      const { registrarPerdida } = require('../services/perdidas.service');
+      await registrarPerdida({ pedido, nota: 'Cancelado en "listo" sin repartidor disponible.' });
+    } catch (e) {
+      console.error(`[PedidoTimeout] FALLO registrando pérdida de ${pedido.numero}:`, e.message);
+    }
 
     try {
       const cliente = await Usuario.findByPk(pedido.cliente_id, { attributes: ['token_push'] });

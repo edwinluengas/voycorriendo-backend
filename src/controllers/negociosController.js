@@ -616,13 +616,16 @@ const gananciasNegocio = async (req, res) => {
     const subtotalEfectivo = ledgersEfectivo.reduce((s, l) => s + parseFloat(l.subtotal_productos || 0), 0);
 
     const totalComisiones  = ledgers.length * COMISION_FLAT;
-    const totalLiquidacion = subtotalEfectivo + Math.max(0, subtotalTarjeta - ledgersTarjeta.length * COMISION_FLAT);
+    // El fee de MP prorrateado a la porción del negocio también se descuenta
+    // de su liquidación (modelo cuenta concentradora 2026-07-23).
+    const feeMpTarjeta = ledgersTarjeta.reduce((s, l) => s + parseFloat(l.fee_mp_negocio || 0), 0);
+    const totalLiquidacion = subtotalEfectivo + Math.max(0, subtotalTarjeta - ledgersTarjeta.length * COMISION_FLAT - feeMpTarjeta);
 
     // ── Pendientes de corte del viernes (tarjeta no conciliada) ─
     const ledgersSinConciliar = ledgersTarjeta.filter((l) => !l.conciliado_negocio);
     const ledgersTarjetaConciliada = ledgersTarjeta.filter((l) => l.conciliado_negocio);
     const plataformaDebeNegocio = ledgersSinConciliar.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT - parseFloat(l.fee_mp_negocio || 0), 0
     );
     // De lo no conciliado: ya reservado en una liquidación pendiente de
     // confirmar (retiro solicitado, esperando que un admin confirme el
@@ -630,10 +633,10 @@ const gananciasNegocio = async (req, res) => {
     const ledgersEnProceso = ledgersSinConciliar.filter((l) => l.liquidacion_negocio_id);
     const ledgersDisponibles = ledgersSinConciliar.filter((l) => !l.liquidacion_negocio_id);
     const enProcesoPago = ledgersEnProceso.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT - parseFloat(l.fee_mp_negocio || 0), 0
     );
     const disponibleParaRetiro = ledgersDisponibles.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT - parseFloat(l.fee_mp_negocio || 0), 0
     );
 
     // ── Pagado vs generado ────────────────────────────────────
@@ -646,7 +649,7 @@ const gananciasNegocio = async (req, res) => {
     // la plataforma retiene el dinero hasta liquidar.
     const liquidacionEfectivo = subtotalEfectivo;
     const liquidacionTarjetaPagada = ledgersTarjetaConciliada.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT - parseFloat(l.fee_mp_negocio || 0), 0
     );
     const ingresoPagado = liquidacionEfectivo + liquidacionTarjetaPagada;
 
@@ -753,7 +756,7 @@ const registrarPagoDeuda = async (req, res) => {
 // con fee (el corte semanal del viernes es gratis).
 const retiroDiarioNegocio = async (req, res) => {
   try {
-    const { FEE_RETIRO_DIARIO_NEGOCIO } = require('../config/precios');
+    const { PCT_DESCUENTO_PAGO_DIARIO } = require('../config/precios');
 
     const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
@@ -771,14 +774,17 @@ const retiroDiarioNegocio = async (req, res) => {
       : [];
 
     const disponible = Math.max(0, ledgers.reduce(
-      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT, 0
+      (s, l) => s + parseFloat(l.subtotal_productos || 0) - COMISION_FLAT - parseFloat(l.fee_mp_negocio || 0), 0
     ));
-    const neto = disponible - FEE_RETIRO_DIARIO_NEGOCIO;
+    // Pago diario anticipado: 5% de descuento sobre el saldo pendiente
+    // (modelo 2026-07-23 — reemplaza el fee fijo de $10). Viernes gratis.
+    const feeDiario = Math.round(disponible * PCT_DESCUENTO_PAGO_DIARIO * 100) / 100;
+    const neto = Math.round((disponible - feeDiario) * 100) / 100;
 
     if (neto <= 0) {
       return res.status(400).json({
         ok: false,
-        mensaje: `Necesitas al menos $${FEE_RETIRO_DIARIO_NEGOCIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
+        mensaje: `No tienes saldo disponible para el pago diario. Tienes $${disponible.toFixed(2)} MXN.`,
       });
     }
 
@@ -828,15 +834,15 @@ const retiroDiarioNegocio = async (req, res) => {
         `Negocio: ${negocio.nombre}\n` +
         `ID negocio: <code>${negocio.id}</code>\n` +
         `ID liquidación: <code>${liquidacionId}</code>\n` +
-        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO_NEGOCIO} | Neto: $${neto.toFixed(2)} MXN\n` +
+        `Disponible: $${disponible.toFixed(2)} | Descuento 5%: $${feeDiario.toFixed(2)} | Neto: $${neto.toFixed(2)} MXN\n` +
         `Confirma con POST /api/admin/liquidaciones/${liquidacionId}/confirmar`
       ).catch(() => {});
     }
 
     res.json({
       ok: true,
-      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, fee de $${FEE_RETIRO_DIARIO_NEGOCIO} incluido). Pendiente de confirmación — lo recibirás por SPEI.`,
-      data: { liquidacion_id: liquidacionId, disponible, fee: FEE_RETIRO_DIARIO_NEGOCIO, neto },
+      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, con 5% de descuento por pago diario). Pendiente de confirmación — lo recibirás por SPEI.`,
+      data: { liquidacion_id: liquidacionId, disponible, fee: feeDiario, neto },
     });
   } catch (error) {
     console.error('Error en retiroDiarioNegocio:', error);

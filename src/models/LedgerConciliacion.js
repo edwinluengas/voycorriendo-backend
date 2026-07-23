@@ -8,6 +8,10 @@ const LedgerConciliacion = sequelize.define('LedgerConciliacion', {
   subtotal_productos:  { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   pago_repartidor:     { type: DataTypes.DECIMAL(10, 2), allowNull: false },
   comision_plataforma: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
+  // Prorrateo de la comisión de MP + IVA de la transacción (solo pagos
+  // digitales): cada parte absorbe la porción proporcional a su ingreso.
+  fee_mp_negocio:      { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  fee_mp_repartidor:   { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   metodo_pago:         { type: DataTypes.STRING(50), allowNull: false },
   tipo_envio:          { type: DataTypes.STRING(20), allowNull: false },
   liquidacion_comida:  { type: DataTypes.STRING(50), allowNull: true },

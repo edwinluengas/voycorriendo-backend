@@ -523,10 +523,7 @@ const actualizarEstado = async (req, res) => {
     const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 
     // Al cancelar/rechazar un pedido cuyo cobro digital YA se capturó:
-    // reembolso automático al cliente vía la Refunds API de MP. Si además
-    // había repartidor asignado (tomó el pedido y no lo entregó), el monto
-    // reembolsado se le carga como saldo por cobrar — se netea contra sus
-    // ganancias en sus próximos retiros (solicitarDeposito/retiroDiario).
+    // reembolso automático al cliente vía la Refunds API de MP.
     if (['cancelado', 'rechazado'].includes(estado)
         && ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago)
         && pedido.pago_estado === 'capturado') {
@@ -535,18 +532,28 @@ const actualizarEstado = async (req, res) => {
         if (reembolso.ok) {
           console.log(`[reembolso] ${pedido.numero} ${estado} — $${pedido.total} reembolsados al cliente.`);
           tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${pedido.total} al cliente automáticamente.`).catch(() => {});
-          if (pedido.repartidor_id) {
-            const [fondo] = await FondoRepartidor.findOrCreate({
-              where: { repartidor_id: pedido.repartidor_id },
-              defaults: {},
-            });
-            await fondo.increment('saldo_por_cobrar', { by: parseFloat(pedido.total) });
-            tg.enviarAdmin(`📒 $${pedido.total} cargados como saldo por cobrar al repartidor del pedido <b>${pedido.numero}</b> (asignado y no entregado) — se neteará contra sus próximos retiros.`).catch(() => {});
-          }
         }
       } catch (e) {
         console.error(`[reembolso] FALLO en ${pedido.numero}:`, e.response?.data || e.message);
         tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
+      }
+    }
+
+    // Pedido PERDIDO (modelo cuenta concentradora 2026-07-23): si al
+    // cancelarse/rechazarse la comida ya estaba en producción o en la calle
+    // (preparando/listo/en_camino), se registra la pérdida y sus cargos:
+    // 50% restaurante / 50% plataforma por default; un admin puede
+    // reclasificarla a intencional (60% al repartidor) o eliminarla si una
+    // aclaración procede. También alimenta el bloqueo permanente del
+    // repartidor al 3er pedido perdido.
+    if (['cancelado', 'rechazado'].includes(estado)
+        && ['preparando', 'listo', 'en_camino'].includes(estadoPrevio)) {
+      try {
+        const { registrarPerdida } = require('../services/perdidas.service');
+        await registrarPerdida({ pedido, nota: `Cancelado desde "${estadoPrevio}" por ${rolEfectivo}.` });
+      } catch (e) {
+        console.error(`[perdidas] FALLO registrando pérdida de ${pedido.numero}:`, e.message);
+        tg.enviarAdmin(`⚠️ No se pudo registrar la pérdida del pedido <b>${pedido.numero}</b> — revisar manual.`).catch(() => {});
       }
     }
 
@@ -680,7 +687,13 @@ const calificarPedido = async (req, res) => {
         where: { repartidor_id: pedido.repartidor_id },
         defaults: { monto_disponible: 0, monto_reservado: 0 },
       });
-      await fondo.increment('monto_disponible', { by: propinaNum });
+      // Prorrateo de comisión MP sobre la propina (decisión del dueño
+      // 2026-07-23: la propina también paga su porción del fee). Solo el
+      // porcentaje — sin el cargo fijo de $4, que ya absorbe el cobro
+      // principal del pedido.
+      const { MP_FEE_PCT, IVA_PCT } = require('../config/precios');
+      const propinaNeta = Math.round(propinaNum * (1 - MP_FEE_PCT * (1 + IVA_PCT)) * 100) / 100;
+      await fondo.increment('monto_disponible', { by: propinaNeta });
     }
 
     if (calificacion_negocio) {

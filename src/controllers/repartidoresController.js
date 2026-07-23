@@ -680,9 +680,11 @@ const ganancias = async (req, res) => {
     if (idsEntregados.length > 0) {
       const ledgersPendientes = await LedgerConciliacion.findAll({
         where: { pedido_id: { [Op.in]: idsEntregados }, conciliado_repartidor: false },
-        attributes: ['pago_repartidor'],
+        attributes: ['pago_repartidor', 'fee_mp_repartidor'],
       });
-      porDepositar = ledgersPendientes.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
+      // El fee de MP prorrateado a la porción del repartidor se descuenta
+      // de lo que la plataforma le va a depositar.
+      porDepositar = ledgersPendientes.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0) - parseFloat(l.fee_mp_repartidor || 0), 0);
     }
 
     const ingresoGenerado = totalEnvios + totalPropinas;
@@ -743,7 +745,9 @@ const calcularPorDepositarRepartidor = async (repartidorId) => {
   const ledgers = await LedgerConciliacion.findAll({
     where: { pedido_id: { [Op.in]: ids }, conciliado_repartidor: false, liquidacion_repartidor_id: null },
   });
-  const total = ledgers.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0), 0);
+  // Neto de la porción del repartidor: su pago menos su parte prorrateada
+  // de la comisión de MP de cada transacción.
+  const total = ledgers.reduce((s, l) => s + parseFloat(l.pago_repartidor || 0) - parseFloat(l.fee_mp_repartidor || 0), 0);
   return { total, ledgers };
 };
 
@@ -864,7 +868,7 @@ const solicitarDeposito = async (req, res) => {
 // Incluye fondo de efectivo/propinas MÁS ganancias de tarjeta no conciliadas.
 const retiroDiario = async (req, res) => {
   try {
-    const { FEE_RETIRO_DIARIO } = require('../config/precios');
+    const { PCT_DESCUENTO_PAGO_DIARIO } = require('../config/precios');
 
     const repartidor = await Repartidor.findOne({
       where: { usuario_id: req.usuario.id },
@@ -880,14 +884,17 @@ const retiroDiario = async (req, res) => {
     const saldoPorCobrar = parseFloat(fondo?.saldo_por_cobrar || 0);
     const recuperado = Math.min(montoFondo + montoTarjeta, saldoPorCobrar);
     const disponible = montoFondo + montoTarjeta - recuperado;
-    const neto       = disponible - FEE_RETIRO_DIARIO;
+    // Pago diario anticipado: 5% de descuento sobre el saldo pendiente
+    // (modelo 2026-07-23 — reemplaza el fee fijo de $10). Viernes gratis.
+    const feeDiario = Math.round(disponible * PCT_DESCUENTO_PAGO_DIARIO * 100) / 100;
+    const neto      = Math.round((disponible - feeDiario) * 100) / 100;
 
     if (neto <= 0) {
       return res.status(400).json({
         ok: false,
         mensaje: recuperado > 0
           ? `Tras descontar tu saldo por cobrar ($${saldoPorCobrar.toFixed(2)}) no te queda saldo suficiente para el retiro. Se seguirá descontando de tus próximas entregas.`
-          : `Necesitas al menos $${FEE_RETIRO_DIARIO + 1} disponibles. Tienes $${disponible.toFixed(2)} MXN.`,
+          : `No tienes saldo disponible para el retiro diario. Tienes $${disponible.toFixed(2)} MXN.`,
       });
     }
 
@@ -922,7 +929,7 @@ const retiroDiario = async (req, res) => {
         `Repartidor: ${repartidor.usuario?.nombre}\n` +
         `Efectivo/propinas: $${montoFondo.toFixed(2)} | Tarjeta: $${montoTarjeta.toFixed(2)}\n` +
         (recuperado > 0 ? `Recuperado de saldo por cobrar: -$${recuperado.toFixed(2)} (resta $${(saldoPorCobrar - recuperado).toFixed(2)})\n` : '') +
-        `Disponible: $${disponible.toFixed(2)} | Fee: $${FEE_RETIRO_DIARIO} | Neto: $${neto.toFixed(2)} MXN\n` +
+        `Disponible: $${disponible.toFixed(2)} | Descuento 5%: $${feeDiario.toFixed(2)} | Neto: $${neto.toFixed(2)} MXN\n` +
         `ID repartidor: ${repartidor.id} | ID liquidación: ${reserva.liquidacionId}\n` +
         `Confirma con POST /api/admin/repartidores/${repartidor.id}/confirmar-retiro`
       ).catch(() => {});
@@ -930,8 +937,8 @@ const retiroDiario = async (req, res) => {
 
     res.json({
       ok: true,
-      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, fee de $${FEE_RETIRO_DIARIO} incluido). Pendiente de confirmación — lo recibirás por SPEI.`,
-      data: { liquidacion_id: reserva.liquidacionId, disponible, fee: FEE_RETIRO_DIARIO, neto },
+      mensaje: `Retiro solicitado ($${neto.toFixed(2)} MXN, con 5% de descuento por pago diario). Pendiente de confirmación — lo recibirás por SPEI.`,
+      data: { liquidacion_id: reserva.liquidacionId, disponible, fee: feeDiario, neto },
     });
   } catch (error) {
     console.error('Error retiroDiario:', error);

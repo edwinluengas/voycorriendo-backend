@@ -25,6 +25,9 @@ router.patch ('/repartidores/:id/aprobar',     ctrl.aprobarRepartidor);
 router.patch ('/repartidores/:id/rechazar',    ctrl.rechazarRepartidor);
 router.patch ('/repartidores/:id/cuenta',      ctrl.cambiarEstadoCuentaRepartidor);
 router.patch ('/usuarios/:id/estado',          ctrl.cambiarEstadoUsuario);
+router.get   ('/perdidas',                     ctrl.listarPerdidas);
+router.patch ('/perdidas/:id',                 ctrl.reclasificarPerdidaAdmin);
+router.delete('/perdidas/:id',                 ctrl.eliminarPerdidaAdmin);
 router.post  ('/repartidores/:id/confirmar-retiro', ctrl.confirmarRetiroRepartidor);
 
 // ─── Negocios ───────────────────────────────────────────────

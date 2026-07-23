@@ -12,6 +12,7 @@ const PromoConfig      = require('./PromoConfig');
 const LedgerConciliacion = require('./LedgerConciliacion');
 const FondoRepartidor  = require('./FondoRepartidor');
 const TarjetaGuardada  = require('./TarjetaGuardada');
+const PerdidaPedido    = require('./PerdidaPedido');
 const BloqueoPermanente = require('./PlacaBloqueada');
 const Liquidacion      = require('./Liquidacion');
 
@@ -69,5 +70,5 @@ module.exports = {
   DeliveryBatch, DriverPayment, PlatformRevenue,
   ConfigZona, ConfigComision,
   PromoConfig, LedgerConciliacion, FondoRepartidor,
-  TarjetaGuardada, BloqueoPermanente, Liquidacion,
+  TarjetaGuardada, BloqueoPermanente, Liquidacion, PerdidaPedido,
 };

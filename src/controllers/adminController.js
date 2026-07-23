@@ -198,6 +198,68 @@ const rechazarRepartidor = async (req, res) => {
   }
 };
 
+// ─── Pedidos perdidos: aclaraciones y reclasificación ─────
+// GET /api/admin/perdidas — lista (activas primero)
+const listarPerdidas = async (req, res) => {
+  try {
+    const { PerdidaPedido, Pedido } = require('../models');
+    const perdidas = await PerdidaPedido.findAll({ order: [['creado_en', 'DESC']], limit: 100 });
+    const pedidos = await Pedido.findAll({
+      where: { id: perdidas.map((p) => p.pedido_id) },
+      attributes: ['id', 'numero'],
+    });
+    const numeroPor = Object.fromEntries(pedidos.map((p) => [p.id, p.numero]));
+    res.json({ ok: true, data: { perdidas: perdidas.map((p) => ({ ...p.toJSON(), pedido_numero: numeroPor[p.pedido_id] || null })) } });
+  } catch (e) {
+    console.error('Error listar perdidas:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al listar pérdidas.' });
+  }
+};
+
+// PATCH /api/admin/perdidas/:id — body {tipo: 'normal'|'intencional', motivo}
+// La determinación de "intencional" es SIEMPRE manual de un admin (decisión
+// del dueño 2026-07-23) — revierte los cargos anteriores y aplica los nuevos.
+const reclasificarPerdidaAdmin = async (req, res) => {
+  try {
+    const { PerdidaPedido } = require('../models');
+    const { reclasificarPerdida } = require('../services/perdidas.service');
+    const { tipo, motivo } = req.body;
+    if (!['normal', 'intencional'].includes(tipo)) {
+      return res.status(400).json({ ok: false, mensaje: "Tipo inválido: usa 'normal' o 'intencional'." });
+    }
+    const perdida = await PerdidaPedido.findByPk(req.params.id);
+    if (!perdida) return res.status(404).json({ ok: false, mensaje: 'Pérdida no encontrada.' });
+    const estadoAntes = { tipo: perdida.tipo, cargos: [perdida.cargo_restaurante, perdida.cargo_repartidor, perdida.cargo_plataforma] };
+    await reclasificarPerdida(perdida, tipo);
+    if (motivo) await perdida.update({ nota: motivo });
+    logAdmin({ adminId: req.usuario.id, accion: 'reclasificar_perdida', entidadTipo: 'perdida_pedido', entidadId: perdida.id, estadoAntes, estadoDespues: { tipo, motivo }, ip: req.ip });
+    res.json({ ok: true, data: { perdida } });
+  } catch (e) {
+    console.error('Error reclasificar perdida:', e);
+    res.status(400).json({ ok: false, mensaje: e.message || 'Error al reclasificar.' });
+  }
+};
+
+// DELETE /api/admin/perdidas/:id — aclaración válida: revierte los cargos y
+// los balances de negocio/repartidor quedan recalculados al instante (los
+// cargos solo existen a través de la fila de perdidas_pedido).
+const eliminarPerdidaAdmin = async (req, res) => {
+  try {
+    const { PerdidaPedido } = require('../models');
+    const { eliminarPerdida } = require('../services/perdidas.service');
+    const perdida = await PerdidaPedido.findByPk(req.params.id);
+    if (!perdida) return res.status(404).json({ ok: false, mensaje: 'Pérdida no encontrada.' });
+    if (perdida.estado === 'eliminada') return res.json({ ok: true, data: { perdida }, mensaje: 'Ya estaba eliminada.' });
+    const estadoAntes = perdida.toJSON();
+    await eliminarPerdida(perdida, req.body?.motivo || 'Aclaración válida (admin).');
+    logAdmin({ adminId: req.usuario.id, accion: 'eliminar_perdida', entidadTipo: 'perdida_pedido', entidadId: perdida.id, estadoAntes, estadoDespues: { estado: 'eliminada' }, ip: req.ip });
+    res.json({ ok: true, mensaje: 'Pérdida eliminada — cargos revertidos y balances recalculados.', data: { perdida } });
+  } catch (e) {
+    console.error('Error eliminar perdida:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al eliminar la pérdida.' });
+  }
+};
+
 // ─── PATCH /api/admin/usuarios/:id/estado ─────────────────
 // Suspende o reactiva una cuenta de USUARIO (clientes incluidos). El
 // middleware `proteger` ya rechaza con 403 cualquier request de un usuario
@@ -808,6 +870,10 @@ module.exports = {
   dashboard,
   // Usuarios (clientes incluidos)
   cambiarEstadoUsuario,
+  // Pérdidas de pedidos
+  listarPerdidas,
+  reclasificarPerdidaAdmin,
+  eliminarPerdidaAdmin,
   // Repartidores
   listarRepartidores,
   obtenerRepartidor,

@@ -466,6 +466,26 @@ const migrarDB = async () => {
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS monto_pendiente_confirmar NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE fondo_repartidor ADD COLUMN IF NOT EXISTS saldo_por_cobrar NUMERIC(10,2) NOT NULL DEFAULT 0`);
 
+  // Modelo de liquidación cuenta concentradora (2026-07-23)
+  await run(`CREATE TABLE IF NOT EXISTS perdidas_pedido (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pedido_id UUID NOT NULL UNIQUE,
+    negocio_id UUID,
+    repartidor_id UUID,
+    monto NUMERIC(10,2) NOT NULL,
+    tipo VARCHAR(15) NOT NULL DEFAULT 'normal',
+    estado VARCHAR(15) NOT NULL DEFAULT 'activa',
+    cargo_restaurante NUMERIC(10,2) NOT NULL DEFAULT 0,
+    cargo_repartidor NUMERIC(10,2) NOT NULL DEFAULT 0,
+    cargo_plataforma NUMERIC(10,2) NOT NULL DEFAULT 0,
+    nota TEXT,
+    creado_en TIMESTAMPTZ DEFAULT NOW(),
+    actualizado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  // Prorrateo de la comisión de Mercado Pago + IVA por transacción
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_negocio NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_repartidor NUMERIC(10,2) NOT NULL DEFAULT 0`);
+
   // Perfil de usuario: direcciones guardadas, método de pago default, prefs notificaciones
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS direcciones_guardadas JSONB NOT NULL DEFAULT '[]'`);
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS metodo_pago_default VARCHAR(30) DEFAULT NULL`);
