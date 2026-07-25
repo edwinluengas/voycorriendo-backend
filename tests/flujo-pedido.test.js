@@ -321,7 +321,11 @@ describe('Flujo completo feliz: efectivo, pendiente → entregado', () => {
 
 describe('Rutas de ruta (batch) del repartidor', () => {
   let pedidoDonBeto, pedidoSaborAMi;
-  const SABOR_A_MI = { id: '04660a1d-b26b-46ff-b03f-0b2215ab3d46' };
+  // Fixture de pruebas PERMANENTE y dedicada (usuario 0000000005 + su propio
+  // negocio) — antes este test dependía de un negocio real de un usuario de
+  // prueba personal (5545074460), y se rompió cuando ese perfil se reseteó
+  // (2026-07-25). Ahora es independiente de cualquier cuenta real.
+  const SEGUNDO_NEGOCIO = { id: '33333333-0000-0000-0000-000000000002' };
 
   afterAll(async () => {
     for (const id of [pedidoDonBeto, pedidoSaborAMi]) {
@@ -349,7 +353,7 @@ describe('Rutas de ruta (batch) del repartidor', () => {
       INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago, pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente, direccion_entrega)
       VALUES ($1, $2, $3, '[]'::jsonb, 200, 35, 235, 'efectivo', 'pendiente', 'listo', 'standard', 'puerto_escondido', $4, 35, 'Test automatizado — ignorar')
       RETURNING id
-    `, [numero2, cli.id, SABOR_A_MI.id, codigo2]);
+    `, [numero2, cli.id, SEGUNDO_NEGOCIO.id, codigo2]);
     pedidoSaborAMi = r2.rows[0].id;
 
     const { token: tokenRep } = await login('repartidor');
