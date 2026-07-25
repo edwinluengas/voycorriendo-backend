@@ -26,6 +26,7 @@ router.patch ('/repartidores/:id/rechazar',    ctrl.rechazarRepartidor);
 router.patch ('/repartidores/:id/cuenta',      ctrl.cambiarEstadoCuentaRepartidor);
 router.patch ('/usuarios/:id/estado',          ctrl.cambiarEstadoUsuario);
 router.post  ('/usuarios/:id/creditos',        ctrl.otorgarCredito);
+router.get   ('/creditos/resumen',             ctrl.resumenCreditos);
 router.get   ('/perdidas',                     ctrl.listarPerdidas);
 router.patch ('/perdidas/:id',                 ctrl.reclasificarPerdidaAdmin);
 router.delete('/perdidas/:id',                 ctrl.eliminarPerdidaAdmin);

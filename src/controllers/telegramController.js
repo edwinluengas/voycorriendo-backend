@@ -135,7 +135,10 @@ const manejarUpdate = async (req, res) => {
   // Uso: /credito 5545074460 100 Pedido perdido, se compensa con credito
   // El motivo es obligatorio (queda en el historial del cliente) y puede
   // llevar varias palabras — todo lo que sigue al monto.
-  if (texto.startsWith('/credito')) {
+  // OJO: /^\/credito(\s|$)/ — NO usar startsWith('/credito'), porque
+  // '/creditos' (el comando de resumen, abajo) también empieza con esas
+  // 8 letras y quedaría atrapado aquí sin nunca llegar a su propio bloque.
+  if (/^\/credito(\s|$)/.test(texto)) {
     const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
     if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
       return enviar(chatId, '⛔ Este comando es solo para administradores.');
@@ -153,6 +156,31 @@ const manejarUpdate = async (req, res) => {
       const { otorgarCredito } = require('../services/creditos.service');
       const resultado = await otorgarCredito({ usuarioId: cliente.id, monto, motivo, adminId: admin.id });
       return enviar(chatId, `✅ $${monto.toFixed(2)} de crédito otorgados a ${cliente.nombre} (***${telefono.slice(-4)}).\nSaldo nuevo: $${resultado.credito_disponible.toFixed(2)}.\nMotivo: ${motivo}`);
+    } catch (e) {
+      return enviar(chatId, `❌ Error: ${e.message}`);
+    }
+  }
+
+  // ── Comando de ADMIN: resumen de la "cuenta por pagar" del crédito ──
+  // Cuánto se ha otorgado, cuánto sigue como saldo con clientes, y cuánto
+  // ya se le pagó de verdad a negocios/repartidores con fondos propios de
+  // la plataforma (pedidos entregados pagados con crédito).
+  if (texto === '/creditos') {
+    const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
+    if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
+      return enviar(chatId, '⛔ Este comando es solo para administradores.');
+    }
+    try {
+      const { sequelize } = require('../config/database');
+      const [[otorgado]] = await sequelize.query(`SELECT COALESCE(SUM(monto),0) AS t FROM creditos_cliente`);
+      const [[disponible]] = await sequelize.query(`SELECT COALESCE(SUM(credito_disponible),0) AS t FROM usuarios WHERE credito_disponible > 0`);
+      const [[pagado]] = await sequelize.query(`SELECT COALESCE(SUM(credito_aplicado),0) AS t FROM ledger_conciliacion WHERE credito_aplicado > 0`);
+      return enviar(chatId,
+        `📒 <b>Resumen de crédito de plataforma</b>\n\n` +
+        `Otorgado histórico: $${parseFloat(otorgado.t).toFixed(2)}\n` +
+        `Pasivo actual con clientes (sin usar): $${parseFloat(disponible.t).toFixed(2)}\n` +
+        `Pagado a negocios/repartidores con fondos propios (pedidos entregados): $${parseFloat(pagado.t).toFixed(2)}`
+      );
     } catch (e) {
       return enviar(chatId, `❌ Error: ${e.message}`);
     }

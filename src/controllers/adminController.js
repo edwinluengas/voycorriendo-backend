@@ -199,6 +199,52 @@ const rechazarRepartidor = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/creditos/resumen ──────────────────────
+// "Cuenta por pagar" del crédito de plataforma: cuánto se ha otorgado,
+// cuánto sigue como pasivo con clientes (credito_disponible, aún no
+// gastado), y cuánto ya se pagó de verdad a negocios/repartidores con
+// fondos propios de la plataforma (pedidos ENTREGADOS con credito_aplicado
+// — solo ahí hubo un pago real a un tercero; un pedido cancelado nunca
+// generó ledger, así que no cuenta aquí aunque haya tenido crédito).
+const resumenCreditos = async (req, res) => {
+  try {
+    const { sequelize } = require('../config/database');
+    const [[otorgadoTotal]] = await sequelize.query(
+      `SELECT COALESCE(SUM(monto), 0) AS total FROM creditos_cliente`
+    );
+    const [[disponibleTotal]] = await sequelize.query(
+      `SELECT COALESCE(SUM(credito_disponible), 0) AS total FROM usuarios WHERE credito_disponible > 0`
+    );
+    // Pasivo YA LIQUIDADO: crédito aplicado en pedidos que sí se entregaron
+    // (tienen fila en ledger_conciliacion) — este es el dinero real que la
+    // plataforma ya pagó de su bolsa a negocios/repartidores en lugar del
+    // cliente. Desglosado por si el negocio/repartidor ya cobró ese pago
+    // (conciliado) o sigue pendiente de su propio retiro.
+    const [[pagadoTotal]] = await sequelize.query(
+      `SELECT COALESCE(SUM(credito_aplicado), 0) AS total FROM ledger_conciliacion WHERE credito_aplicado > 0`
+    );
+    const [[pagadoPendienteNegocio]] = await sequelize.query(
+      `SELECT COALESCE(SUM(credito_aplicado), 0) AS total FROM ledger_conciliacion WHERE credito_aplicado > 0 AND conciliado_negocio = false`
+    );
+    const [[pagadoPendienteRepartidor]] = await sequelize.query(
+      `SELECT COALESCE(SUM(credito_aplicado), 0) AS total FROM ledger_conciliacion WHERE credito_aplicado > 0 AND conciliado_repartidor = false`
+    );
+    res.json({
+      ok: true,
+      data: {
+        otorgado_historico: parseFloat(otorgadoTotal.total),
+        pasivo_con_clientes: parseFloat(disponibleTotal.total),
+        pagado_a_negocios_y_repartidores: parseFloat(pagadoTotal.total),
+        pendiente_de_liquidar_negocio: parseFloat(pagadoPendienteNegocio.total),
+        pendiente_de_liquidar_repartidor: parseFloat(pagadoPendienteRepartidor.total),
+      },
+    });
+  } catch (e) {
+    console.error('Error resumen creditos:', e);
+    res.status(500).json({ ok: false, mensaje: 'Error al calcular el resumen de crédito.' });
+  }
+};
+
 // ─── Pedidos perdidos: aclaraciones y reclasificación ─────
 // GET /api/admin/perdidas — lista (activas primero)
 const listarPerdidas = async (req, res) => {
@@ -890,6 +936,7 @@ module.exports = {
   // Usuarios (clientes incluidos)
   cambiarEstadoUsuario,
   otorgarCredito,
+  resumenCreditos,
   // Pérdidas de pedidos
   listarPerdidas,
   reclasificarPerdidaAdmin,
