@@ -12,6 +12,12 @@ const LedgerConciliacion = sequelize.define('LedgerConciliacion', {
   // digitales): cada parte absorbe la porción proporcional a su ingreso.
   fee_mp_negocio:      { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   fee_mp_repartidor:   { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
+  // Cuánto de este pedido se pagó con crédito de plataforma (nunca es
+  // ingreso real cobrado a nadie — es un costo de la plataforma, ya
+  // registrado como tal en creditos_cliente). Se guarda aquí también para
+  // que cualquier reporte de conciliación pueda separar ingreso real de
+  // ingreso cubierto por crédito, sin tener que ir a buscar el pedido.
+  credito_aplicado:    { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   metodo_pago:         { type: DataTypes.STRING(50), allowNull: false },
   tipo_envio:          { type: DataTypes.STRING(20), allowNull: false },
   liquidacion_comida:  { type: DataTypes.STRING(50), allowNull: true },

@@ -4,21 +4,44 @@ const { Pedido, Usuario } = require('../models');
 const push = require('../services/notificaciones.service');
 const tg = require('../services/telegram.service');
 const pagosService = require('../services/pagos.service');
+const creditosService = require('../services/creditos.service');
 
 // Reembolso automático al cliente cuando un pedido con cobro digital YA
 // capturado se cancela por timeout. Sin repartidor involucrado en estos dos
 // caminos (pendiente/listo sin asignar) — no genera saldo por cobrar.
 async function reembolsarSiAplica(pedido, motivo) {
-  if (!['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago) || pedido.pago_estado !== 'capturado') return;
-  try {
-    const r = await pagosService.reembolsarPagoMP(pedido);
-    if (r.ok) {
-      console.log(`[PedidoTimeout] ${pedido.numero} — $${pedido.total} reembolsados automáticamente (${motivo}).`);
-      tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) — se reembolsaron $${pedido.total} al cliente automáticamente.`).catch(() => {});
+  const pagadoConCreditoTotal = String(pedido.pago_referencia || '').startsWith('CREDITO-');
+  if (['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago) && pedido.pago_estado === 'capturado') {
+    try {
+      if (!pagadoConCreditoTotal) {
+        const r = await pagosService.reembolsarPagoMP(pedido);
+        if (r.ok) {
+          const montoMP = parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0);
+          console.log(`[PedidoTimeout] ${pedido.numero} — $${montoMP} reembolsados automáticamente (${motivo}).`);
+          tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) — se reembolsaron $${montoMP.toFixed(2)} al cliente automáticamente.`).catch(() => {});
+        }
+      } else {
+        pedido.pago_estado = 'reembolsado';
+        await pedido.save();
+      }
+    } catch (e) {
+      console.error(`[PedidoTimeout] FALLO reembolso de ${pedido.numero}:`, e.response?.data || e.message);
+      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
     }
-  } catch (e) {
-    console.error(`[PedidoTimeout] FALLO reembolso de ${pedido.numero}:`, e.response?.data || e.message);
-    tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
+  }
+  // Crédito aplicado (cualquier método de pago) — siempre se devuelve.
+  if (parseFloat(pedido.credito_aplicado || 0) > 0) {
+    try {
+      await creditosService.devolverCredito({
+        usuarioId: pedido.cliente_id,
+        monto: pedido.credito_aplicado,
+        motivo: `Devolución de crédito — pedido ${pedido.numero} cancelado (${motivo}).`,
+        pedidoId: pedido.id,
+      });
+    } catch (e) {
+      console.error(`[PedidoTimeout] FALLO devolviendo crédito de ${pedido.numero}:`, e.message);
+      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> cancelado (${motivo}) tenía crédito aplicado — la devolución automática FALLÓ, hacerla manual.`).catch(() => {});
+    }
   }
 }
 

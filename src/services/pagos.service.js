@@ -355,22 +355,27 @@ const reembolsarPagoMP = async (pedido) => {
 };
 
 // ─── Registrar pago en efectivo (al entregar) ─────────────────
+// Lo que el repartidor debe cobrar en mano es el NETO (total - crédito de
+// plataforma ya aplicado en crearPedido) — sin esto, un pedido con crédito
+// parcial le cobraría al cliente el total completo OTRA VEZ en la entrega,
+// duplicando lo que el crédito ya cubrió (bug real detectado 2026-07-24).
 const registrarPagoEfectivo = async ({ pedido, monto_recibido }) => {
   if (pedido.metodo_pago !== 'efectivo') {
     return { ok: false, mensaje: 'Este pedido no es pago en efectivo.' };
   }
+  const netoAdeudo = parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0);
   if (pedido.pago_estado === 'capturado') {
-    const cambio = parseFloat(pedido.total) <= parseFloat(monto_recibido)
-      ? parseFloat(monto_recibido) - parseFloat(pedido.total) : 0;
+    const cambio = netoAdeudo <= parseFloat(monto_recibido)
+      ? parseFloat(monto_recibido) - netoAdeudo : 0;
     return { ok: true, pedido, cambio, yaRegistrado: true };
   }
-  if (parseFloat(monto_recibido) < parseFloat(pedido.total)) {
+  if (parseFloat(monto_recibido) < netoAdeudo) {
     return { ok: false, mensaje: 'El monto recibido es menor al total.' };
   }
   pedido.pago_estado = 'capturado';
   pedido.pago_referencia = `EFVO-${Date.now()}`;
   await pedido.save();
-  const cambio = parseFloat(monto_recibido) - parseFloat(pedido.total);
+  const cambio = parseFloat(monto_recibido) - netoAdeudo;
   return { ok: true, pedido, cambio };
 };
 

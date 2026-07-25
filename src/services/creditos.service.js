@@ -9,10 +9,13 @@
  */
 const CreditoCliente = require('../models/CreditoCliente');
 const Usuario = require('../models/Usuario');
+const { sequelize } = require('../config/database');
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // ─── Otorga crédito a un cliente (manual o por pedido no entregado) ───
+// El journal (creditos_cliente) y el saldo (usuarios.credito_disponible) se
+// mueven en la MISMA transacción — si uno falla, el otro no queda huérfano.
 const otorgarCredito = async ({ usuarioId, monto, motivo, pedidoId = null, adminId = null }) => {
   const montoNum = round2(parseFloat(monto));
   if (!Number.isFinite(montoNum) || montoNum <= 0) {
@@ -21,24 +24,33 @@ const otorgarCredito = async ({ usuarioId, monto, motivo, pedidoId = null, admin
   if (!motivo || !motivo.trim()) {
     throw new Error('El motivo es obligatorio (queda en el historial del cliente).');
   }
-  const usuario = await Usuario.findByPk(usuarioId);
-  if (!usuario) throw new Error('Cliente no encontrado.');
+  return sequelize.transaction(async (t) => {
+    const usuario = await Usuario.findByPk(usuarioId, { transaction: t });
+    if (!usuario) throw new Error('Cliente no encontrado.');
 
-  await CreditoCliente.create({
-    usuario_id: usuarioId, monto: montoNum, motivo: motivo.trim(), pedido_id: pedidoId, otorgado_por: adminId,
+    await CreditoCliente.create({
+      usuario_id: usuarioId, monto: montoNum, motivo: motivo.trim(), pedido_id: pedidoId, otorgado_por: adminId,
+    }, { transaction: t });
+    await usuario.increment('credito_disponible', { by: montoNum, transaction: t });
+    await usuario.reload({ transaction: t });
+    return { ok: true, credito_disponible: parseFloat(usuario.credito_disponible) };
   });
-  await usuario.increment('credito_disponible', { by: montoNum });
-  await usuario.reload();
-  return { ok: true, credito_disponible: parseFloat(usuario.credito_disponible) };
 };
 
 // ─── Consume crédito al pagar un pedido — SIEMPRE con piso en el saldo
 // real, nunca deja el balance negativo aunque haya una carrera entre dos
-// pedidos casi simultáneos del mismo cliente. ───────────────────────────
-const consumirCredito = async ({ usuarioId, montoSolicitado }) => {
+// pedidos casi simultáneos del mismo cliente.
+//
+// `transaction` es OBLIGATORIO en la práctica para quien llama desde
+// crearPedido: sin ella, si el crédito se descuenta y DESPUÉS falla la
+// creación del pedido (numero duplicado, error de DB, lo que sea), el
+// cliente pierde ese crédito sin recibir ningún pedido a cambio — bug real
+// detectado 2026-07-24. Pasando la misma `transaction` que envuelve el
+// Pedido.create(), un rollback deshace ambas cosas juntas. ──────────────
+const consumirCredito = async ({ usuarioId, montoSolicitado, transaction = null }) => {
   const solicitado = round2(parseFloat(montoSolicitado) || 0);
   if (solicitado <= 0) return 0;
-  const usuario = await Usuario.findByPk(usuarioId);
+  const usuario = await Usuario.findByPk(usuarioId, { transaction });
   if (!usuario) return 0;
   const disponible = parseFloat(usuario.credito_disponible || 0);
   const aUsar = Math.min(solicitado, disponible);
@@ -46,12 +58,12 @@ const consumirCredito = async ({ usuarioId, montoSolicitado }) => {
   // UPDATE condicional: solo descuenta si el saldo en ESE momento sigue
   // alcanzando — evita que dos pedidos concurrentes del mismo cliente
   // consuman más crédito del que realmente tiene.
-  const { sequelize } = require('../config/database');
-  const [affected] = await sequelize.query(
+  const [, meta] = await sequelize.query(
     `UPDATE usuarios SET credito_disponible = credito_disponible - :aUsar
      WHERE id = :usuarioId AND credito_disponible >= :aUsar`,
-    { replacements: { aUsar, usuarioId } }
+    { replacements: { aUsar, usuarioId }, transaction }
   );
+  const affected = meta?.rowCount ?? meta ?? 0;
   return affected > 0 ? aUsar : 0;
 };
 

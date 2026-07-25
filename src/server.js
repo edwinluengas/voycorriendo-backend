@@ -485,6 +485,7 @@ const migrarDB = async () => {
   // Prorrateo de la comisión de Mercado Pago + IVA por transacción
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_negocio NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_repartidor NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS credito_aplicado NUMERIC(10,2) NOT NULL DEFAULT 0`);
 
   // Crédito de plataforma para clientes (2026-07-24) — otorgado libremente
   // por un admin, o como compensación por un pedido no entregado, usable

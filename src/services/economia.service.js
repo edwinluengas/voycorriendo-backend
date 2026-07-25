@@ -24,22 +24,31 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
   const liquidacion = metodoPago === 'efectivo' ? 'efectivo_repartidor' : 'mp_directo';
 
   // ── Prorrateo de la comisión de MP + IVA (solo pagos digitales) ──
-  // feeMP = (3.49% × total + $4.00) × 1.16 — verificada contra un pago real
-  // en producción ($185 → $12.13 exacto). Cada parte absorbe la porción
-  // proporcional a su ingreso bruto dentro del cobro: negocio → subtotal,
-  // repartidor → envío. (La propina se cobra en un cargo aparte y se
-  // prorratea al acreditarse en calificarPedido.)
-  // La propina (elegida en checkout, cobrada dentro del cargo a la tarjeta)
-  // es ingreso del repartidor y entra al prorrateo como parte de su porción.
+  // feeMP = (3.49% × monto REAL cobrado por MP + $4.00) × 1.16 — verificada
+  // contra un pago real en producción ($185 → $12.13 exacto). Cada parte
+  // absorbe la porción proporcional a su ingreso bruto dentro del cobro:
+  // negocio → subtotal, repartidor → envío + propina.
+  //
+  // CRÍTICO (2026-07-24): el monto real que Mercado Pago procesa es el
+  // total del pedido MENOS el crédito de plataforma aplicado
+  // (pedido.credito_aplicado) — MP nunca ve ni cobra fee sobre la porción
+  // pagada con crédito, porque esa porción NUNCA pasa por MP. Cobrarle a
+  // negocio/repartidor una fee calculada sobre el monto bruto (como si
+  // TODO se hubiera cobrado por MP) les cobraría una comisión sobre dinero
+  // que nunca se movió — y si el crédito cubrió el pedido completo, la fee
+  // real es CERO (no hubo transacción de MP en absoluto).
   const propina = metodoPago !== 'efectivo' ? parseFloat(pedido.propina || 0) : 0;
+  const creditoAplicado = parseFloat(pedido.credito_aplicado || 0);
+  const montoCobradoBruto = subtotal + feeCliente + propina;
+  const montoRealMP = Math.max(0, montoCobradoBruto - creditoAplicado);
   let feeMpNegocio = 0, feeMpRepartidor = 0;
-  if (metodoPago !== 'efectivo') {
-    const montoCobrado = subtotal + feeCliente + propina;
-    if (montoCobrado > 0) {
-      const feeMP = (MP_FEE_PCT * montoCobrado + MP_FEE_FIJO) * (1 + IVA_PCT);
-      feeMpNegocio    = Math.round(feeMP * (subtotal / montoCobrado) * 100) / 100;
-      feeMpRepartidor = Math.round((feeMP - feeMpNegocio) * 100) / 100;
-    }
+  if (metodoPago !== 'efectivo' && montoRealMP > 0 && montoCobradoBruto > 0) {
+    const feeMP = (MP_FEE_PCT * montoRealMP + MP_FEE_FIJO) * (1 + IVA_PCT);
+    // Proporciones de ingreso NORMAL de cada parte (sin crédito), aplicadas
+    // a la fee real (ya reducida por el crédito) — así cada quien absorbe
+    // su parte proporcional de lo que MP realmente cobró, ni un peso más.
+    feeMpNegocio    = Math.round(feeMP * (subtotal / montoCobradoBruto) * 100) / 100;
+    feeMpRepartidor = Math.round((feeMP - feeMpNegocio) * 100) / 100;
   }
 
   // Ledger de conciliación
@@ -51,6 +60,7 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
     comision_plataforma: netPlat,
     fee_mp_negocio:      feeMpNegocio,
     fee_mp_repartidor:   feeMpRepartidor,
+    credito_aplicado:    creditoAplicado,
     metodo_pago:         metodoPago,
     tipo_envio:          tipoEnvio,
     liquidacion_comida:  liquidacion,

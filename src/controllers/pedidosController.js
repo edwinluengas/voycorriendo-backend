@@ -204,28 +204,25 @@ const crearPedido = async (req, res) => {
       });
     }
 
-    // Crédito de plataforma (2026-07-24): se consume ANTES de crear el
-    // pedido — consumirCredito es atómico (UPDATE condicional contra el
-    // saldo real), así que dos pedidos casi simultáneos del mismo cliente
-    // nunca gastan más crédito del que tiene. `total` (el valor completo
-    // del pedido, usado por comisiones/economía) no cambia; lo que se
-    // cobra al medio de pago real es totalNeto.
-    // Restringido a pagos DIGITALES: en efectivo, registrarPagoEfectivo
-    // compara el monto recibido contra `pedido.total` completo (no contra
-    // un neto) — aplicar crédito ahí duplicaría el cobro en la entrega
-    // (repartidor cobrando en mano lo que el crédito ya cubrió). Se puede
-    // extender a efectivo más adelante si se ajusta ese flujo también.
-    let creditoAplicado = 0;
-    if (usar_credito && metodo_pago !== 'efectivo') {
-      creditoAplicado = await creditosService.consumirCredito({ usuarioId: req.usuario.id, montoSolicitado: total });
-    }
-    const totalNeto = Math.round((total - creditoAplicado) * 100) / 100;
-    // Cubierto 100% por crédito: no hay nada que cobrar a ningún medio de
-    // pago — el pedido queda pagado desde ya, sin pasar por MP ni efectivo.
-    const pagadoTotalConCredito = totalNeto <= 0;
-
-    // 7. Crear pedido
+    // 7. Crear pedido — el consumo de crédito vive DENTRO de la misma
+    // transacción que crea el pedido: si Pedido.create() falla por lo que
+    // sea después de descontar el crédito (numero duplicado, error de DB),
+    // TODO se revierte junto, incluido el crédito — sin esto, un cliente
+    // podía perder su crédito sin recibir ningún pedido a cambio (bug real
+    // detectado 2026-07-24 antes de desplegar, ver consumirCredito).
     const pedido = await dbConn.transaction(async (t) => {
+      // Aplica a CUALQUIER método de pago — en efectivo, registrarPagoEfectivo
+      // ya compara el monto recibido contra el NETO (total - credito_aplicado),
+      // así que el repartidor cobra en mano solo lo que el crédito no cubrió.
+      let creditoAplicado = 0;
+      if (usar_credito) {
+        creditoAplicado = await creditosService.consumirCredito({ usuarioId: req.usuario.id, montoSolicitado: total, transaction: t });
+      }
+      const totalNeto = Math.round((total - creditoAplicado) * 100) / 100;
+      // Cubierto 100% por crédito: no hay nada que cobrar a ningún medio de
+      // pago — el pedido queda pagado desde ya, sin pasar por MP ni efectivo.
+      const pagadoTotalConCredito = totalNeto <= 0;
+
       const nuevoPedido = await Pedido.create({
         numero:           generarNumeroPedido(),
         cliente_id:       req.usuario.id,
@@ -583,11 +580,28 @@ const actualizarEstado = async (req, res) => {
       }
     }
 
+    const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
+    const estadoPrevio = pedido.estado;
+
+    // VULNERABILIDAD REAL corregida 2026-07-24: `admin: '*'` en
+    // transicionesPermitidas se salta la tabla de transiciones por completo
+    // — un admin podía volver a mandar el MISMO estado terminal (ej.
+    // 'cancelado' sobre un pedido YA 'cancelado') y el candado atómico de
+    // abajo (pensado solo para RACES entre dos requests casi simultáneas)
+    // lo dejaba pasar igual, porque compara contra el valor actual en DB,
+    // no contra si es un cambio real. Cada repetición re-disparaba
+    // procesarEntrega/reembolso/devolución de crédito/registro de pérdida
+    // de nuevo — duplicando deuda, reembolsos y crédito otorgado sin
+    // límite. Los estados terminales ahora son inmutables: nadie, ni
+    // admin, puede "transicionar" un pedido que ya llegó a uno.
+    if (ESTADOS_TERMINALES.includes(estadoPrevio)) {
+      return res.status(400).json({ ok: false, mensaje: `Este pedido ya está en un estado final ("${estadoPrevio}") y no se puede modificar.` });
+    }
+
     // Transición ATÓMICA: solo aplica si el pedido sigue en el estado que
     // leímos al principio. Evita que dos requests casi simultáneas (doble-tap,
     // reintento de red) disparen procesarEntrega() dos veces y dupliquen la
     // deuda del negocio u otros efectos económicos.
-    const estadoPrevio = pedido.estado;
     const [affectedCount] = await Pedido.update(camposActualizar, {
       where: { id: pedido.id, estado: estadoPrevio },
     });
@@ -596,42 +610,53 @@ const actualizarEstado = async (req, res) => {
     }
     Object.assign(pedido, camposActualizar);
 
-    const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
-
-    // Al cancelar/rechazar un pedido cuyo cobro digital YA se capturó:
-    // reembolso automático al cliente vía la Refunds API de MP, y si se
-    // había aplicado crédito de plataforma, ese pedazo se devuelve como
-    // crédito (nunca pasó por MP, un refund ahí no lo tocaría).
+    // Al cancelar/rechazar un pedido con cobro digital YA capturado: reembolso
+    // automático vía la Refunds API de MP. Independiente de esto y de
+    // `metodo_pago` (aplica también a efectivo): si el pedido tenía crédito
+    // de plataforma aplicado, esa porción SIEMPRE se devuelve como crédito
+    // — nunca pasó por MP ni se cobró en mano, un refund a la tarjeta o el
+    // cobro en efectivo no la tocan.
     if (['cancelado', 'rechazado'].includes(estado)
         && ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago)
-        && pedido.pago_estado === 'capturado') {
-      const pagadoConCreditoTotal = String(pedido.pago_referencia || '').startsWith('CREDITO-');
+        && pedido.pago_estado === 'capturado'
+        && !String(pedido.pago_referencia || '').startsWith('CREDITO-')) {
       try {
-        if (!pagadoConCreditoTotal) {
-          // Pago (parcial o total) real vía MP — reembolsa lo que MP
-          // efectivamente cobró (ya neto de cualquier crédito aplicado).
-          const reembolso = await pagosService.reembolsarPagoMP(pedido);
-          if (reembolso.ok) {
-            const montoMP = parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0);
-            console.log(`[reembolso] ${pedido.numero} ${estado} — $${montoMP} reembolsados a la tarjeta.`);
-            tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${montoMP.toFixed(2)} a la tarjeta.`).catch(() => {});
-          }
-        } else {
-          pedido.pago_estado = 'reembolsado';
-          await pedido.save();
-        }
-        if (parseFloat(pedido.credito_aplicado || 0) > 0) {
-          await creditosService.devolverCredito({
-            usuarioId: pedido.cliente_id,
-            monto: pedido.credito_aplicado,
-            motivo: `Devolución de crédito — pedido ${pedido.numero} ${estado}.`,
-            pedidoId: pedido.id,
-          });
-          tg.enviarAdmin(`💳 $${parseFloat(pedido.credito_aplicado).toFixed(2)} de crédito devueltos al cliente por el pedido <b>${pedido.numero}</b> (${estado}).`).catch(() => {});
+        const reembolso = await pagosService.reembolsarPagoMP(pedido);
+        if (reembolso.ok) {
+          const montoMP = parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0);
+          console.log(`[reembolso] ${pedido.numero} ${estado} — $${montoMP} reembolsados a la tarjeta.`);
+          tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${montoMP.toFixed(2)} a la tarjeta.`).catch(() => {});
         }
       } catch (e) {
         console.error(`[reembolso] FALLO en ${pedido.numero}:`, e.response?.data || e.message);
         tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado pero el reembolso automático FALLÓ — hacerlo manual en el panel de MP (payment ${pedido.pago_referencia}).`).catch(() => {});
+      }
+    }
+
+    // Pedido pagado 100% con crédito (nunca hubo cobro real, ni MP ni
+    // efectivo): al cancelarse/rechazarse solo se marca reembolsado.
+    if (['cancelado', 'rechazado'].includes(estado)
+        && pedido.pago_estado === 'capturado'
+        && String(pedido.pago_referencia || '').startsWith('CREDITO-')) {
+      pedido.pago_estado = 'reembolsado';
+      await pedido.save();
+    }
+
+    // Devolución de crédito — SIEMPRE que hubiera crédito aplicado en este
+    // pedido, sin importar el método de pago ni si el resto ya se reembolsó
+    // por otro camino arriba.
+    if (['cancelado', 'rechazado'].includes(estado) && parseFloat(pedido.credito_aplicado || 0) > 0) {
+      try {
+        await creditosService.devolverCredito({
+          usuarioId: pedido.cliente_id,
+          monto: pedido.credito_aplicado,
+          motivo: `Devolución de crédito — pedido ${pedido.numero} ${estado}.`,
+          pedidoId: pedido.id,
+        });
+        tg.enviarAdmin(`💳 $${parseFloat(pedido.credito_aplicado).toFixed(2)} de crédito devueltos al cliente por el pedido <b>${pedido.numero}</b> (${estado}).`).catch(() => {});
+      } catch (e) {
+        console.error(`[credito] FALLO devolviendo crédito de ${pedido.numero}:`, e.message);
+        tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b> ${estado} tenía $${parseFloat(pedido.credito_aplicado).toFixed(2)} de crédito aplicado — la devolución automática FALLÓ, hacerla manual.`).catch(() => {});
       }
     }
 
