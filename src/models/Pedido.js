@@ -63,6 +63,11 @@ const Pedido = sequelize.define('Pedido', {
   repartidor_nombre_snapshot: { type: DataTypes.STRING(100), allowNull: true },
   // Cambio para efectivo: cuánto entregó el cliente
   paga_con: { type: DataTypes.DECIMAL(10, 2), allowNull: true },
+  // Crédito de plataforma aplicado a este pedido (ver creditos.service).
+  // `total` sigue siendo el valor completo del pedido (economía/comisiones
+  // no cambian); lo que realmente se cobra al medio de pago es
+  // total - credito_aplicado.
+  credito_aplicado: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
   // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma encima
   excede_limite_efectivo: {
     type: DataTypes.VIRTUAL,

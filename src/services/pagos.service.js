@@ -148,7 +148,11 @@ const MAPA_ESTADO_MP = {
 const aplicarResultadoPago = async (pedido, pago) => {
   if (pago.status === 'approved') {
     const montoPagado   = parseFloat(pago.transaction_amount || 0);
-    const montoEsperado = parseFloat(pedido.total || 0);
+    // Si se aplicó crédito de plataforma, lo esperado a MP es el neto, no
+    // el total del pedido — si no, esta validación (correcta en su
+    // propósito: detectar manipulación del monto) rechazaría por error
+    // cualquier pago legítimo parcialmente cubierto con crédito.
+    const montoEsperado = parseFloat(pedido.total || 0) - parseFloat(pedido.credito_aplicado || 0);
     if (Math.abs(montoPagado - montoEsperado) > 0.5) {
       console.error(
         `[pago] MONTO NO COINCIDE pedido ${pedido.numero}: pagado=$${montoPagado} esperado=$${montoEsperado}`
@@ -284,8 +288,12 @@ const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payme
   // tarjeta de customer hace que MP rechace con 2002 "Customer not found"
   // — verificado en producción 2026-07-22: la tokenización desde card_id
   // funcionaba y el cobro reventaba justo después.
+  // Si se aplicó crédito de plataforma al pedido (parcial — si cubría el
+  // 100% el pedido ya se creó 'capturado' y ni siquiera se llama aquí), el
+  // cobro real a la tarjeta es solo el remanente.
+  const montoACobrar = Math.round((parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0)) * 100) / 100;
   const payload = {
-    transaction_amount: parseFloat(pedido.total),
+    transaction_amount: montoACobrar,
     token,
     description: `Pedido VoyCorriendo #${pedido.numero}`,
     installments: cuotas,

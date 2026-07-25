@@ -141,6 +141,15 @@ const Usuario = sequelize.define('Usuario', {
     defaultValue: false,
     allowNull: false,
   },
+  // Saldo de crédito de plataforma (2026-07-24): otorgado por un admin,
+  // manual o por un pedido no entregado, usable en cualquier tienda al
+  // pagar. Ver services/creditos.service.js — nunca modificar directo,
+  // siempre vía otorgarCredito/consumirCredito para que quede el journal.
+  credito_disponible: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+    allowNull: false,
+  },
 }, {
   tableName: 'usuarios',
   timestamps: true,

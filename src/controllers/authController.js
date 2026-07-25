@@ -97,6 +97,7 @@ const registro = async (req, res) => {
           id: usuario.id, nombre: usuario.nombre, apellido: usuario.apellido,
           telefono: usuario.telefono, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
+          credito_disponible: parseFloat(usuario.credito_disponible || 0),
         },
       },
     });
@@ -200,6 +201,7 @@ const login = async (req, res) => {
           id: usuario.id, nombre: usuario.nombre, apellido: usuario.apellido,
           telefono: usuario.telefono, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
+          credito_disponible: parseFloat(usuario.credito_disponible || 0),
         },
       },
     });

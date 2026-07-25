@@ -12,6 +12,7 @@ const { obtenerUrlFirmada } = require('../services/storage.service');
 const { logAdmin } = require('../utils/audit');
 const crypto = require('crypto');
 const { bloquearRepartidorPermanente, bloquearNegocioPermanente, liberarPlacaPropia, liberarDireccionPropia } = require('../services/seguridadCuentas.service');
+const creditosService = require('../services/creditos.service');
 
 const BUCKET_REPARTIDORES = 'documentos-repartidores';
 const BUCKET_NEGOCIOS     = 'documentos-negocios';
@@ -257,6 +258,24 @@ const eliminarPerdidaAdmin = async (req, res) => {
   } catch (e) {
     console.error('Error eliminar perdida:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al eliminar la pérdida.' });
+  }
+};
+
+// ─── POST /api/admin/usuarios/:id/creditos ────────────────
+// Otorga crédito de plataforma libremente a un cliente — de forma manual
+// (cualquier motivo) o como compensación por un pedido no entregado
+// (pasando `pedido_id`, opcional, solo para trazabilidad). Usable después
+// en CUALQUIER tienda al pagar.
+const otorgarCredito = async (req, res) => {
+  try {
+    const { monto, motivo, pedido_id } = req.body;
+    const resultado = await creditosService.otorgarCredito({
+      usuarioId: req.params.id, monto, motivo, pedidoId: pedido_id || null, adminId: req.usuario.id,
+    });
+    logAdmin({ adminId: req.usuario.id, accion: 'otorgar_credito', entidadTipo: 'usuario', entidadId: req.params.id, estadoAntes: null, estadoDespues: { monto, motivo, pedido_id: pedido_id || null }, ip: req.ip });
+    res.json({ ok: true, mensaje: `Crédito otorgado. Saldo nuevo: $${resultado.credito_disponible.toFixed(2)}.`, data: resultado });
+  } catch (e) {
+    res.status(400).json({ ok: false, mensaje: e.message || 'No se pudo otorgar el crédito.' });
   }
 };
 
@@ -870,6 +889,7 @@ module.exports = {
   dashboard,
   // Usuarios (clientes incluidos)
   cambiarEstadoUsuario,
+  otorgarCredito,
   // Pérdidas de pedidos
   listarPerdidas,
   reclasificarPerdidaAdmin,

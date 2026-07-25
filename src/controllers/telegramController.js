@@ -131,6 +131,33 @@ const manejarUpdate = async (req, res) => {
     }
   }
 
+  // ── Comando de ADMIN: otorgar crédito de plataforma a un cliente ────
+  // Uso: /credito 5545074460 100 Pedido perdido, se compensa con credito
+  // El motivo es obligatorio (queda en el historial del cliente) y puede
+  // llevar varias palabras — todo lo que sigue al monto.
+  if (texto.startsWith('/credito')) {
+    const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
+    if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
+      return enviar(chatId, '⛔ Este comando es solo para administradores.');
+    }
+    const partes = texto.split(/\s+/);
+    const [, telefono, montoStr, ...restoMotivo] = partes;
+    const monto = parseFloat(montoStr);
+    const motivo = restoMotivo.join(' ').trim();
+    if (!telefono || !Number.isFinite(monto) || monto <= 0 || !motivo) {
+      return enviar(chatId, 'Uso: /credito {telefono} {monto} {motivo}\nEj: /credito 5545074460 100 Pedido perdido, se compensa con crédito');
+    }
+    try {
+      const cliente = await Usuario.findOne({ where: { telefono } });
+      if (!cliente) return enviar(chatId, `No encontré ninguna cuenta con el teléfono ${telefono}.`);
+      const { otorgarCredito } = require('../services/creditos.service');
+      const resultado = await otorgarCredito({ usuarioId: cliente.id, monto, motivo, adminId: admin.id });
+      return enviar(chatId, `✅ $${monto.toFixed(2)} de crédito otorgados a ${cliente.nombre} (***${telefono.slice(-4)}).\nSaldo nuevo: $${resultado.credito_disponible.toFixed(2)}.\nMotivo: ${motivo}`);
+    } catch (e) {
+      return enviar(chatId, `❌ Error: ${e.message}`);
+    }
+  }
+
   // Comando desconocido
   enviar(chatId, 'Comandos disponibles:\n/estado — Ver cuenta vinculada\n/desvincular — Dejar de recibir alertas');
 };

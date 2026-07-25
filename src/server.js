@@ -486,6 +486,21 @@ const migrarDB = async () => {
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_negocio NUMERIC(10,2) NOT NULL DEFAULT 0`);
   await run(`ALTER TABLE ledger_conciliacion ADD COLUMN IF NOT EXISTS fee_mp_repartidor NUMERIC(10,2) NOT NULL DEFAULT 0`);
 
+  // Crédito de plataforma para clientes (2026-07-24) — otorgado libremente
+  // por un admin, o como compensación por un pedido no entregado, usable
+  // en cualquier tienda al pagar.
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS credito_disponible NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS credito_aplicado NUMERIC(10,2) NOT NULL DEFAULT 0`);
+  await run(`CREATE TABLE IF NOT EXISTS creditos_cliente (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    usuario_id UUID NOT NULL,
+    monto NUMERIC(10,2) NOT NULL,
+    motivo TEXT NOT NULL,
+    pedido_id UUID,
+    otorgado_por UUID,
+    creado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
   // Perfil de usuario: direcciones guardadas, método de pago default, prefs notificaciones
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS direcciones_guardadas JSONB NOT NULL DEFAULT '[]'`);
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS metodo_pago_default VARCHAR(30) DEFAULT NULL`);

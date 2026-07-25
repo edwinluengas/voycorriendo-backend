@@ -7,6 +7,7 @@ const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const pagosService = require('../services/pagos.service');
+const creditosService = require('../services/creditos.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
@@ -37,6 +38,7 @@ const crearPedido = async (req, res) => {
       ine_foto_url,
       tipo_envio = 'standard',
       paga_con = null,
+      usar_credito = false,
     } = req.body;
 
     // Express siempre viaja solo — batch_id se ignora para express
@@ -202,6 +204,26 @@ const crearPedido = async (req, res) => {
       });
     }
 
+    // Crédito de plataforma (2026-07-24): se consume ANTES de crear el
+    // pedido — consumirCredito es atómico (UPDATE condicional contra el
+    // saldo real), así que dos pedidos casi simultáneos del mismo cliente
+    // nunca gastan más crédito del que tiene. `total` (el valor completo
+    // del pedido, usado por comisiones/economía) no cambia; lo que se
+    // cobra al medio de pago real es totalNeto.
+    // Restringido a pagos DIGITALES: en efectivo, registrarPagoEfectivo
+    // compara el monto recibido contra `pedido.total` completo (no contra
+    // un neto) — aplicar crédito ahí duplicaría el cobro en la entrega
+    // (repartidor cobrando en mano lo que el crédito ya cubrió). Se puede
+    // extender a efectivo más adelante si se ajusta ese flujo también.
+    let creditoAplicado = 0;
+    if (usar_credito && metodo_pago !== 'efectivo') {
+      creditoAplicado = await creditosService.consumirCredito({ usuarioId: req.usuario.id, montoSolicitado: total });
+    }
+    const totalNeto = Math.round((total - creditoAplicado) * 100) / 100;
+    // Cubierto 100% por crédito: no hay nada que cobrar a ningún medio de
+    // pago — el pedido queda pagado desde ya, sin pasar por MP ni efectivo.
+    const pagadoTotalConCredito = totalNeto <= 0;
+
     // 7. Crear pedido
     const pedido = await dbConn.transaction(async (t) => {
       const nuevoPedido = await Pedido.create({
@@ -213,15 +235,17 @@ const crearPedido = async (req, res) => {
         costo_envio:      fee_cliente,
         total,
         propina,
+        credito_aplicado: creditoAplicado,
         distancia_km:     distanciaKm,
         metodo_pago,
-        pago_estado:      'pendiente',
+        pago_estado:      pagadoTotalConCredito ? 'capturado' : 'pendiente',
+        pago_referencia:  pagadoTotalConCredito ? `CREDITO-${Date.now()}` : null,
         ciudad:           negocio.ciudad || 'puerto_escondido',
         tipo_envio,
         fee_cliente,
         paga_con:         metodo_pago === 'efectivo' ? (() => {
           const pc = Number(paga_con);
-          return (!isNaN(pc) && pc >= total && pc <= 10000) ? pc : null;
+          return (!isNaN(pc) && pc >= totalNeto && pc <= 10000) ? pc : null;
         })() : null,
         direccion_entrega,
         latitud_entrega,
@@ -575,15 +599,35 @@ const actualizarEstado = async (req, res) => {
     const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 
     // Al cancelar/rechazar un pedido cuyo cobro digital YA se capturó:
-    // reembolso automático al cliente vía la Refunds API de MP.
+    // reembolso automático al cliente vía la Refunds API de MP, y si se
+    // había aplicado crédito de plataforma, ese pedazo se devuelve como
+    // crédito (nunca pasó por MP, un refund ahí no lo tocaría).
     if (['cancelado', 'rechazado'].includes(estado)
         && ['tarjeta', 'mercado_pago'].includes(pedido.metodo_pago)
         && pedido.pago_estado === 'capturado') {
+      const pagadoConCreditoTotal = String(pedido.pago_referencia || '').startsWith('CREDITO-');
       try {
-        const reembolso = await pagosService.reembolsarPagoMP(pedido);
-        if (reembolso.ok) {
-          console.log(`[reembolso] ${pedido.numero} ${estado} — $${pedido.total} reembolsados al cliente.`);
-          tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${pedido.total} al cliente automáticamente.`).catch(() => {});
+        if (!pagadoConCreditoTotal) {
+          // Pago (parcial o total) real vía MP — reembolsa lo que MP
+          // efectivamente cobró (ya neto de cualquier crédito aplicado).
+          const reembolso = await pagosService.reembolsarPagoMP(pedido);
+          if (reembolso.ok) {
+            const montoMP = parseFloat(pedido.total) - parseFloat(pedido.credito_aplicado || 0);
+            console.log(`[reembolso] ${pedido.numero} ${estado} — $${montoMP} reembolsados a la tarjeta.`);
+            tg.enviarAdmin(`↩️ Pedido <b>${pedido.numero}</b> ${estado} con pago capturado — se reembolsaron $${montoMP.toFixed(2)} a la tarjeta.`).catch(() => {});
+          }
+        } else {
+          pedido.pago_estado = 'reembolsado';
+          await pedido.save();
+        }
+        if (parseFloat(pedido.credito_aplicado || 0) > 0) {
+          await creditosService.devolverCredito({
+            usuarioId: pedido.cliente_id,
+            monto: pedido.credito_aplicado,
+            motivo: `Devolución de crédito — pedido ${pedido.numero} ${estado}.`,
+            pedidoId: pedido.id,
+          });
+          tg.enviarAdmin(`💳 $${parseFloat(pedido.credito_aplicado).toFixed(2)} de crédito devueltos al cliente por el pedido <b>${pedido.numero}</b> (${estado}).`).catch(() => {});
         }
       } catch (e) {
         console.error(`[reembolso] FALLO en ${pedido.numero}:`, e.response?.data || e.message);
