@@ -30,15 +30,35 @@ const validarConfig = () => {
 const MIME_PERMITIDOS = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MB — deja margen bajo el límite de axios de 10 MB
 
+// El `mime` que llega en el body es lo que el CLIENTE dice que es — nunca lo
+// que realmente es. Sin esto, subir cualquier archivo (un .exe, un HTML con
+// <script>, etc.) con mime:"image/jpeg" pasaba la validación intacto y
+// terminaba público en el bucket de Supabase con ese Content-Type falso
+// (encontrado en logs de producción: alguien ya intentó un
+// application/x-msdownload — bloqueado solo porque no falsificó el mime).
+// Aquí se verifican los primeros bytes reales del archivo (firma/magic
+// number) contra el tipo declarado, así que falsificar el campo `mime` ya
+// no sirve de nada.
+const FIRMAS = {
+  'image/jpeg': (b) => b.length >= 3 && b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF,
+  'image/png':  (b) => b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47,
+  'image/webp': (b) => b.length >= 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP',
+};
+FIRMAS['image/jpg'] = FIRMAS['image/jpeg'];
+
 const validarImagen = (mime, buffer) => {
-  if (!MIME_PERMITIDOS.includes((mime || '').toLowerCase())) {
+  const mimeNorm = (mime || '').toLowerCase();
+  if (!MIME_PERMITIDOS.includes(mimeNorm)) {
     throw new Error(`Tipo de archivo no permitido: ${mime || 'desconocido'}. Solo se aceptan imágenes JPEG, PNG o WEBP.`);
+  }
+  if (buffer.length === 0) {
+    throw new Error('El archivo está vacío.');
   }
   if (buffer.length > MAX_BYTES) {
     throw new Error(`La imagen es demasiado grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Máximo ${MAX_BYTES / 1024 / 1024} MB.`);
   }
-  if (buffer.length === 0) {
-    throw new Error('El archivo está vacío.');
+  if (!FIRMAS[mimeNorm](buffer)) {
+    throw new Error('El archivo no es una imagen válida (el contenido no coincide con su tipo declarado).');
   }
 };
 

@@ -134,6 +134,14 @@ io.on('connection', (socket) => {
 // Hacemos io accesible desde controladores
 app.set('io', io);
 
+// Railway pone un único reverse proxy delante de la app — sin esto,
+// express-rate-limit usa la IP del proxy para TODOS los requests (ve el
+// mismo IP siempre), así que el límite de 200/15min termina siendo GLOBAL
+// para todos los usuarios juntos en vez de por persona (un solo usuario con
+// mucho tráfico legítimo podía bloquear a todos los demás). `1` = confiar
+// en un solo hop de proxy, ni más ni menos.
+app.set('trust proxy', 1);
+
 // Middlewares
 // helmet con CSP relajada para que el panel /admin pueda cargar imagenes
 // firmadas de Supabase, hacer fetch a /api y usar onclick="" inline.
