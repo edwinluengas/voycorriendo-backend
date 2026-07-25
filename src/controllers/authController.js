@@ -171,8 +171,17 @@ const login = async (req, res) => {
     const { telefono, password } = req.body;
     const usuario = await Usuario.findOne({ where: { telefono } });
 
-    if (!usuario || !(await usuario.verificarPassword(password))) {
-      return res.status(401).json({ ok: false, mensaje: 'Teléfono o contraseña incorrectos.' });
+    // Decisión explícita del dueño de la plataforma (2026-07-25): distinguir
+    // "no existe cuenta" de "contraseña incorrecta" para poder ofrecer
+    // "crear cuenta nueva" en el frontend. Antes el mensaje era
+    // deliberadamente genérico (evita que alguien pruebe números de
+    // teléfono para descubrir cuáles están registrados) — se acepta ese
+    // trade-off de seguridad a cambio de mejor UX.
+    if (!usuario) {
+      return res.status(404).json({ ok: false, mensaje: 'No encontramos una cuenta con ese número.', codigo: 'USUARIO_NO_ENCONTRADO' });
+    }
+    if (!(await usuario.verificarPassword(password))) {
+      return res.status(401).json({ ok: false, mensaje: 'Contraseña incorrecta.' });
     }
 
     const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
