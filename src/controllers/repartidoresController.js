@@ -520,8 +520,15 @@ const aceptarPedido = async (req, res) => {
       batch = null;
     }
 
-    // EXPRESS viaja solo — sin batch activo ni compartido
-    if (pedido.tipo_envio === 'express' && batch) {
+    // EXPRESS viaja solo — sin batch activo ni compartido, EN CUALQUIER
+    // DIRECCIÓN: ni un Express se une a una ruta ya en curso, ni un pedido
+    // normal se une a una ruta que YA lleva un Express. La versión anterior
+    // solo bloqueaba la primera dirección — un repartidor con un Express en
+    // curso sí podía aceptar un segundo pedido normal en la misma ruta,
+    // combinándolo con el Express (bug real: la exclusividad de Express
+    // nunca se rompía "hacia adelante" pero sí "hacia atrás").
+    const batchTieneExpress = pedidosActivosBatch.some((p) => p.tipo_envio === 'express');
+    if (batch && (pedido.tipo_envio === 'express' || batchTieneExpress)) {
       return res.status(409).json({
         ok: false,
         mensaje: 'Termina tu ruta actual antes de aceptar un pedido Express. Los pedidos Express son exclusivos.',
