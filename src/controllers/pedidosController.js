@@ -204,6 +204,22 @@ const crearPedido = async (req, res) => {
       });
     }
 
+    // 6.5. Libera de inmediato cualquier crédito de ESTE cliente que haya
+    // quedado atrapado en un pedido con tarjeta abandonado (nunca se
+    // intentó el cobro, o la tarjeta fue rechazada) — así el crédito
+    // disponible que se calcula abajo ya refleja la realidad, sin que el
+    // cliente tenga que esperar al barrido de pedidoTimeout.job.js (bug
+    // real 2026-07-25, cuenta 5545074460: crédito "desaparecido" al querer
+    // usarlo en un segundo pedido inmediatamente después de abandonar el
+    // primero).
+    if (usar_credito) {
+      try {
+        await creditosService.liberarCreditoAtrapadoDeUsuario(req.usuario.id);
+      } catch (e) {
+        console.error('[credito] Error liberando crédito atrapado antes de crear pedido:', e.message);
+      }
+    }
+
     // 7. Crear pedido — el consumo de crédito vive DENTRO de la misma
     // transacción que crea el pedido: si Pedido.create() falla por lo que
     // sea después de descontar el crédito (numero duplicado, error de DB),
