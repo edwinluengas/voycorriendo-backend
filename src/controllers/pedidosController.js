@@ -282,7 +282,14 @@ const misPedidos = async (req, res) => {
       include: [
         { model: Negocio, as: 'negocio', attributes: ['id', 'nombre', 'logo', 'categoria'] },
         {
+          // Solo lo que la UI de la lista usa. Antes se traía TODA la fila
+          // de Repartidor sin filtro — incluía clabe_bancaria (la fila se
+          // desencripta sola vía getter de Sequelize al serializar a JSON),
+          // fotos de INE/licencia, notas de verificación/moderación y la
+          // ubicación GPS, expuestos a cualquier cliente por cada pedido de
+          // su historial para siempre. Hallazgo de auditoría 2026-07-24.
           model: Repartidor, as: 'repartidor',
+          attributes: ['id', 'calificacion_promedio', 'marca_vehiculo', 'color_vehiculo'],
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'foto_perfil', 'telefono'] }],
         },
       ],
@@ -328,6 +335,25 @@ const obtenerPedido = async (req, res) => {
       delete pedidoData.codigo_entrega;
     }
 
+    // Ubicación GPS del repartidor: antes se exponía SIEMPRE, a cualquier
+    // parte con acceso al pedido, sin importar el estado — incluyendo
+    // pedidos ya entregados hace semanas. Con el mapa de seguimiento en
+    // vivo (2026-07-24) ese descuido pasa de un campo silencioso a una
+    // ubicación dibujada en un mapa, mucho más explotable. Ahora solo se
+    // expone durante la ventana en que cada parte realmente necesita
+    // verla: el negocio mientras viene a recoger ('listo'), el cliente
+    // mientras viene a entregar ('en_camino'). El repartidor siempre ve la
+    // suya propia; admin sin restricción (soporte).
+    if (pedidoData.repartidor && !esRepartidor && !esAdmin) {
+      const ventanaAbierta =
+        (esNegocio && pedidoData.estado === 'listo') ||
+        (esCliente && pedidoData.estado === 'en_camino');
+      if (!ventanaAbierta) {
+        delete pedidoData.repartidor.latitud;
+        delete pedidoData.repartidor.longitud;
+      }
+    }
+
     res.json({ ok: true, data: { pedido: pedidoData } });
   } catch (error) {
     console.error('Error al obtener pedido:', error);
@@ -371,7 +397,12 @@ const pedidosDelNegocio = async (req, res) => {
       include: [
         { model: Usuario, as: 'cliente', attributes: ['id', 'nombre', 'telefono', 'foto_perfil'] },
         {
+          // Mismo hallazgo que en misPedidos (cliente): antes se traía la
+          // fila completa de Repartidor (clabe_bancaria desencriptada,
+          // documentos, ubicación GPS, notas de moderación) a cada negocio
+          // por cada pedido de su historial. Restringido a lo que la UI usa.
           model: Repartidor, as: 'repartidor',
+          attributes: ['id', 'calificacion_promedio', 'marca_vehiculo', 'color_vehiculo'],
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'telefono'] }],
         },
       ],

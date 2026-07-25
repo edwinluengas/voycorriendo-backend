@@ -5,5 +5,6 @@ dist/
 coverage/
 .DS_Store
 uploads/
+backup-historial-*.json
 
 package-lock.json
