@@ -117,27 +117,48 @@ async function cancelarPedidosPendientesSinRespuesta() {
   }
 }
 
+// Cuánto se le da al cliente para terminar de tokenizar/enviar la tarjeta
+// después de crear el pedido, antes de considerar que abandonó el pago (cerró
+// la app, se le fue la conexión, etc.) sin ni siquiera llegar a intentar el
+// cobro. Mucho más corto que el timeout general de 20 min porque aquí no hay
+// nada que esperar — a diferencia de "el negocio no ha respondido", no existe
+// ningún proceso en curso del otro lado.
+const SIN_INTENTO_MIN = parseInt(process.env.PEDIDO_CREDITO_SIN_INTENTO_MIN || '3');
+
 // Red de seguridad INDEPENDIENTE del intento síncrono en pagarConTarjeta:
-// cualquier pedido con tarjeta ya definitivamente rechazada (pago_estado
-// 'fallido') que sigue en 'pendiente' con crédito de plataforma aplicado se
-// cancela y se devuelve el crédito de inmediato, sin esperar el timeout
-// general de 20 min. Existe porque un rechazo real (2026-07-25, cuenta
-// 5545074460, dos veces seguidas) puede caer justo en la ventana de un
-// despliegue en curso y perderse el intento síncrono — este barrido corre
-// cada 5 min pase lo que pase, no depende de en qué instante se rechazó.
+// libera el crédito de plataforma atrapado en un pedido con tarjeta que
+// nunca va a llegar al negocio, en dos escenarios (bug real 2026-07-25,
+// cuenta 5545074460, visto en ambas variantes):
+//   a) la tarjeta fue rechazada de verdad (pago_estado 'fallido') — no
+//      esperar el timeout general de 20 min.
+//   b) el cliente NUNCA llegó a intentar el cobro (pago_estado sigue
+//      'pendiente', pago_referencia sigue null) — el crédito ya se había
+//      descontado al crear el pedido, pero si pasan más de SIN_INTENTO_MIN
+//      minutos sin que ni siquiera se intente el cobro, no tiene sentido
+//      seguir reteniendo el crédito mientras el cliente ya se movió a crear
+//      otro pedido y lo ve como "desaparecido".
+// Corre cada 5 min pase lo que pase, independiente de cuándo ocurrió cada cosa.
 async function liberarCreditoAtrapado() {
+  const limiteSinIntento = new Date(Date.now() - SIN_INTENTO_MIN * 60 * 1000);
+
   const pedidos = await Pedido.findAll({
     where: {
       estado: 'pendiente',
       metodo_pago: 'tarjeta',
-      pago_estado: 'fallido',
       credito_aplicado: { [Op.gt]: 0 },
+      [Op.or]: [
+        { pago_estado: 'fallido' },
+        { pago_estado: 'pendiente', pago_referencia: null, creado_en: { [Op.lt]: limiteSinIntento } },
+      ],
     },
   });
 
   for (const pedido of pedidos) {
+    const motivo = pedido.pago_estado === 'fallido'
+      ? 'Pago con tarjeta rechazado por el banco.'
+      : `El pago con tarjeta nunca se completó (más de ${SIN_INTENTO_MIN} min).`;
     const [cancelado] = await Pedido.update(
-      { estado: 'cancelado', cancelado_en: new Date(), nota_cancelacion: 'Pago con tarjeta rechazado por el banco.' },
+      { estado: 'cancelado', cancelado_en: new Date(), nota_cancelacion: motivo },
       { where: { id: pedido.id, estado: 'pendiente' } }
     );
     if (!cancelado) continue;
@@ -145,13 +166,13 @@ async function liberarCreditoAtrapado() {
       await creditosService.devolverCredito({
         usuarioId: pedido.cliente_id,
         monto: pedido.credito_aplicado,
-        motivo: `Devolución de crédito — pago con tarjeta rechazado (pedido ${pedido.numero}), detectado por el barrido de seguridad.`,
+        motivo: `Devolución de crédito — pedido ${pedido.numero} cancelado (${motivo}), detectado por el barrido de seguridad.`,
         pedidoId: pedido.id,
       });
-      console.log(`[PedidoTimeout] ${pedido.numero} — crédito de $${pedido.credito_aplicado} liberado (barrido de seguridad, pago ya fallido).`);
+      console.log(`[PedidoTimeout] ${pedido.numero} — crédito de $${pedido.credito_aplicado} liberado (barrido de seguridad: ${motivo}).`);
     } catch (e) {
       console.error(`[PedidoTimeout] FALLO liberando crédito atrapado de ${pedido.numero}:`, e.message);
-      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b>: crédito de $${parseFloat(pedido.credito_aplicado).toFixed(2)} atrapado tras rechazo de tarjeta — la devolución automática (barrido) FALLÓ, hacerla manual.`).catch(() => {});
+      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b>: crédito de $${parseFloat(pedido.credito_aplicado).toFixed(2)} atrapado (${motivo}) — la devolución automática (barrido) FALLÓ, hacerla manual.`).catch(() => {});
     }
   }
 }
