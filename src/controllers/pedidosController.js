@@ -310,8 +310,14 @@ const obtenerPedido = async (req, res) => {
           attributes: ['id', 'nombre', 'logo', 'telefono', 'direccion', 'latitud', 'longitud', 'categoria', 'tipo_entrega', 'usuario_id'],
         },
         {
+          // usuario_id es obligatorio aquí — es el campo que usa esRepartidor
+          // abajo. Sin él en `attributes`, Sequelize no lo carga (no es la PK
+          // ni participa del JOIN Pedido↔Repartidor) y esRepartidor siempre
+          // da false: el repartidor asignado no podía ver el detalle de su
+          // propio pedido (403 permanente). Bug real confirmado con un
+          // pedido de prueba end-to-end, 2026-07-24.
           model: Repartidor, as: 'repartidor',
-          attributes: ['id', 'calificacion_promedio', 'latitud', 'longitud', 'marca_vehiculo', 'color_vehiculo'],
+          attributes: ['id', 'usuario_id', 'calificacion_promedio', 'latitud', 'longitud', 'marca_vehiculo', 'color_vehiculo'],
           include: [{ model: Usuario, as: 'usuario', attributes: ['nombre', 'foto_perfil', 'telefono'] }],
         },
         { model: Usuario, as: 'cliente', attributes: ['id', 'nombre', 'telefono', 'foto_perfil'] },
@@ -345,8 +351,14 @@ const obtenerPedido = async (req, res) => {
     // mientras viene a entregar ('en_camino'). El repartidor siempre ve la
     // suya propia; admin sin restricción (soporte).
     if (pedidoData.repartidor && !esRepartidor && !esAdmin) {
+      // Negocio: mientras el repartidor va por el pedido — asignado pero
+      // aún sin marcar `recogido_en` (ver marcarRecogido en
+      // repartidoresController; `estado` salta a 'en_camino' desde el
+      // instante mismo de aceptar, así que NO sirve para distinguir esta
+      // ventana). Cliente: mientras el repartidor va en camino a entregar.
+      const esTerminal = ['entregado', 'cancelado', 'rechazado'].includes(pedidoData.estado);
       const ventanaAbierta =
-        (esNegocio && pedidoData.estado === 'listo') ||
+        (esNegocio && !pedidoData.recogido_en && !esTerminal) ||
         (esCliente && pedidoData.estado === 'en_camino');
       if (!ventanaAbierta) {
         delete pedidoData.repartidor.latitud;

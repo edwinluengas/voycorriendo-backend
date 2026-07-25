@@ -13,6 +13,7 @@ const {
   misEntregas,
   pedidosDisponibles,
   aceptarPedido,
+  marcarRecogido,
   miRuta,
   miPerfil,
   ganancias,
@@ -59,6 +60,7 @@ router.post('/retiro-diario',       retiroDiario);
 router.post('/aceptar-pedido', [
   body('pedido_id').isUUID(),
 ], aceptarPedido);
+router.patch('/pedidos/:id/recogido', marcarRecogido);
 
 // ─── Endpoint legacy (crear perfil completo en una sola llamada) ───
 router.post('/perfil', [

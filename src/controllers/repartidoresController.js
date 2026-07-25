@@ -624,6 +624,42 @@ const aceptarPedido = async (req, res) => {
   }
 };
 
+// ─── PATCH /api/repartidores/pedidos/:id/recogido ─────────
+// `aceptarPedido` salta directo a estado='en_camino' en el mismo instante
+// de aceptar — no hay ningún estado intermedio "asignado, viene a recoger".
+// Esto marca el momento REAL en que el repartidor ya tiene el pedido en
+// mano (columna `recogido_en`, existía en el schema desde antes pero nunca
+// se usaba). Es lo único que le da al negocio una ventana observable para
+// el mapa "el repartidor viene por tu pedido" — antes de esto esa ventana
+// medía 0 segundos. No toca `estado` ni las transiciones existentes.
+const marcarRecogido = async (req, res) => {
+  try {
+    const repartidor = await Repartidor.findOne({ where: { usuario_id: req.usuario.id } });
+    if (!repartidor) return res.status(403).json({ ok: false, mensaje: 'Sin acceso.' });
+
+    const [affectedCount] = await Pedido.update(
+      { recogido_en: new Date() },
+      { where: { id: req.params.id, repartidor_id: repartidor.id, recogido_en: null } }
+    );
+    if (affectedCount === 0) {
+      // Idempotente: si ya estaba marcado, no es error — solo informa.
+      const pedido = await Pedido.findByPk(req.params.id, { attributes: ['id', 'repartidor_id', 'recogido_en'] });
+      if (!pedido || String(pedido.repartidor_id) !== String(repartidor.id)) {
+        return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado o no asignado a ti.' });
+      }
+      return res.json({ ok: true, mensaje: 'Ya estaba marcado como recogido.', data: { recogido_en: pedido.recogido_en } });
+    }
+
+    const io = req.app.get('io');
+    io.to(`pedido:${req.params.id}`).emit('pedido_recogido', { pedido_id: req.params.id });
+
+    res.json({ ok: true, mensaje: 'Pedido marcado como recogido.' });
+  } catch (error) {
+    console.error('Error en marcarRecogido:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al marcar el pedido como recogido.' });
+  }
+};
+
 // ─── GET /api/repartidores/mi-ruta ────────────────────────
 const miRuta = async (req, res) => {
   try {
@@ -958,6 +994,7 @@ module.exports = {
   misEntregas,
   pedidosDisponibles,
   aceptarPedido,
+  marcarRecogido,
   miRuta,
   ganancias,
   solicitarDeposito,
