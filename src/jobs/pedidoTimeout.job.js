@@ -117,6 +117,45 @@ async function cancelarPedidosPendientesSinRespuesta() {
   }
 }
 
+// Red de seguridad INDEPENDIENTE del intento síncrono en pagarConTarjeta:
+// cualquier pedido con tarjeta ya definitivamente rechazada (pago_estado
+// 'fallido') que sigue en 'pendiente' con crédito de plataforma aplicado se
+// cancela y se devuelve el crédito de inmediato, sin esperar el timeout
+// general de 20 min. Existe porque un rechazo real (2026-07-25, cuenta
+// 5545074460, dos veces seguidas) puede caer justo en la ventana de un
+// despliegue en curso y perderse el intento síncrono — este barrido corre
+// cada 5 min pase lo que pase, no depende de en qué instante se rechazó.
+async function liberarCreditoAtrapado() {
+  const pedidos = await Pedido.findAll({
+    where: {
+      estado: 'pendiente',
+      metodo_pago: 'tarjeta',
+      pago_estado: 'fallido',
+      credito_aplicado: { [Op.gt]: 0 },
+    },
+  });
+
+  for (const pedido of pedidos) {
+    const [cancelado] = await Pedido.update(
+      { estado: 'cancelado', cancelado_en: new Date(), nota_cancelacion: 'Pago con tarjeta rechazado por el banco.' },
+      { where: { id: pedido.id, estado: 'pendiente' } }
+    );
+    if (!cancelado) continue;
+    try {
+      await creditosService.devolverCredito({
+        usuarioId: pedido.cliente_id,
+        monto: pedido.credito_aplicado,
+        motivo: `Devolución de crédito — pago con tarjeta rechazado (pedido ${pedido.numero}), detectado por el barrido de seguridad.`,
+        pedidoId: pedido.id,
+      });
+      console.log(`[PedidoTimeout] ${pedido.numero} — crédito de $${pedido.credito_aplicado} liberado (barrido de seguridad, pago ya fallido).`);
+    } catch (e) {
+      console.error(`[PedidoTimeout] FALLO liberando crédito atrapado de ${pedido.numero}:`, e.message);
+      tg.enviarAdmin(`⚠️ Pedido <b>${pedido.numero}</b>: crédito de $${parseFloat(pedido.credito_aplicado).toFixed(2)} atrapado tras rechazo de tarjeta — la devolución automática (barrido) FALLÓ, hacerla manual.`).catch(() => {});
+    }
+  }
+}
+
 // Alerta (no cancela) pedidos "en_camino" atascados. Se avisa UNA vez por
 // pedido: solo si el cruce del umbral cae dentro de la ventana de este tick
 // del cron (evita reenviar la misma alerta cada 5 min indefinidamente).
@@ -156,8 +195,13 @@ function iniciarJobPedidoTimeout() {
     } catch (e) {
       console.error('[PedidoTimeout] Error en alertarPedidosAtascados:', e.message);
     }
+    try {
+      await liberarCreditoAtrapado();
+    } catch (e) {
+      console.error('[PedidoTimeout] Error en liberarCreditoAtrapado:', e.message);
+    }
   });
-  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min.`);
+  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min, libera crédito atrapado por tarjeta rechazada en cada corrida.`);
 }
 
 module.exports = { iniciarJobPedidoTimeout };

@@ -806,6 +806,21 @@ const calificarPedido = async (req, res) => {
       propina: propinaFinal,
     });
 
+    // Queja del cliente: calificación baja (1-2★) y/o comentario escrito —
+    // antes esto solo se acumulaba en silencio hasta cruzar el umbral de
+    // baja permanente (6+ calificaciones); una queja individual nunca
+    // llegaba a nadie hasta entonces. Ahora avisa a admin de inmediato.
+    const calNeg = calificacion_negocio ? Number(calificacion_negocio) : null;
+    const calRep = calificacion_repartidor ? Number(calificacion_repartidor) : null;
+    if ((calNeg && calNeg <= 2) || (calRep && calRep <= 2) || (comentario && comentario.trim())) {
+      tg.enviarAdmin(
+        `📣 <b>Queja de cliente</b> — pedido <b>${pedido.numero}</b>\n` +
+        (calNeg ? `Negocio: ${calNeg}★\n` : '') +
+        (calRep ? `Repartidor: ${calRep}★\n` : '') +
+        (comentario?.trim() ? `Comentario: "${comentario.trim()}"` : '')
+      ).catch(() => {});
+    }
+
     if (calificacion_negocio) {
       const negocio = await Negocio.findByPk(pedido.negocio_id);
       if (negocio) {

@@ -8,6 +8,7 @@
 
 const axios  = require('axios');
 const crypto = require('crypto');
+const tg = require('./telegram.service');
 
 const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
@@ -157,6 +158,10 @@ const aplicarResultadoPago = async (pedido, pago) => {
       console.error(
         `[pago] MONTO NO COINCIDE pedido ${pedido.numero}: pagado=$${montoPagado} esperado=$${montoEsperado}`
       );
+      // Posible manipulación del monto o un bug real en el cálculo de
+      // fee/crédito — de cualquier forma, un admin debe verlo de inmediato,
+      // no solo quedar en el log del servidor.
+      tg.enviarAdmin(`🚨 <b>Monto de pago no coincide</b> — pedido <b>${pedido.numero}</b>\nMP cobró: $${montoPagado.toFixed(2)} | Esperado: $${montoEsperado.toFixed(2)}\nRevisar manual (posible manipulación o bug de cálculo).`).catch(() => {});
       pedido.pago_estado     = 'pendiente';
       pedido.pago_referencia = String(pago.id);
       await pedido.save();
@@ -199,6 +204,10 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
     return await aplicarResultadoPago(pedido, pago);
   } catch (error) {
     console.error('Error webhook MP:', error.response?.data || error.message);
+    // Un webhook que falla puede dejar un pago YA capturado en MP sin
+    // reflejarse en nuestro pedido (pago_estado se queda 'pendiente' para
+    // siempre si nadie más lo toca) — vale la pena que un admin lo revise.
+    tg.enviarAdmin(`🚨 <b>Error procesando webhook de Mercado Pago</b>\n${JSON.stringify(error.response?.data || error.message).slice(0, 300)}`).catch(() => {});
     return { ok: false, mensaje: 'Error procesando webhook.' };
   }
 };

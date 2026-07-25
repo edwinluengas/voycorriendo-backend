@@ -214,6 +214,14 @@ const pagarConTarjeta = async (req, res) => {
       }
     }
 
+    // Aviso general de pago rechazado — un evento de negocio que vale la
+    // pena que el admin vea (patrones de fraude, tarjetas con problemas
+    // recurrentes, etc.), no solo cuando había crédito de por medio.
+    if (['rejected', 'cancelled'].includes(result.statusMP)) {
+      const montoRechazado = parseFloat(result.pedido.total) - parseFloat(result.pedido.credito_aplicado || 0);
+      tg.enviarAdmin(`💳❌ Pago con tarjeta rechazado — pedido <b>${result.pedido.numero}</b>\nMonto: $${montoRechazado.toFixed(2)} | Detalle: ${result.statusDetail || 'sin detalle'}`).catch(() => {});
+    }
+
     res.json({
       ok: true,
       mensaje: mensajePorEstadoPago(result.statusMP),
@@ -223,6 +231,14 @@ const pagarConTarjeta = async (req, res) => {
     const mpError = error.response?.data;
     console.error('[MP] Error pagarConTarjeta:', JSON.stringify(mpError || error.message));
     const mensajeAmigable = mpError?.cause?.[0]?.description || mpError?.message || 'No se pudo procesar el pago. Verifica los datos de tu tarjeta.';
+    // Un rechazo normal de tarjeta (mpError.cause) ya es un evento de negocio
+    // esperado — no es un error del sistema. Lo que SÍ debe alertar a admin
+    // es cuando la integración misma falla (red, credenciales, MP caído,
+    // error inesperado sin una causa clara de MP) — eso sí es un "error"
+    // que puede estar bloqueando cobros para TODOS los clientes, no solo uno.
+    if (!mpError?.cause) {
+      tg.enviarAdmin(`🚨 <b>Error de integración con Mercado Pago</b> (pagarConTarjeta)\n${mpError ? JSON.stringify(mpError).slice(0, 300) : error.message}`).catch(() => {});
+    }
     res.status(400).json({
       ok: false,
       mensaje: mensajeAmigable,
