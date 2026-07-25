@@ -9,6 +9,7 @@
 const { Op } = require('sequelize');
 const { Pedido, Usuario, Negocio, Repartidor } = require('../models');
 const pagosService = require('../services/pagos.service');
+const creditosService = require('../services/creditos.service');
 const push = require('../services/notificaciones.service');
 const tg   = require('../services/telegram.service');
 
@@ -182,6 +183,35 @@ const pagarConTarjeta = async (req, res) => {
 
     if (result.pedido.pago_estado === 'capturado') {
       await notificarPagoCapturado(req.app, result.pedido);
+    }
+
+    // Rechazo DEFINITIVO de MP (rejected/cancelled — no "en revisión") con
+    // crédito de plataforma ya consumido en este pedido: el crédito se
+    // había descontado al CREAR el pedido, antes de saber si la tarjeta
+    // iba a aprobar. Si la tarjeta rechaza, ese crédito queda atrapado en
+    // un pedido que nunca llegará al negocio (no está capturado) — bug
+    // real detectado 2026-07-25 (cuenta 5545074460, pedido con $175 de
+    // crédito + $20 rechazados por el banco, tarjeta cc_rejected_high_risk,
+    // crédito nunca devuelto). Se cancela el pedido de inmediato y se
+    // devuelve el crédito, sin esperar los 20 min del job de timeout.
+    if (['rejected', 'cancelled'].includes(result.statusMP) && parseFloat(result.pedido.credito_aplicado || 0) > 0) {
+      const [cancelado] = await Pedido.update(
+        { estado: 'cancelado', cancelado_en: new Date(), nota_cancelacion: 'Pago con tarjeta rechazado por el banco.' },
+        { where: { id: result.pedido.id, estado: 'pendiente' } }
+      );
+      if (cancelado) {
+        try {
+          await creditosService.devolverCredito({
+            usuarioId: result.pedido.cliente_id,
+            monto: result.pedido.credito_aplicado,
+            motivo: `Devolución de crédito — pago con tarjeta rechazado (pedido ${result.pedido.numero}).`,
+            pedidoId: result.pedido.id,
+          });
+        } catch (e) {
+          console.error(`[credito] FALLO devolviendo crédito tras rechazo de tarjeta (${result.pedido.numero}):`, e.message);
+          tg.enviarAdmin(`⚠️ Pedido <b>${result.pedido.numero}</b>: pago con tarjeta rechazado con $${parseFloat(result.pedido.credito_aplicado).toFixed(2)} de crédito aplicado — la devolución automática FALLÓ, hacerla manual.`).catch(() => {});
+        }
+      }
     }
 
     res.json({
