@@ -104,6 +104,30 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
     tier:             tipoEnvio,
   });
 
+  // ── Crédito de plataforma en un pedido EN EFECTIVO ─────────
+  // El repartidor le paga al restaurante el subtotal COMPLETO, pero al
+  // cliente solo le cobra el neto (total − crédito). Esa diferencia sale del
+  // bolsillo del repartidor: sin esto, un pedido de $345 con $100 de crédito
+  // lo dejaba pagando $310 al restaurante habiendo cobrado $245 — perdía $65
+  // suyos en vez de ganar sus $35. La plataforma le abona el crédito a su
+  // fondo retirable, que es exactamente lo que lo deja en cero + su tarifa.
+  const creditoEfectivo = metodoPago === 'efectivo' ? creditoAplicado : 0;
+  if (creditoEfectivo > 0 && repartidor) {
+    try {
+      const { FondoRepartidor } = require('../models');
+      const [fondo] = await FondoRepartidor.findOrCreate({
+        where: { repartidor_id: repartidor.id },
+        defaults: { monto_disponible: 0, monto_reservado: 0 },
+      });
+      await fondo.increment('monto_disponible', { by: creditoEfectivo });
+      console.log(`[economia] ${pedido.numero}: $${creditoEfectivo.toFixed(2)} de crédito abonados al fondo del repartidor (pagó de más al restaurante en efectivo).`);
+      tg.enviarAdmin(`💳 <b>${pedido.numero}</b>: $${creditoEfectivo.toFixed(2)} de crédito de plataforma abonados al fondo del repartidor — cobró en efectivo solo el neto pero pagó el subtotal completo al restaurante.`).catch(() => {});
+    } catch (e) {
+      console.error('[economia] FALLO abonando el crédito al fondo del repartidor:', e.message);
+      tg.enviarAdmin(`⚠️ <b>${pedido.numero}</b>: no se pudo abonar $${creditoEfectivo.toFixed(2)} de crédito al fondo del repartidor. Hacerlo manual — le falta ese dinero.`).catch(() => {});
+    }
+  }
+
   // ── Tracking de deuda para pedidos en efectivo ─────────────
   // En efectivo: el repartidor paga al restaurante y cobra al cliente.
   // El restaurante queda debiendo el FEE ($35) a la plataforma.

@@ -708,7 +708,7 @@ const ganancias = async (req, res) => {
 
     const entregados = await Pedido.findAll({
       where: { repartidor_id: repartidor.id, estado: 'entregado' },
-      attributes: ['id', 'numero', 'creado_en', 'pago_repartidor', 'propina', 'metodo_pago', 'total'],
+      attributes: ['id', 'numero', 'creado_en', 'pago_repartidor', 'propina', 'metodo_pago', 'total', 'credito_aplicado'],
       order: [['creado_en', 'DESC']],
     });
 
@@ -716,9 +716,15 @@ const ganancias = async (req, res) => {
     const totalPropinas = entregados.reduce((s, p) => s + parseFloat(p.propina || 0), 0);
     // Efectivo: el repartidor ya recibió el dinero de mano del cliente al
     // entregar — nunca pasa por la plataforma, cuenta como "pagado" desde ya.
+    // EXCEPTO la parte que el cliente cubrió con crédito de plataforma: esa
+    // no la cobró en mano, se le abona al fondo (ver economia.service), así
+    // que contarla como "ya pagada" inflaba su histórico de cobrado.
     const gananciaEfectivo = entregados
       .filter(p => p.metodo_pago === 'efectivo')
-      .reduce((s, p) => s + parseFloat(p.pago_repartidor || 0) + parseFloat(p.propina || 0), 0);
+      .reduce((s, p) => {
+        const enMano = Math.max(0, parseFloat(p.pago_repartidor || 0) - parseFloat(p.credito_aplicado || 0));
+        return s + enMano + parseFloat(p.propina || 0);
+      }, 0);
 
     const fondo = await FondoRepartidor.findOne({ where: { repartidor_id: repartidor.id } });
 
