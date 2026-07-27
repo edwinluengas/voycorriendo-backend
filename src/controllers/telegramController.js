@@ -47,9 +47,30 @@ const manejarUpdate = async (req, res) => {
       if (!usuario) {
         return enviar(chatId, '❌ Token inválido. Genera un nuevo enlace desde la app.');
       }
+      // El token debe estar VIGENTE. Sin esto, un JWT viejo o ya revocado
+      // (logout, cambio de contraseña) seguía sirviendo para vincular un
+      // chat — y en una cuenta admin ese chat recibe los códigos de segundo
+      // factor y puede correr los comandos de administración del bot.
+      if ((payload.tokenVersion ?? 0) !== (usuario.token_version ?? 0)) {
+        return enviar(chatId, '❌ Ese enlace ya no es válido. Genera uno nuevo desde la app.');
+      }
 
+      const chatAnterior = usuario.telegram_chat_id;
       usuario.telegram_chat_id = chatId;
       await usuario.save();
+
+      // Vincular el Telegram de una cuenta admin es un evento de seguridad:
+      // ese chat pasa a recibir los códigos de acceso al panel.
+      if (usuario.rol === 'admin') {
+        const seguridad = require('../services/seguridadAdmin.service');
+        await seguridad.registrarEvento({ usuario, accion: 'telegram_vinculado_admin', req: null, detalle: { chatId, chatAnterior } });
+        if (chatAnterior && String(chatAnterior) !== String(chatId)) {
+          await enviar(chatAnterior,
+            '🚨 <b>Alerta de seguridad</b>\nEl Telegram de esta cuenta ADMIN se acaba de vincular a otro chat. '
+            + 'Si no fuiste tú, cambia tu contraseña ahora y corre <code>admin-seguridad.js cerrar-sesiones</code>.'
+          ).catch(() => {});
+        }
+      }
 
       return enviar(chatId,
         `✅ <b>Cuenta vinculada</b>\nHola ${usuario.nombre}, recibirás notificaciones de VoyCorriendo aquí.`
@@ -86,7 +107,7 @@ const manejarUpdate = async (req, res) => {
   // el update viene de Telegram).
   if (texto.startsWith('/perdidas') || texto.startsWith('/perdida_')) {
     const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
-    if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
+    if (!admin || admin.rol !== 'admin') {   // rol REAL, no el toggle modo_activo
       return enviar(chatId, '⛔ Este comando es solo para administradores.');
     }
     const { PerdidaPedido, Pedido } = require('../models');
@@ -140,7 +161,7 @@ const manejarUpdate = async (req, res) => {
   // 8 letras y quedaría atrapado aquí sin nunca llegar a su propio bloque.
   if (/^\/credito(\s|$)/.test(texto)) {
     const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
-    if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
+    if (!admin || admin.rol !== 'admin') {   // rol REAL, no el toggle modo_activo
       return enviar(chatId, '⛔ Este comando es solo para administradores.');
     }
     const partes = texto.split(/\s+/);
@@ -187,7 +208,7 @@ const manejarUpdate = async (req, res) => {
   // la plataforma (pedidos entregados pagados con crédito).
   if (texto === '/creditos') {
     const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
-    if (!admin || (admin.rol !== 'admin' && admin.modo_activo !== 'admin')) {
+    if (!admin || admin.rol !== 'admin') {   // rol REAL, no el toggle modo_activo
       return enviar(chatId, '⛔ Este comando es solo para administradores.');
     }
     try {

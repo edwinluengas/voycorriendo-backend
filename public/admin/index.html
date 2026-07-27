@@ -200,6 +200,28 @@
     btn.disabled = true; btn.textContent = 'Entrando...';
     try {
       const r = await api('POST', '/auth/login', { telefono: telefono, password: pwd });
+
+      // Segundo factor obligatorio para admins: el backend responde
+      // requiere_2fa y manda un código por Telegram / SMS / correo. La
+      // contraseña sola NO abre el panel.
+      if (r.requiere_2fa) {
+        const codigo = prompt(
+          'Te enviamos un código de verificación por ' + (r.canales || []).join(' y ') +
+          '.\n\nEscríbelo para entrar (vence en ' + (r.vigencia_min || 10) + ' minutos):'
+        );
+        if (!codigo) { err.textContent = 'Verificación cancelada.'; return; }
+        const r2 = await api('POST', '/auth/login-2fa', { telefono: telefono, password: pwd, codigo: codigo.trim() });
+        const u2 = (r2.data && r2.data.usuario) || r2.usuario;
+        const t2 = (r2.data && r2.data.token)   || r2.token;
+        if (!t2 || !u2)         throw new Error('Respuesta inválida del servidor');
+        if (u2.rol !== 'admin') throw new Error('Esta cuenta no es admin');
+        token = t2; yo = u2;
+        localStorage.setItem('vc_admin_token', token);
+        localStorage.setItem('vc_admin_yo', JSON.stringify(yo));
+        mostrarApp();
+        return;
+      }
+
       const u = (r.data && r.data.usuario) || r.usuario;
       const t = (r.data && r.data.token)   || r.token;
       if (!t || !u)             throw new Error('Respuesta inválida del servidor');

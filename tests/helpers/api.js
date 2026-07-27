@@ -23,11 +23,39 @@ const CUENTAS_TEST = {
 
 const _tokenCache = {};
 
+// Las cuentas ADMIN llevan segundo factor obligatorio (el código real llega
+// por Telegram/SMS/correo del dueño, que los tests no pueden leer). Para
+// poder probar, se siembra un código conocido directo en la base — el mismo
+// hash bcrypt que escribiría el servidor — y se canjea por la vía normal.
+// El candado NO se salta: se sigue pasando por /auth/login-2fa.
+const completar2FA = async (telefono, password) => {
+  const bcrypt = require('bcryptjs');
+  const { conectar } = require('./db');
+  const db = await conectar();
+  const codigo = '246813';
+  try {
+    await db.query(
+      `UPDATE usuarios SET login2fa_codigo = $1, login2fa_expira = NOW() + INTERVAL '10 minutes', login2fa_intentos = 0
+        WHERE telefono = $2`,
+      [await bcrypt.hash(codigo, 10), telefono],
+    );
+  } finally {
+    // conectar() abre un cliente nuevo cada vez; sin cerrarlo, Jest se queda
+    // colgado al final esperando que el event loop se vacíe.
+    await db.end().catch(() => {});
+  }
+  return cliente.post('/auth/login-2fa', { telefono, password, codigo });
+};
+
 const login = async (rol) => {
   if (_tokenCache[rol]) return _tokenCache[rol];
   const { telefono, password } = CUENTAS_TEST[rol];
-  const res = await cliente.post('/auth/login', { telefono, password });
-  if (!res.data?.ok) {
+  let res = await cliente.post('/auth/login', { telefono, password });
+
+  if (res.data?.requiere_2fa) {
+    res = await completar2FA(telefono, password);
+  }
+  if (!res.data?.ok || !res.data?.data?.token) {
     throw new Error(`Login falló para ${rol} (${telefono}): ${JSON.stringify(res.data)}`);
   }
   _tokenCache[rol] = {

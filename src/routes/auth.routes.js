@@ -2,7 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const rateLimit = require('express-rate-limit');
 const {
-  registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout,
+  registro, verificarOTP, login, loginSegundoFactor, solicitarOTP, obtenerPerfil, logout,
   recuperarPassword, restablecerPassword,
 } = require('../controllers/authController');
 const { proteger } = require('../middleware/auth');
@@ -85,6 +85,13 @@ router.post('/login', limiteAuth, [
   body('telefono').notEmpty().withMessage('El teléfono es obligatorio'),
   body('password').notEmpty().withMessage('La contraseña es obligatoria'),
 ], login);
+// Segundo paso del login de administrador (código de un solo uso). Mismo
+// límite por IP que el login: 5 intentos fallidos por 15 min.
+router.post('/login-2fa', limiteAuth, [
+  body('telefono').notEmpty().withMessage('El teléfono es obligatorio'),
+  body('password').notEmpty().withMessage('La contraseña es obligatoria'),
+  body('codigo').notEmpty().withMessage('El código es obligatorio'),
+], loginSegundoFactor);
 // Recuperación de contraseña: 5 códigos por hora por IP (cada uno cuesta un
 // SMS o un email real), y el canje del código con el límite de auth
 // (5 intentos/15 min) para que no se pueda adivinar por fuerza bruta.

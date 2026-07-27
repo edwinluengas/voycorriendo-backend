@@ -207,6 +207,15 @@ app.use('/api/telegram',     telegramRoutes);
 // ─── Panel web de administracion ───────────────────────────
 // Sirve los archivos estaticos del panel admin en /admin
 // (login.html, dashboard.html, etc.)
+// El panel admin no debe aparecer en buscadores ni quedar cacheado en el
+// navegador/CDN: cualquier pista pública de dónde está y qué contiene es
+// ayuda gratis para quien busque atacarlo. El contenido en sí no expone
+// datos (todo lo pide con token), pero no hay razón para publicarlo.
+app.use('/admin', (req, res, next) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 
 // Páginas legales
@@ -628,6 +637,20 @@ const migrarDB = async () => {
   await run(`DROP TYPE IF EXISTS "enum_repartidores_tipo_vehiculo"`);
   await run(`UPDATE repartidores SET tipo_vehiculo = 'motocicleta' WHERE tipo_vehiculo = 'bicicleta'`);
   await run(`ALTER TABLE repartidores ALTER COLUMN tipo_vehiculo SET DEFAULT 'motocicleta'`);
+
+  // ── Candados de seguridad de cuentas (2026-07-26) ─────────────
+  // Bloqueo por intentos fallidos + segundo factor obligatorio para admins.
+  // Ver services/seguridadAdmin.service.js.
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS intentos_fallidos SMALLINT NOT NULL DEFAULT 0`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_hasta TIMESTAMPTZ`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ultimo_login_ip VARCHAR(45)`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS admin_2fa_activo BOOLEAN NOT NULL DEFAULT true`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS login2fa_codigo VARCHAR(100)`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS login2fa_expira TIMESTAMPTZ`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS login2fa_intentos SMALLINT NOT NULL DEFAULT 0`);
+  // La bitácora se consulta por admin y por fecha; sin índice, cada revisión
+  // de "quién hizo qué" barre la tabla completa.
+  await run(`CREATE INDEX IF NOT EXISTS idx_audit_admin_fecha ON audit_logs (admin_id, creado_en DESC)`);
 
   console.log('[migración] Completada.');
 };

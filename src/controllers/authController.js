@@ -6,18 +6,25 @@ const twilio = require('twilio');
 const Usuario = require('../models/Usuario');
 const { normalizarTelefono, telefonoValido, aE164, enmascarar, LADA_DEFAULT, PAIS_DEFAULT } = require('../utils/telefono');
 const { enviarEmail, emailConfigurado, emailCodigoReset } = require('../services/email.service');
+const seguridad = require('../services/seguridadAdmin.service');
 
 const MAX_OTP_INTENTOS = 5;
 const MAX_RESET_INTENTOS = 5;
 const RESET_VIGENCIA_MIN = 15;
 
-// Genera JWT incluyendo tokenVersion para poder invalidar sesiones
-const generarToken = (usuario) =>
-  jwt.sign(
-    { id: usuario.id, tokenVersion: usuario.token_version ?? 0 },
+// Genera JWT incluyendo tokenVersion para poder invalidar sesiones.
+// `dosFactores` marca las sesiones que completaron el segundo factor — el
+// panel de administración lo exige (ver middleware soloAdmin).
+// La sesión de un admin dura mucho menos que la de un cliente: si le roban
+// el token, la ventana para usarlo es de horas, no de una semana.
+const generarToken = (usuario, { dosFactores = false } = {}) => {
+  const esAdministrador = usuario.rol === 'admin';
+  return jwt.sign(
+    { id: usuario.id, tokenVersion: usuario.token_version ?? 0, dosFactores },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    { expiresIn: esAdministrador ? seguridad.EXPIRACION_TOKEN_ADMIN : (process.env.JWT_EXPIRES_IN || '7d') }
   );
+};
 
 // Genera OTP de 6 dígitos con entropía criptográfica
 const generarOTP = () => randomInt(0, 1000000).toString().padStart(6, '0');
@@ -261,9 +268,35 @@ const login = async (req, res) => {
         codigo: 'USUARIO_NO_ENCONTRADO',
       });
     }
-    if (!(await usuario.verificarPassword(password))) {
-      return res.status(401).json({ ok: false, mensaje: 'Contraseña incorrecta.' });
+    // Cuenta bloqueada por intentos fallidos: ni siquiera se compara la
+    // contraseña (evita seguir dándole señal al que está probando).
+    if (seguridad.estaBloqueada(usuario)) {
+      return res.status(429).json({
+        ok: false,
+        mensaje: `Cuenta bloqueada temporalmente por intentos fallidos. Vuelve a intentar en ${seguridad.minutosRestantes(usuario)} minutos.`,
+        codigo: 'CUENTA_BLOQUEADA',
+      });
     }
+
+    if (!(await usuario.verificarPassword(password))) {
+      // Bloqueo por CUENTA además del límite por IP: un atacante con muchas
+      // IPs esquiva el segundo pero no este. En cuentas admin el margen es
+      // menor y cada intento le llega al dueño por Telegram.
+      const resultado = await seguridad.registrarIntentoFallido(usuario, req);
+      if (resultado.bloqueada) {
+        return res.status(429).json({
+          ok: false,
+          mensaje: `Demasiados intentos fallidos. Tu cuenta queda bloqueada ${resultado.minutos} minutos por seguridad.`,
+          codigo: 'CUENTA_BLOQUEADA',
+        });
+      }
+      return res.status(401).json({
+        ok: false,
+        mensaje: 'Contraseña incorrecta.',
+        intentos_restantes: resultado.restantes,
+      });
+    }
+    await seguridad.limpiarIntentos(usuario);
 
     const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
 
@@ -277,6 +310,32 @@ const login = async (req, res) => {
     }
     if (esProduccion && usuario.estado !== 'activo') {
       return res.status(403).json({ ok: false, mensaje: 'Tu cuenta no está activa. Contacta a soporte.' });
+    }
+
+    // ── Segundo factor obligatorio para administradores ──
+    // La contraseña sola NO abre el panel: hace falta un código de un solo
+    // uso que llega a Telegram / SMS / correo del propio admin. Si ningún
+    // canal entrega, el login se RECHAZA — no hay bypass. La salida para un
+    // admin que se quede fuera es scripts/admin-seguridad.js (requiere
+    // acceso a la base, o sea, al dueño).
+    if (usuario.rol === 'admin' && usuario.admin_2fa_activo) {
+      const canales = await seguridad.enviarCodigo2FA(usuario, req);
+      if (canales.length === 0) {
+        await seguridad.registrarEvento({ usuario, accion: '2fa_sin_canal', req });
+        return res.status(503).json({
+          ok: false,
+          mensaje: 'No pudimos enviarte el código de verificación. Revisa Telegram/SMS/correo del servidor antes de volver a intentar.',
+          codigo: 'SIN_CANAL_2FA',
+        });
+      }
+      await seguridad.registrarEvento({ usuario, accion: 'login_admin_paso1', req });
+      return res.json({
+        ok: true,
+        requiere_2fa: true,
+        mensaje: `Te enviamos un código de verificación por ${canales.join(' y ')}. Escríbelo para entrar.`,
+        canales,
+        vigencia_min: seguridad.VIGENCIA_2FA_MIN,
+      });
     }
 
     await usuario.update({ ultima_conexion: new Date() });
@@ -298,6 +357,73 @@ const login = async (req, res) => {
   } catch (error) {
     console.error('Error en login:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al iniciar sesión.' });
+  }
+};
+
+// ─── POST /api/auth/login-2fa ────────────────────────────
+// Segundo paso del login de administrador. Body: { telefono, lada, password, codigo }
+//
+// Se vuelve a pedir la contraseña a propósito: así el código por sí solo no
+// sirve de nada si alguien alcanza a verlo (hombro, notificación en pantalla
+// bloqueada, Telegram abierto en otra máquina).
+const loginSegundoFactor = async (req, res) => {
+  try {
+    const { password, codigo } = req.body;
+    if (!codigo || !password) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta el código o la contraseña.' });
+    }
+    const { lada, telefono } = normalizarTelefono(req.body.telefono, req.body.lada);
+    const usuario = await buscarPorTelefono({ lada, telefono });
+
+    // Mismo mensaje para cuenta inexistente y contraseña mala: este endpoint
+    // no debe servir para averiguar nada.
+    const generico = () => res.status(401).json({ ok: false, mensaje: 'Datos incorrectos. Vuelve a iniciar sesión.' });
+    if (!usuario) return generico();
+
+    if (seguridad.estaBloqueada(usuario)) {
+      return res.status(429).json({
+        ok: false,
+        mensaje: `Cuenta bloqueada temporalmente. Vuelve a intentar en ${seguridad.minutosRestantes(usuario)} minutos.`,
+        codigo: 'CUENTA_BLOQUEADA',
+      });
+    }
+    if (!(await usuario.verificarPassword(password))) {
+      const resultado = await seguridad.registrarIntentoFallido(usuario, req);
+      if (resultado.bloqueada) {
+        return res.status(429).json({
+          ok: false,
+          mensaje: `Demasiados intentos fallidos. Cuenta bloqueada ${resultado.minutos} minutos.`,
+          codigo: 'CUENTA_BLOQUEADA',
+        });
+      }
+      return generico();
+    }
+
+    const verificacion = await seguridad.verificarCodigo2FA(usuario, codigo, req);
+    if (!verificacion.ok) {
+      return res.status(400).json({ ok: false, mensaje: verificacion.mensaje, codigo: 'CODIGO_2FA_INVALIDO' });
+    }
+
+    await seguridad.limpiarIntentos(usuario);
+    await seguridad.registrarLoginAdmin(usuario, req);
+
+    const token = generarToken(usuario, { dosFactores: true });
+    res.json({
+      ok: true,
+      mensaje: `¡Bienvenido, ${usuario.nombre}!`,
+      data: {
+        token,
+        usuario: {
+          id: usuario.id, nombre: usuario.nombre, apellido: usuario.apellido,
+          telefono: usuario.telefono, lada: usuario.lada, pais: usuario.pais, email: usuario.email,
+          rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
+          credito_disponible: parseFloat(usuario.credito_disponible || 0),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error en loginSegundoFactor:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al verificar el código.' });
   }
 };
 
@@ -557,6 +683,6 @@ const logout = async (req, res) => {
 };
 
 module.exports = {
-  registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout,
+  registro, verificarOTP, login, loginSegundoFactor, solicitarOTP, obtenerPerfil, logout,
   recuperarPassword, restablecerPassword,
 };

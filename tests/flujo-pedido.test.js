@@ -92,6 +92,43 @@ describe('Seguridad de registro', () => {
   });
 });
 
+describe('Candados del panel de administración', () => {
+  test('la contraseña sola NO abre una sesión de admin (exige segundo factor)', async () => {
+    const res = await cliente.post('/auth/login', {
+      telefono: '0000000001', password: 'VoyTest2026!',
+    });
+    expect(res.data.requiere_2fa).toBe(true);
+    expect(res.data?.data?.token).toBeUndefined();   // no entrega token en el paso 1
+  });
+
+  test('un token SIN segundo factor no entra a /api/admin', async () => {
+    const jwt = require('jsonwebtoken');
+    const { rows } = await db.query(`SELECT id, token_version FROM usuarios WHERE telefono = '0000000001'`);
+    // Token bien firmado y vigente, pero sin la marca `dosFactores` — así se
+    // veían todos los tokens antes de este candado.
+    const tokenViejo = jwt.sign(
+      { id: rows[0].id, tokenVersion: rows[0].token_version || 0 },
+      process.env.JWT_SECRET, { expiresIn: '1h' },
+    );
+    const res = await cliente.get('/admin/creditos/resumen', conAuth(tokenViejo));
+    expect(res.status).toBe(403);
+    expect(res.data.codigo).toBe('REQUIERE_2FA');
+  });
+
+  test('una cuenta que NO es admin no entra a /api/admin', async () => {
+    const { token } = await login('cliente');
+    const res = await cliente.get('/admin/creditos/resumen', conAuth(token));
+    expect(res.status).toBe(403);
+  });
+
+  test('el token de admin con 2FA sí abre el panel', async () => {
+    const { token } = await login('admin');
+    const res = await cliente.get('/admin/creditos/resumen', conAuth(token));
+    expect(res.status).toBe(200);
+    expect(res.data.ok).toBe(true);
+  });
+});
+
 describe('Sistema de tokens eliminado', () => {
   test('las rutas /api/tokens/* ya no existen (404)', async () => {
     const { token } = await login('negocio');

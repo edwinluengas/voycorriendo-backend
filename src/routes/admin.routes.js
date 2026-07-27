@@ -5,15 +5,30 @@
  * Solo usuarios con rol = 'admin' pueden tocarlas.
  */
 const express = require('express');
-const { proteger, restringirA } = require('../middleware/auth');
+const rateLimit = require('express-rate-limit');
+const { proteger, soloAdmin } = require('../middleware/auth');
 const ctrl = require('../controllers/adminController');
 const speiCtrl = require('../controllers/speiController');
 
 const router = express.Router();
 
-// Aplica auth + admin a TODAS las rutas de este router
+// Techo propio para el panel: aunque un token admin se filtre, no se puede
+// usar para barrer la base entera a alta velocidad. 300 req / 15 min es
+// holgado para el uso humano real del panel y corta cualquier automatización.
+const limiteAdmin = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { ok: false, mensaje: 'Demasiadas solicitudes al panel. Espera unos minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Aplica auth + admin ESTRICTO a TODAS las rutas de este router.
+// soloAdmin exige rol real 'admin' (no el toggle modo_activo), sesión con
+// segundo factor completado, y deja bitácora de cada acción.
+router.use(limiteAdmin);
 router.use(proteger);
-router.use(restringirA('admin'));
+router.use(soloAdmin);
 
 // ─── Dashboard general ──────────────────────────────────────
 router.get('/dashboard', ctrl.dashboard);

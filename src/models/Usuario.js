@@ -127,6 +127,42 @@ const Usuario = sequelize.define('Usuario', {
     defaultValue: 0,
     allowNull: false,
   },
+  // ─── Candados de seguridad (ver services/seguridadAdmin.service.js) ──
+  // Bloqueo de la CUENTA por intentos fallidos. El límite por IP no basta:
+  // un atacante con muchas IPs lo esquiva sin despeinarse.
+  intentos_fallidos: {
+    type: DataTypes.SMALLINT,
+    defaultValue: 0,
+    allowNull: false,
+  },
+  bloqueado_hasta: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  ultimo_login_ip: {
+    type: DataTypes.STRING(45),   // cabe una IPv6 completa
+    allowNull: true,
+  },
+  // Segundo factor obligatorio para cuentas admin (se puede apagar por
+  // cuenta SOLO desde scripts/admin-seguridad.js, nunca por la API).
+  admin_2fa_activo: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    allowNull: false,
+  },
+  login2fa_codigo: {
+    type: DataTypes.STRING(100),  // bcrypt
+    allowNull: true,
+  },
+  login2fa_expira: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  login2fa_intentos: {
+    type: DataTypes.SMALLINT,
+    defaultValue: 0,
+    allowNull: false,
+  },
   // Consentimiento legal (LFPDPPP México)
   acepto_terminos: {
     type: DataTypes.BOOLEAN,
@@ -217,6 +253,11 @@ Usuario.prototype.toJSON = function() {
   delete values.reset_codigo;
   delete values.reset_expira;
   delete values.reset_intentos;
+  delete values.login2fa_codigo;
+  delete values.login2fa_expira;
+  delete values.login2fa_intentos;
+  delete values.intentos_fallidos;
+  delete values.bloqueado_hasta;
   return values;
 };
 
