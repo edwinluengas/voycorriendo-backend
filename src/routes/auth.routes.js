@@ -65,6 +65,11 @@ const validarRegistro = [
   body('pais').optional({ values: 'falsy' })
     .isLength({ min: 2, max: 2 }).withMessage('El país no es válido'),
   body('email').optional({ values: 'falsy' }).isEmail().withMessage('El correo no es válido'),
+  // Doble candado contra escalación de privilegios por 'rol' (el controlador
+  // también lo valida). 'admin' NUNCA es auto-servicio: solo por DB o
+  // scripts/crear-admin.js.
+  body('rol').optional({ values: 'falsy' })
+    .isIn(['cliente', 'repartidor', 'negocio']).withMessage('El tipo de cuenta no es válido'),
   body('password')
     .optional()
     .isLength({ min: 8 }).withMessage('La contraseña debe tener mínimo 8 caracteres'),

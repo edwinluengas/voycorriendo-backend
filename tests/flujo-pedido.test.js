@@ -71,6 +71,27 @@ describe('Autenticación y roles', () => {
   });
 });
 
+describe('Seguridad de registro', () => {
+  // Vulnerabilidad REAL encontrada el 2026-07-26: el rol venía del body sin
+  // validar, así que cualquiera podía registrarse con {"rol":"admin"} desde
+  // la app pública y quedaba con acceso total al panel de administración
+  // (verificado leyendo /api/admin/creditos/resumen con esa cuenta).
+  test('NO se puede crear una cuenta admin desde el registro público', async () => {
+    const res = await cliente.post('/auth/registro', {
+      nombre: 'Intento', apellido: 'Escalada',
+      telefono: `55${Date.now()}`.slice(0, 10),
+      password: 'Password123!',
+      rol: 'admin',
+      acepto_terminos: true,
+    });
+    expect(res.status).toBe(400);
+    expect(res.data.ok).toBe(false);
+    // Si algún día vuelve a pasar, la cuenta NO debe existir
+    const { rows } = await db.query(`SELECT COUNT(*)::int AS c FROM usuarios WHERE nombre = 'Intento' AND apellido = 'Escalada'`);
+    expect(rows[0].c).toBe(0);
+  });
+});
+
 describe('Sistema de tokens eliminado', () => {
   test('las rutas /api/tokens/* ya no existen (404)', async () => {
     const { token } = await login('negocio');

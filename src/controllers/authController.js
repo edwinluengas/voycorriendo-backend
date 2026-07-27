@@ -90,6 +90,21 @@ const registro = async (req, res) => {
       }
     }
 
+    // ESCALACIÓN DE PRIVILEGIOS (encontrada y corregida 2026-07-26): el rol
+    // venía del body SIN validar, así que cualquiera podía mandar
+    // {"rol":"admin"} en el registro público y quedaba con acceso total al
+    // panel de administración (verificado: leía /api/admin/*). Ahora el rol
+    // se limita a los que son auto-servicio; 'admin' solo se otorga desde la
+    // base de datos o con scripts/crear-admin.js.
+    const ROLES_PERMITIDOS_EN_REGISTRO = ['cliente', 'repartidor', 'negocio'];
+    if (rol && !ROLES_PERMITIDOS_EN_REGISTRO.includes(rol)) {
+      console.warn(`[seguridad] Intento de registro con rol no permitido "${rol}" desde ${req.ip}`);
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'El tipo de cuenta no es válido. Elige cliente, repartidor o negocio.',
+        campo: 'rol',
+      });
+    }
     // Siempre activar la cuenta inmediatamente — OTP es informativo mientras Twilio esté en trial
     const rolFinal = rol || 'cliente';
     const usuario = await Usuario.create({
