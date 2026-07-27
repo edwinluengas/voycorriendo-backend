@@ -233,7 +233,15 @@ const manejarUpdate = async (req, res) => {
 
 // GET /api/telegram/vincular-link — genera JWT de 10 min para el deep link
 const generarLinkVinculacion = async (req, res) => {
-  const token = jwt.sign({ id: req.usuario.id }, process.env.JWT_SECRET, { expiresIn: '10m' });
+  // `tokenVersion` es OBLIGATORIO desde que /start exige que el enlace esté
+  // vigente: sin él, el payload cae en 0 y el enlace se rechaza para
+  // cualquier cuenta que haya cerrado sesión o cambiado su contraseña
+  // alguna vez (token_version > 0), que son casi todas.
+  const token = jwt.sign(
+    { id: req.usuario.id, tokenVersion: req.usuario.token_version ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '10m' },
+  );
   const botUsername = process.env.TELEGRAM_BOT_USERNAME || 'VoyCorriendoBot';
   const deepLink = `https://t.me/${botUsername}?start=${token}`;
   res.json({ ok: true, data: { link: deepLink } });
