@@ -304,7 +304,7 @@ const migrarDB = async () => {
   await run(`ALTER TABLE config_zonas ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
   await run(`INSERT INTO config_zonas (tipo_envio, max_km, fee_base, surcharge_inicio_km, surcharge_por_km)
     VALUES
-      ('standard', 5, 35, NULL, NULL),
+      ('standard', 5, 40, NULL, NULL),
       ('express',  5, 60, NULL, NULL)
     ON CONFLICT (tipo_envio) DO UPDATE SET max_km = EXCLUDED.max_km, fee_base = EXCLUDED.fee_base,
       surcharge_inicio_km = EXCLUDED.surcharge_inicio_km, surcharge_por_km = EXCLUDED.surcharge_por_km`);
@@ -399,13 +399,11 @@ const migrarDB = async () => {
   await run(`DROP TYPE IF EXISTS "enum_restaurant_tokens_pack_type"`);
 
   // ── v1.2.17 — Modelo de negocio definitivo ────────────────
-  // Corregir config_comisiones: modelo flat $35 por pedido
-  // pago_repartidor = 100% del envío ($35 standard, $60 express)
-  // comision_plataforma = $35 flat (cobrada al restaurante, no al cliente)
-  await run(`UPDATE config_comisiones SET comision_plataforma = 35, pago_repartidor = 35
-    WHERE tipo_envio = 'standard'`);
-  await run(`UPDATE config_comisiones SET comision_plataforma = 35, pago_repartidor = 60
-    WHERE tipo_envio = 'express'`);
+  // comision_plataforma = $35 flat, cobrada al RESTAURANTE (no al cliente).
+  // No se toca pago_repartidor aquí: ese es el 100% del envío y se fija más
+  // abajo junto con la tarifa (antes este UPDATE lo regresaba a 35 en cada
+  // arranque y peleaba con el valor vigente).
+  await run(`UPDATE config_comisiones SET comision_plataforma = 35 WHERE comision_plataforma != 35`);
   // Desactivar promo_efectivo_sin_comision — ya no aplica en el modelo flat
   await run(`UPDATE promo_config SET activo = false WHERE clave = 'promo_efectivo_sin_comision'`);
   // Deuda acumulada del restaurante con la plataforma (fees efectivo no pagados)
@@ -421,8 +419,14 @@ const migrarDB = async () => {
   // $35). Se limpian las columnas y el código ya no las lee (utils/precios.js).
   await run(`UPDATE config_zonas SET surcharge_inicio_km = NULL, surcharge_por_km = NULL
     WHERE surcharge_inicio_km IS NOT NULL OR surcharge_por_km IS NOT NULL`);
-  await run(`UPDATE config_zonas SET fee_base = 35 WHERE tipo_envio = 'standard' AND fee_base != 35`);
+  // Tarifa estándar $35 → $40 (2026-07-26): a 5 km de cobertura, $35 dejaba
+  // al repartidor por debajo del salario mínimo por hora una vez descontados
+  // gasolina, mantenimiento y depreciación. El pago al repartidor es el 100%
+  // del envío, así que sube junto con la tarifa.
+  await run(`UPDATE config_zonas SET fee_base = 40 WHERE tipo_envio = 'standard' AND fee_base != 40`);
   await run(`UPDATE config_zonas SET fee_base = 60 WHERE tipo_envio = 'express'  AND fee_base != 60`);
+  await run(`UPDATE config_comisiones SET pago_repartidor = 40 WHERE tipo_envio = 'standard' AND pago_repartidor != 40`);
+  await run(`UPDATE config_comisiones SET pago_repartidor = 60 WHERE tipo_envio = 'express'  AND pago_repartidor != 60`);
   // Pedido mínimo actualizado a $150 (solo si la tabla config_zonas es la fuente — el check principal está en precios.js)
   // Ledger: liquidación al negocio y al repartidor son pagos INDEPENDIENTES
   // (montos y fechas distintas) — antes compartían una sola columna

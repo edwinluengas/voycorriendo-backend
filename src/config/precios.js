@@ -4,7 +4,7 @@
  * Modelo definitivo (v1.2.17):
  *   - FEE_PLATAFORMA: $35 MXN flat por pedido cobrado al restaurante
  *   - Envío: lo paga el CLIENTE y es ingreso del REPARTIDOR
- *     · Standard $35 | Express $60
+ *     · Standard $40 | Express $60  (flat, NO depende de la distancia)
  *   - Pedido mínimo: $150 MXN en productos (sin envío)
  *   - Radio máximo: 5 km desde el restaurante a la dirección de entrega
  *   - Tope deuda restaurante: 15 pedidos en efectivo sin liquidar (bloqueo automático — ya NO es por monto)
@@ -20,11 +20,18 @@ const num = (clave, def) => {
 };
 
 // ─── 1. Tarifas flat al cliente ─────────────────────────────
+// $40 estándar desde 2026-07-26: con $35 y cobertura de 5 km, la utilidad
+// neta del repartidor en una entrega larga caía a $18.42 (~$32/hora, por
+// debajo del salario mínimo por hora) una vez descontados gasolina,
+// mantenimiento y depreciación de la moto. Con $40 queda en $23.42 (~$41/h)
+// aun en el peor caso. Ver src/scripts/analisis-rentabilidad-repartidor.js
+// — ahí está el modelo completo con sus supuestos, para recalcular si sube
+// la gasolina o cambia el radio.
 const TARIFAS_CLIENTE = {
-  STANDARD:      num('FEE_STANDARD', 35),   // Envío estándar (flat)
+  STANDARD:      num('FEE_STANDARD', 40),   // Envío estándar (flat)
   EXPRESS:       num('FEE_EXPRESS',  60),   // Envío express (flat)
   // Se conserva TARIFA_MINIMA_ENVIO para compatibilidad con cotizar
-  TARIFA_MINIMA_ENVIO: num('TARIFA_MINIMA_ENVIO', 35),
+  TARIFA_MINIMA_ENVIO: num('TARIFA_MINIMA_ENVIO', 40),
 };
 
 // ─── 2. Comisión flat al negocio ────────────────────────────
