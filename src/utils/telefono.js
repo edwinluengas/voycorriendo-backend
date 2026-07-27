@@ -21,14 +21,28 @@ const soloDigitos = (v) => String(v ?? '').replace(/\D/g, '');
 // Quita el '+', la lada si el usuario la volvió a escribir, y los ceros
 // troncales que se usan al marcar dentro de varios países (0 en AR/IT/GB,
 // 1 largo en MX viejo).
+//
+// CLAVE: solo se recorta cuando el número quedó MÁS LARGO de lo que ese país
+// permite. Un `replace(/^0+/, '')` a ciegas convertía "0000000001" (las
+// cuentas de prueba internas) en "1" y dejaba fuera a cualquier usuario cuyo
+// número guardado empiece con cero. Si ya cabe en el rango del país, se
+// respeta tal cual.
 const normalizarTelefono = (telefonoCrudo, ladaCruda) => {
   const lada = soloDigitos(ladaCruda) || LADA_DEFAULT;
   let tel = soloDigitos(telefonoCrudo);
+  const [, max] = RANGOS[lada] || RANGO_DEFAULT;
 
-  // "+52 954 123 4567" escrito completo en el campo del número
-  if (tel.length > 10 && tel.startsWith(lada)) tel = tel.slice(lada.length);
-  // Ceros troncales al inicio
-  tel = tel.replace(/^0+/, '');
+  // Se alternan las dos limpiezas hasta que el número quepa: hay gente que
+  // escribe el prefijo internacional completo ("00 44 7911…"), así que el
+  // cero troncal y la lada pueden venir intercalados. El tope de 4 vueltas
+  // evita cualquier ciclo infinito.
+  for (let i = 0; i < 4 && tel.length > max; i++) {
+    // "+52 954 123 4567" escrito completo en el campo del número
+    if (tel.startsWith(lada) && tel.length - lada.length >= 6) { tel = tel.slice(lada.length); continue; }
+    // Ceros troncales al inicio (0 en Francia, Italia, Reino Unido, Argentina…)
+    if (tel.startsWith('0')) { tel = tel.slice(1); continue; }
+    break;
+  }
   // México: el "1" que se marcaba antes para celular ya no forma parte del número
   if (lada === '52' && tel.length === 11 && tel.startsWith('1')) tel = tel.slice(1);
 

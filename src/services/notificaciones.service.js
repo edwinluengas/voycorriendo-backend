@@ -84,6 +84,22 @@ async function notificarRepartidoresDisponibles(tokens, pedido) {
   );
 }
 
+// Aviso al repartidor que YA va en ruta y puede sumar este pedido sin
+// desviarse. Es distinto del aviso general de "pedido disponible": aquí ya
+// sabemos que le queda de paso, así que el texto lo dice.
+async function notificarPedidoEnTuRuta(token, pedido, detalle = {}) {
+  if (!token) return;
+  const extra = detalle.kmEntrega != null
+    ? `Entrega a ${detalle.kmEntrega} km de las tuyas`
+    : 'Te queda de paso';
+  await enviarPush(
+    token,
+    '➕ Otro pedido en tu misma ruta',
+    `#${pedido.numero} · $${parseFloat(pedido.fee_cliente || pedido.costo_envio || 0).toFixed(0)} más para ti · ${extra}`,
+    { tipo: 'pedido_en_tu_ruta', pedidoId: pedido.id },
+  );
+}
+
 async function notificarCodigoEntrega(tokenCliente, pedido) {
   await enviarPush(
     tokenCliente,
@@ -102,4 +118,4 @@ async function notificarPagoConfirmado(tokenCliente, pedido) {
   );
 }
 
-module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles, notificarCodigoEntrega, notificarPagoConfirmado };
+module.exports = { enviarPush, notificarNuevoPedido, notificarEstadoPedido, notificarRepartidoresDisponibles, notificarPedidoEnTuRuta, notificarCodigoEntrega, notificarPagoConfirmado };

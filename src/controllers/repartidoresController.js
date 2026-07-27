@@ -7,6 +7,7 @@ const { subirImagen } = require('../services/storage.service');
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 const { calcularRuta } = require('../services/routing.service');
+const { evaluarCompatibilidad } = require('../services/ruta.service');
 const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { validarPlacaRepartidor, bloquearRepartidorPermanente } = require('../services/seguridadCuentas.service');
@@ -540,13 +541,33 @@ const aceptarPedido = async (req, res) => {
       });
     }
 
-    // Por ahora una ruta solo combina pedidos del MISMO negocio — no se mezclan
-    // recolecciones de restaurantes distintos en un solo viaje.
-    if (batch && pedidosActivosBatch.length > 0 && pedidosActivosBatch[0].negocio_id !== pedido.negocio_id) {
-      return res.status(409).json({
-        ok: false,
-        mensaje: 'Ya tienes pedidos en ruta de otro negocio. Termina esa entrega antes de aceptar este.',
+    // Compatibilidad de RUTA (2026-07-26). Antes la única condición era
+    // "mismo negocio", que dejaba fuera combinaciones buenas (dos cocinas a
+    // media cuadra, entregas del mismo rumbo) y permitía combinaciones malas
+    // (mismo restaurante, entregas en extremos opuestos). Ahora se mide de
+    // verdad: recogida cerca de la recogida actual Y entrega cerca de las
+    // entregas actuales. Ver services/ruta.service.js.
+    if (batch && pedidosActivosBatch.length > 0) {
+      const negociosRuta = await Negocio.findAll({
+        where: { id: { [Op.in]: [...new Set(pedidosActivosBatch.map((p) => p.negocio_id))] } },
+        attributes: ['id', 'latitud', 'longitud', 'nombre'],
       });
+      const porId = Object.fromEntries(negociosRuta.map((n) => [String(n.id), n]));
+      const negocioCandidato = await Negocio.findByPk(pedido.negocio_id, {
+        attributes: ['id', 'latitud', 'longitud', 'nombre'],
+      });
+
+      const evaluacion = evaluarCompatibilidad({
+        candidato: { pedido, negocio: negocioCandidato },
+        enRuta: pedidosActivosBatch.map((p) => ({ pedido: p, negocio: porId[String(p.negocio_id)] })),
+      });
+      if (!evaluacion.compatible) {
+        return res.status(409).json({
+          ok: false,
+          mensaje: evaluacion.motivo,
+          codigo: 'FUERA_DE_RUTA',
+        });
+      }
     }
 
     if (batch && pedido.tipo_envio !== 'express' && pedidosActivosBatch.length >= maxOrders) {

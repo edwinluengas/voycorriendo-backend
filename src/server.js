@@ -101,6 +101,9 @@ io.on('connection', (socket) => {
       });
       if (!rep) return;
       socket.join('repartidores_activos');
+      // Sala personal: por aquí le llega el aviso de "otro pedido en tu misma
+      // ruta" (solo a quien de verdad le queda de paso, no a todos).
+      socket.join(`repartidor:${rep.id}`);
     } catch (e) {
       console.warn('[socket] Error validando repartidor:', e.message);
     }

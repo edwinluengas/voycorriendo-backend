@@ -326,43 +326,95 @@ describe('Rutas de ruta (batch) del repartidor', () => {
   // prueba personal (5545074460), y se rompió cuando ese perfil se reseteó
   // (2026-07-25). Ahora es independiente de cualquier cuenta real.
   const SEGUNDO_NEGOCIO = { id: '33333333-0000-0000-0000-000000000002' };
+  const creados = [];
 
   afterAll(async () => {
-    for (const id of [pedidoDonBeto, pedidoSaborAMi]) {
-      if (id) await db.query(`DELETE FROM pedidos WHERE id = $1`, [id]);
+    // Borra los pedidos de prueba y cierra la ruta que quedó abierta — si no,
+    // el repartidor de prueba arranca la siguiente corrida con un batch
+    // 'active' fantasma (mismo patrón del bug real de batches sin cerrar).
+    if (creados.length) {
+      await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
     }
+    await db.query(`
+      UPDATE delivery_batches SET status = 'completed', completed_at = NOW()
+      WHERE status = 'active'
+        AND NOT EXISTS (SELECT 1 FROM pedidos p WHERE p.batch_id = delivery_batches.id
+                          AND p.estado NOT IN ('entregado','cancelado','rechazado'))`);
   });
 
-  test('un repartidor no puede aceptar pedidos de dos negocios distintos en la misma ruta', async () => {
-    const codigo1 = String(Math.floor(1000 + Math.random() * 9000));
-    const codigo2 = String(Math.floor(1000 + Math.random() * 9000));
-    const numero1 = `MND-TEST${Date.now()}`.slice(0, 12);
-    const numero2 = `MND-TST2${Date.now()}`.slice(0, 12);
-
-    // Insertamos dos pedidos directo en 'listo' (bypass del flujo de negocio,
-    // solo para probar la restricción del lado del repartidor).
+  // Crea un pedido 'listo' directo en DB (bypass del flujo de negocio, solo
+  // para probar la lógica del lado del repartidor).
+  const crearPedidoListo = async ({ negocioId, destino, sufijo }) => {
     const { usuario: cli } = await login('cliente');
-    const r1 = await db.query(`
-      INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago, pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente, direccion_entrega)
-      VALUES ($1, $2, $3, '[]'::jsonb, 200, 35, 235, 'efectivo', 'pendiente', 'listo', 'standard', 'puerto_escondido', $4, 35, 'Test automatizado — ignorar')
+    const codigo = String(Math.floor(1000 + Math.random() * 9000));
+    const numero = `MND-T${sufijo}${Date.now()}`.slice(0, 12);
+    const r = await db.query(`
+      INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago, pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente, direccion_entrega, latitud_entrega, longitud_entrega)
+      VALUES ($1, $2, $3, '[]'::jsonb, 200, 40, 240, 'efectivo', 'pendiente', 'listo', 'standard', 'puerto_escondido', $4, 40, 'Test automatizado — ignorar', $5, $6)
       RETURNING id
-    `, [numero1, cli.id, NEGOCIO_DON_BETO.id, codigo1]);
-    pedidoDonBeto = r1.rows[0].id;
+    `, [numero, cli.id, negocioId, codigo, destino?.lat ?? null, destino?.lng ?? null]);
+    creados.push(r.rows[0].id);
+    return r.rows[0].id;
+  };
 
-    const r2 = await db.query(`
-      INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago, pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente, direccion_entrega)
-      VALUES ($1, $2, $3, '[]'::jsonb, 200, 35, 235, 'efectivo', 'pendiente', 'listo', 'standard', 'puerto_escondido', $4, 35, 'Test automatizado — ignorar')
-      RETURNING id
-    `, [numero2, cli.id, SEGUNDO_NEGOCIO.id, codigo2]);
-    pedidoSaborAMi = r2.rows[0].id;
+  test('SÍ puede sumar un segundo pedido que va por su mismo rumbo', async () => {
+    pedidoDonBeto = await crearPedidoListo({ negocioId: NEGOCIO_DON_BETO.id, destino: DESTINO_CERCA, sufijo: 'A' });
+    // Misma zona de entrega (~200 m del primero) → debe permitirse
+    const segundo = await crearPedidoListo({
+      negocioId: NEGOCIO_DON_BETO.id,
+      destino: { lat: DESTINO_CERCA.lat + 0.002, lng: DESTINO_CERCA.lng + 0.002 },
+      sufijo: 'B',
+    });
 
     const { token: tokenRep } = await login('repartidor');
-
     const aceptar1 = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: pedidoDonBeto }, conAuth(tokenRep));
     expect(aceptar1.status).toBe(200);
 
-    const aceptar2 = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: pedidoSaborAMi }, conAuth(tokenRep));
-    expect(aceptar2.status).toBe(409);
-    expect(aceptar2.data.mensaje).toMatch(/otro negocio/i);
+    const aceptar2 = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: segundo }, conAuth(tokenRep));
+    expect(aceptar2.status).toBe(200);
+
+    // Los dos deben quedar en la MISMA ruta (mismo batch)
+    const { rows } = await db.query(`SELECT batch_id FROM pedidos WHERE id = ANY($1)`, [[pedidoDonBeto, segundo]]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].batch_id).toBe(rows[1].batch_id);
+    expect(rows[0].batch_id).toBeTruthy();
+  });
+
+  test('NO puede sumar un pedido cuya entrega queda lejos de su ruta', async () => {
+    // Mismo negocio, pero la entrega es al otro extremo (~3.5 km): antes esto
+    // pasaba solo por ser el mismo restaurante.
+    const lejano = await crearPedidoListo({
+      negocioId: NEGOCIO_DON_BETO.id,
+      destino: { lat: 15.8950, lng: -97.1000 },
+      sufijo: 'C',
+    });
+    const { token: tokenRep } = await login('repartidor');
+    const res = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: lejano }, conAuth(tokenRep));
+    expect(res.status).toBe(409);
+    expect(res.data.codigo).toBe('FUERA_DE_RUTA');
+    expect(res.data.mensaje).toMatch(/km/i);
+  });
+
+  test('NO puede sumar un pedido sin coordenadas (no se puede verificar la ruta)', async () => {
+    const sinCoords = await crearPedidoListo({ negocioId: NEGOCIO_DON_BETO.id, destino: null, sufijo: 'D' });
+    const { token: tokenRep } = await login('repartidor');
+    const res = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: sinCoords }, conAuth(tokenRep));
+    expect(res.status).toBe(409);
+    expect(res.data.codigo).toBe('FUERA_DE_RUTA');
+    expect(res.data.mensaje).toMatch(/coordenadas/i);
+  });
+
+  test('NO puede recoger en un negocio lejano aunque la entrega quede cerca', async () => {
+    // Mariscos La Lupita está a ~1.9 km de Don Beto (arriba del máximo de 1.5)
+    pedidoSaborAMi = await crearPedidoListo({
+      negocioId: SEGUNDO_NEGOCIO.id,
+      destino: { lat: DESTINO_CERCA.lat + 0.001, lng: DESTINO_CERCA.lng },
+      sufijo: 'E',
+    });
+    const { token: tokenRep } = await login('repartidor');
+    const res = await cliente.post('/repartidores/aceptar-pedido', { pedido_id: pedidoSaborAMi }, conAuth(tokenRep));
+    expect(res.status).toBe(409);
+    expect(res.data.codigo).toBe('FUERA_DE_RUTA');
+    expect(res.data.mensaje).toMatch(/tienda/i);
   });
 });

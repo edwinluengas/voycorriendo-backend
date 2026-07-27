@@ -765,6 +765,12 @@ const actualizarEstado = async (req, res) => {
         if (tokensRep.length > 0) {
           push.notificarRepartidoresDisponibles(tokensRep, pedido).catch(() => {});
         }
+
+        // Aviso especial al repartidor QUE YA VA EN RUTA y puede sumar este
+        // pedido sin desviarse (hasta 3 en total). Es su oportunidad de
+        // duplicar la ganancia del mismo viaje — sin este aviso tendría que
+        // estar mirando la lista de disponibles justo en ese momento.
+        await avisarRepartidoresEnRutaCompatible(pedido, io);
       } catch (e) {
         console.warn('[notif] Error notificando repartidores en listo:', e.message);
       }
@@ -773,6 +779,83 @@ const actualizarEstado = async (req, res) => {
     res.json({ ok: true, mensaje: `Pedido actualizado a: ${estado}`, data: { pedido } });
   } catch (error) {
     res.status(500).json({ ok: false, mensaje: 'Error al actualizar el estado.' });
+  }
+};
+
+// ─── Aviso de "otro pedido en tu misma ruta" ─────────────
+// Cuando un pedido queda LISTO, busca a los repartidores que ya traen una
+// ruta activa con cupo (máx. `max_pedidos_ruta`, 3 por defecto) y a los que
+// este pedido les queda de paso según services/ruta.service. A esos se les
+// manda un aviso aparte, porque para ellos vale más: es otra tarifa completa
+// en el mismo viaje. Los Express nunca entran (viajan solos).
+//
+// Nunca lanza: es una mejora de reparto, no debe tumbar la transición de
+// estado del pedido si algo falla.
+const ESTADOS_TERMINALES_RUTA = ['entregado', 'cancelado', 'rechazado'];
+
+const avisarRepartidoresEnRutaCompatible = async (pedido, io) => {
+  try {
+    if (pedido.tipo_envio === 'express') return;
+    const { evaluarCompatibilidad } = require('../services/ruta.service');
+
+    const negocioCandidato = await Negocio.findByPk(pedido.negocio_id, {
+      attributes: ['id', 'nombre', 'latitud', 'longitud'],
+    });
+    if (!negocioCandidato?.latitud || !negocioCandidato?.longitud) return;
+
+    const batches = await DeliveryBatch.findAll({
+      where: { status: 'active' },
+      include: [{
+        model: Pedido, as: 'pedidos', required: true,
+        where: { estado: { [Op.notIn]: ESTADOS_TERMINALES_RUTA } },
+        attributes: ['id', 'negocio_id', 'tipo_envio', 'latitud_entrega', 'longitud_entrega'],
+      }],
+    });
+    if (batches.length === 0) return;
+
+    const idsNegocios = [...new Set(batches.flatMap((b) => b.pedidos.map((p) => p.negocio_id)))];
+    const negocios = await Negocio.findAll({
+      where: { id: { [Op.in]: idsNegocios } },
+      attributes: ['id', 'latitud', 'longitud'],
+    });
+    const porId = Object.fromEntries(negocios.map((n) => [String(n.id), n]));
+
+    for (const batch of batches) {
+      const enRuta = batch.pedidos;
+      const maxOrders = batch.max_orders || 3;
+      if (enRuta.length === 0 || enRuta.length >= maxOrders) continue;
+
+      const evaluacion = evaluarCompatibilidad({
+        candidato: { pedido, negocio: negocioCandidato },
+        enRuta: enRuta.map((p) => ({ pedido: p, negocio: porId[String(p.negocio_id)] })),
+      });
+      if (!evaluacion.compatible) continue;
+
+      const repartidor = await Repartidor.findOne({
+        where: { id: batch.driver_id, verificacion_estado: 'aprobado' },
+        include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
+      });
+      // Un repartidor suspendido/bloqueado no debe recibir la invitación:
+      // aceptarPedido se la iba a rechazar de todos modos.
+      if (!repartidor || ['suspendido', 'bloqueado'].includes(repartidor.estado_cuenta)) continue;
+      if (pedido.ciudad && repartidor.ciudad && pedido.ciudad !== repartidor.ciudad) continue;
+
+      io.to(`repartidor:${repartidor.id}`).emit('pedido_en_tu_ruta', {
+        pedido_id:  pedido.id,
+        numero:     pedido.numero,
+        negocio:    negocioCandidato.nombre,
+        pago:       parseFloat(pedido.fee_cliente || pedido.costo_envio || 0),
+        km_entrega: evaluacion.kmEntrega ?? null,
+        lugares_libres: maxOrders - enRuta.length,
+        motivo:     evaluacion.motivo,
+      });
+      if (repartidor.usuario?.token_push) {
+        push.notificarPedidoEnTuRuta(repartidor.usuario.token_push, pedido, evaluacion).catch(() => {});
+      }
+      console.log(`[ruta] ${pedido.numero} ofrecido al repartidor ${repartidor.id} — ${evaluacion.motivo}`);
+    }
+  } catch (e) {
+    console.warn('[ruta] No se pudo avisar a repartidores en ruta:', e.message);
   }
 };
 
