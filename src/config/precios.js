@@ -87,9 +87,14 @@ const LIMITE_PEDIDOS_PERDIDOS = num('LIMITE_PEDIDOS_PERDIDOS', 2);
 // roles). Reemplaza el fee fijo de $10 anterior.
 const PCT_DESCUENTO_PAGO_DIARIO = num('PCT_DESCUENTO_PAGO_DIARIO', 0.05);
 
-// ─── 5. Bonos al repartidor (fase 2) ────────────────────────
+// ─── 5. Bonos al repartidor — NO VIGENTES ───────────────────
+// Hoy NO se pagan bonos de ningún tipo (confirmado por el dueño 2026-07-26).
+// Este valor existe solo como configuración lista para el día que se activen;
+// ningún código lo usa para pagar. Si se enciende de verdad, hay que
+// implementar el pago Y volver a anunciarlo en la app (se quitó de
+// TierScreen para no prometer un ingreso inexistente).
 const BONOS = {
-  METAS_10: num('BONUS_METAS_10', 50),
+  METAS_10: num('BONUS_METAS_10', 0),
 };
 
 // Legacy: Zonas se mantienen solo para validar cobertura por distancia
