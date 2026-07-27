@@ -67,4 +67,12 @@ const login = async (rol) => {
 
 const conAuth = (token) => ({ headers: { Authorization: `Bearer ${token}` } });
 
-module.exports = { cliente, login, conAuth, CUENTAS_TEST, BASE_URL };
+// Necesario cuando el ROL de una cuenta cambia a media suite (los tests del
+// panel promueven temporalmente la cuenta de prueba): el token cacheado se
+// emitió con el rol anterior y ya no sirve.
+const limpiarCacheLogin = (rol) => {
+  if (rol) delete _tokenCache[rol];
+  else Object.keys(_tokenCache).forEach((k) => delete _tokenCache[k]);
+};
+
+module.exports = { cliente, login, conAuth, limpiarCacheLogin, CUENTAS_TEST, BASE_URL };

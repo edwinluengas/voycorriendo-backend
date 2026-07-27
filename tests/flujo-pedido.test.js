@@ -11,7 +11,7 @@
  *
  * Correr con: npm test
  */
-const { cliente, login, conAuth } = require('./helpers/api');
+const { cliente, login, conAuth, limpiarCacheLogin } = require('./helpers/api');
 const { conectar } = require('./helpers/db');
 
 jest.setTimeout(30000);
@@ -93,9 +93,27 @@ describe('Seguridad de registro', () => {
 });
 
 describe('Candados del panel de administración', () => {
+  // Los administradores REALES son solo los teléfonos del dueño. La cuenta de
+  // prueba ya no tiene el privilegio de forma permanente: se promueve durante
+  // estos tests y se degrada al terminar, así la suite sigue verificando los
+  // candados sin dejar una puerta abierta el resto del tiempo.
+  const TEL_PRUEBA = '0000000001';
+
+  beforeAll(async () => {
+    await db.query(`UPDATE usuarios SET rol = 'admin', modo_activo = 'admin' WHERE telefono = $1`, [TEL_PRUEBA]);
+    limpiarCacheLogin('admin');   // el token cacheado es de cuando era cliente
+  });
+
+  afterAll(async () => {
+    await db.query(
+      `UPDATE usuarios SET rol = 'cliente', modo_activo = 'cliente', token_version = token_version + 1
+        WHERE telefono = $1`, [TEL_PRUEBA]);
+    limpiarCacheLogin('admin');
+  });
+
   test('la contraseña sola NO abre una sesión de admin (exige segundo factor)', async () => {
     const res = await cliente.post('/auth/login', {
-      telefono: '0000000001', password: 'VoyTest2026!',
+      telefono: TEL_PRUEBA, password: 'VoyTest2026!',
     });
     expect(res.data.requiere_2fa).toBe(true);
     expect(res.data?.data?.token).toBeUndefined();   // no entrega token en el paso 1
@@ -103,7 +121,7 @@ describe('Candados del panel de administración', () => {
 
   test('un token SIN segundo factor no entra a /api/admin', async () => {
     const jwt = require('jsonwebtoken');
-    const { rows } = await db.query(`SELECT id, token_version FROM usuarios WHERE telefono = '0000000001'`);
+    const { rows } = await db.query(`SELECT id, token_version FROM usuarios WHERE telefono = $1`, [TEL_PRUEBA]);
     // Token bien firmado y vigente, pero sin la marca `dosFactores` — así se
     // veían todos los tokens antes de este candado.
     const tokenViejo = jwt.sign(
