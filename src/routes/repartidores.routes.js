@@ -64,7 +64,8 @@ router.patch('/pedidos/:id/recogido', marcarRecogido);
 
 // ─── Endpoint legacy (crear perfil completo en una sola llamada) ───
 router.post('/perfil', [
-  body('tipo_vehiculo').isIn(['motocicleta', 'bicicleta']),
+  // Bicicleta eliminada del servicio (2026-07-26)
+  body('tipo_vehiculo').isIn(['motocicleta']).withMessage('Solo se permiten entregas en motocicleta.'),
   body('placa_vehiculo').notEmpty().withMessage('La placa es obligatoria'),
   body('clabe_bancaria').isLength({ min: 18, max: 18 }).withMessage('CLABE debe tener 18 dígitos'),
   body('banco').notEmpty().withMessage('El banco es obligatorio'),

@@ -18,11 +18,26 @@ const Usuario = sequelize.define('Usuario', {
     allowNull: false,
     validate: { notEmpty: true },
   },
+  // Número NACIONAL (sin código de país). La unicidad real es el par
+  // (lada, telefono) — ver índice compuesto en migrarDB(). Puerto Escondido
+  // recibe mucho turismo extranjero, así que un mismo número nacional puede
+  // repetirse legítimamente entre países distintos.
   telefono: {
     type: DataTypes.STRING(15),
     allowNull: false,
-    unique: true,
     validate: { notEmpty: true },
+  },
+  // Código de país para marcar (sin '+'): 52 México, 1 EUA/Canadá, 34 España…
+  lada: {
+    type: DataTypes.STRING(5),
+    allowNull: false,
+    defaultValue: '52',
+  },
+  // ISO-3166 alpha-2 del país elegido — solo informativo/para la bandera.
+  pais: {
+    type: DataTypes.STRING(2),
+    allowNull: false,
+    defaultValue: 'MX',
   },
   email: {
     type: DataTypes.STRING(150),
@@ -92,6 +107,23 @@ const Usuario = sequelize.define('Usuario', {
   },
   token_version: {
     type: DataTypes.INTEGER,
+    defaultValue: 0,
+    allowNull: false,
+  },
+  // Recuperación de contraseña — código de un solo uso, hasheado con bcrypt.
+  // Separado de otp_codigo a propósito: si el usuario está verificando su
+  // número al mismo tiempo que pide un reset, un solo par de columnas haría
+  // que un flujo pisara al otro.
+  reset_codigo: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+  },
+  reset_expira: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  reset_intentos: {
+    type: DataTypes.SMALLINT,
     defaultValue: 0,
     allowNull: false,
   },
@@ -182,6 +214,9 @@ Usuario.prototype.toJSON = function() {
   delete values.otp_expira;
   delete values.otp_intentos;
   delete values.token_version;
+  delete values.reset_codigo;
+  delete values.reset_expira;
+  delete values.reset_intentos;
   return values;
 };
 

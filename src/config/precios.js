@@ -31,9 +31,13 @@ const TARIFAS_CLIENTE = {
 const COMISION_FLAT = num('COMISION_NEGOCIO', 35);   // MXN fijo por pedido
 
 // ─── 3. Pago flat al repartidor ─────────────────────────────
+// El repartidor se queda con el 100% de la tarifa de envío que paga el
+// cliente — por eso estos montos deben ser IDÉNTICOS a TARIFAS_CLIENTE
+// (35/60). El 50 que había aquí para express era de un modelo viejo y
+// generaba un descuadre de $10 cada vez que se usaba como fallback.
 const PAGO_REPARTIDOR = {
-  STANDARD: num('PAGO_REP_STANDARD', 35),  // entrega estándar
-  EXPRESS:  num('PAGO_REP_EXPRESS',  50),  // entrega express (repartidor prioriza)
+  STANDARD: num('PAGO_REP_STANDARD', TARIFAS_CLIENTE.STANDARD),  // entrega estándar
+  EXPRESS:  num('PAGO_REP_EXPRESS',  TARIFAS_CLIENTE.EXPRESS),   // entrega express
 };
 
 // ─── 4. Reglas de negocio ───────────────────────────────────

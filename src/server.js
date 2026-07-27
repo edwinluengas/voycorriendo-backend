@@ -304,8 +304,8 @@ const migrarDB = async () => {
   await run(`ALTER TABLE config_zonas ALTER COLUMN id SET DEFAULT gen_random_uuid()`);
   await run(`INSERT INTO config_zonas (tipo_envio, max_km, fee_base, surcharge_inicio_km, surcharge_por_km)
     VALUES
-      ('standard', 5, 35, 3, 5),
-      ('express',  4, 60, NULL, NULL)
+      ('standard', 5, 35, NULL, NULL),
+      ('express',  5, 60, NULL, NULL)
     ON CONFLICT (tipo_envio) DO UPDATE SET max_km = EXCLUDED.max_km, fee_base = EXCLUDED.fee_base,
       surcharge_inicio_km = EXCLUDED.surcharge_inicio_km, surcharge_por_km = EXCLUDED.surcharge_por_km`);
 
@@ -414,6 +414,15 @@ const migrarDB = async () => {
   // Actualizar radio máximo de entrega a 5 km (era 6 para standard, 4 para express)
   await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'standard' AND max_km != 5`);
   await run(`UPDATE config_zonas SET max_km = 5 WHERE tipo_envio = 'express'  AND max_km != 5`);
+  // TARIFA PLANA (2026-07-26): el envío no depende de la distancia. La fila
+  // 'standard' tenía surcharge_inicio_km=3 / surcharge_por_km=5 desde el seed
+  // original, así que todo pedido a más de 3 km cobraba $5 extra por km — por
+  // eso la tarifa "cambiaba" entre pedidos (ej. 4.71 km → $43.55 en vez de
+  // $35). Se limpian las columnas y el código ya no las lee (utils/precios.js).
+  await run(`UPDATE config_zonas SET surcharge_inicio_km = NULL, surcharge_por_km = NULL
+    WHERE surcharge_inicio_km IS NOT NULL OR surcharge_por_km IS NOT NULL`);
+  await run(`UPDATE config_zonas SET fee_base = 35 WHERE tipo_envio = 'standard' AND fee_base != 35`);
+  await run(`UPDATE config_zonas SET fee_base = 60 WHERE tipo_envio = 'express'  AND fee_base != 60`);
   // Pedido mínimo actualizado a $150 (solo si la tabla config_zonas es la fuente — el check principal está en precios.js)
   // Ledger: liquidación al negocio y al repartidor son pagos INDEPENDIENTES
   // (montos y fechas distintas) — antes compartían una sola columna
@@ -581,6 +590,37 @@ const migrarDB = async () => {
   // revisión / aprobar (ver negociosController.enviarARevision y
   // adminController.aprobarNegocio) — no requiere columna nueva, latitud/longitud
   // ya existían, solo se hizo obligatoria a nivel de aplicación.
+
+  // ── Teléfonos internacionales (2026-07-26) ────────────────────
+  // Puerto Escondido tiene mucha afluencia extranjera: el número deja de ser
+  // "10 dígitos mexicanos" y pasa a ser (lada + número nacional). La unicidad
+  // se vuelve COMPUESTA — dos países pueden tener el mismo número nacional.
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS lada VARCHAR(5) NOT NULL DEFAULT '52'`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS pais VARCHAR(2) NOT NULL DEFAULT 'MX'`);
+  // Se quita el UNIQUE simple sobre telefono y se crea el compuesto. Si ya
+  // hubiera duplicados (imposible hoy: el UNIQUE viejo lo impedía), el
+  // CREATE UNIQUE fallaría — por eso el índice se crea ANTES de soltar el
+  // viejo y todo el bloque va en un DO con manejo de error explícito.
+  await run(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename='usuarios' AND indexname='usuarios_lada_telefono_key') THEN
+      CREATE UNIQUE INDEX usuarios_lada_telefono_key ON usuarios (lada, telefono);
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='usuarios_telefono_key') THEN
+      ALTER TABLE usuarios DROP CONSTRAINT usuarios_telefono_key;
+    END IF;
+  END $$;`);
+
+  // Recuperación de contraseña por SMS o email (2026-07-26)
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_codigo VARCHAR(100)`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_expira TIMESTAMPTZ`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_intentos SMALLINT NOT NULL DEFAULT 0`);
+
+  // Entregas en bicicleta eliminadas (2026-07-26, decisión del dueño): toda
+  // entrega es en motocicleta. Se migran los perfiles que quedaron en bici.
+  await run(`ALTER TABLE repartidores ALTER COLUMN tipo_vehiculo TYPE VARCHAR(20) USING tipo_vehiculo::text`);
+  await run(`DROP TYPE IF EXISTS "enum_repartidores_tipo_vehiculo"`);
+  await run(`UPDATE repartidores SET tipo_vehiculo = 'motocicleta' WHERE tipo_vehiculo = 'bicicleta'`);
+  await run(`ALTER TABLE repartidores ALTER COLUMN tipo_vehiculo SET DEFAULT 'motocicleta'`);
 
   console.log('[migración] Completada.');
 };

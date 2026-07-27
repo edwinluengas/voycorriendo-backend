@@ -1,7 +1,10 @@
 const express = require('express');
 const { body } = require('express-validator');
 const rateLimit = require('express-rate-limit');
-const { registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout } = require('../controllers/authController');
+const {
+  registro, verificarOTP, login, solicitarOTP, obtenerPerfil, logout,
+  recuperarPassword, restablecerPassword,
+} = require('../controllers/authController');
 const { proteger } = require('../middleware/auth');
 
 const router = express.Router();
@@ -16,7 +19,7 @@ const limiteAuth = rateLimit({
   legacyHeaders: false,
 });
 
-// 3 SMS por hora por IP
+// 3 SMS de verificación por hora por IP
 const limiteOTP = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
@@ -25,14 +28,43 @@ const limiteOTP = rateLimit({
   legacyHeaders: false,
 });
 
+// Registro: contador PROPIO (antes compartía el de OTP, así que 3 altas por
+// hora por IP se agotaban con reintentos o con varias personas en el mismo
+// WiFi — típico en un café o un hotel de Puerto).
+const limiteRegistro = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 6,
+  message: { ok: false, mensaje: 'Demasiados registros desde esta conexión. Espera una hora o usa otra red.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Recuperación de contraseña: también con contador propio — que alguien pida
+// un código no debe consumir los intentos de registro de otra persona.
+const limiteReset = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { ok: false, mensaje: 'Pediste demasiados códigos. Espera una hora e intenta de nuevo.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Validaciones de registro
 const validarRegistro = [
   body('nombre').trim().notEmpty().withMessage('El nombre es obligatorio'),
   body('apellido').trim().notEmpty().withMessage('El apellido es obligatorio'),
+  // Teléfono internacional: la longitud exacta la valida el controlador
+  // según el país (utils/telefono.js). Aquí solo se exige que venga y que
+  // sean dígitos — un número francés de 9 o uno estadounidense de 10 no
+  // pueden compartir una sola regla de "10 dígitos".
   body('telefono')
     .trim().notEmpty().withMessage('El teléfono es obligatorio')
-    .matches(/^[0-9]{10}$/).withMessage('El teléfono debe tener 10 dígitos'),
-  body('email').optional().isEmail().withMessage('El correo no es válido'),
+    .matches(/^[+ ()\-0-9]{6,20}$/).withMessage('El teléfono solo puede tener números'),
+  body('lada').optional({ values: 'falsy' })
+    .matches(/^\+?\d{1,4}$/).withMessage('El código de país no es válido'),
+  body('pais').optional({ values: 'falsy' })
+    .isLength({ min: 2, max: 2 }).withMessage('El país no es válido'),
+  body('email').optional({ values: 'falsy' }).isEmail().withMessage('El correo no es válido'),
   body('password')
     .optional()
     .isLength({ min: 8 }).withMessage('La contraseña debe tener mínimo 8 caracteres'),
@@ -41,13 +73,25 @@ const validarRegistro = [
     .equals('true').withMessage('Debes aceptar los Términos de Uso y el Aviso de Privacidad'),
 ];
 
-router.post('/registro', limiteOTP, validarRegistro, registro);
+router.post('/registro', limiteRegistro, validarRegistro, registro);
 router.post('/verificar-otp', limiteAuth, verificarOTP);
 router.post('/solicitar-otp', limiteOTP, solicitarOTP);
 router.post('/login', limiteAuth, [
   body('telefono').notEmpty().withMessage('El teléfono es obligatorio'),
   body('password').notEmpty().withMessage('La contraseña es obligatoria'),
 ], login);
+// Recuperación de contraseña: 5 códigos por hora por IP (cada uno cuesta un
+// SMS o un email real), y el canje del código con el límite de auth
+// (5 intentos/15 min) para que no se pueda adivinar por fuerza bruta.
+router.post('/recuperar-password', limiteReset, [
+  body('telefono').optional({ values: 'falsy' }).trim(),
+  body('email').optional({ values: 'falsy' }).isEmail().withMessage('El correo no es válido'),
+], recuperarPassword);
+router.post('/restablecer-password', limiteAuth, [
+  body('codigo').notEmpty().withMessage('El código es obligatorio'),
+  body('password').isLength({ min: 8 }).withMessage('La contraseña debe tener mínimo 8 caracteres'),
+], restablecerPassword);
+
 router.get ('/perfil', proteger, obtenerPerfil);
 router.post('/logout', proteger, logout);
 

@@ -151,7 +151,27 @@ const manejarUpdate = async (req, res) => {
       return enviar(chatId, 'Uso: /credito {telefono} {monto} {motivo}\nEj: /credito 5545074460 100 Pedido perdido, se compensa con crédito');
     }
     try {
-      const cliente = await Usuario.findOne({ where: { telefono } });
+      // Con teléfonos internacionales el número nacional ya NO es único: dos
+      // países pueden repetirlo. Se acepta "+1 954…" o "5545074460" (México
+      // por defecto) y, si hay varias coincidencias, se piden explícitas en
+      // vez de otorgarle el crédito a la primera cuenta que aparezca.
+      const { normalizarTelefono } = require('../utils/telefono');
+      const llevaLada = /^\+/.test(telefono);
+      const { lada, telefono: nacional } = normalizarTelefono(
+        telefono.replace(/^\+/, ''),
+        llevaLada ? telefono.replace(/^\+/, '').slice(0, 2) : '52',
+      );
+      let cliente = await Usuario.findOne({ where: { telefono: nacional, lada } });
+      if (!cliente) {
+        const candidatos = await Usuario.findAll({ where: { telefono: nacional } });
+        if (candidatos.length === 1) {
+          cliente = candidatos[0];
+        } else if (candidatos.length > 1) {
+          return enviar(chatId, `Hay ${candidatos.length} cuentas con ese número en países distintos:\n`
+            + candidatos.map((c) => `• +${c.lada} ${c.telefono} — ${c.nombre} ${c.apellido || ''}`).join('\n')
+            + '\nRepite el comando con la lada, ej. /credito +52' + nacional + ' …');
+        }
+      }
       if (!cliente) return enviar(chatId, `No encontré ninguna cuenta con el teléfono ${telefono}.`);
       const { otorgarCredito } = require('../services/creditos.service');
       const resultado = await otorgarCredito({ usuarioId: cliente.id, monto, motivo, adminId: admin.id });

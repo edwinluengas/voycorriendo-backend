@@ -1,6 +1,7 @@
 const ConfigZona = require('../models/ConfigZona');
 const ConfigComision = require('../models/ConfigComision');
 const PromoConfig = require('../models/PromoConfig');
+const { COMISION_FLAT, PAGO_REPARTIDOR, TARIFAS_CLIENTE } = require('../config/precios');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -47,13 +48,22 @@ const getComision = async (metodo_pago, tipoEnvio) => {
     (c) => c.metodo_pago === 'digital' && c.tipo_envio === tipoEnvio,
   );
 
+  // Fallback: el modelo flat vigente ($35 de comisión al restaurante, el
+  // repartidor se queda con el 100% del envío). El fallback viejo (5/30 y
+  // 10/50) es de un modelo que ya no existe y fue la causa REAL de que un
+  // repartidor cobrara $30 en vez de $35 cuando config_comisiones quedó
+  // vacía (2026-07-22) — se alinea a config/precios.js para que un fallo de
+  // DB nunca vuelva a cambiar los montos que ve la gente.
   const base = fila
     ? { comision_plataforma: Number(fila.comision_plataforma), pago_repartidor: Number(fila.pago_repartidor) }
-    : { comision_plataforma: tipoEnvio === 'express' ? 10 : 5, pago_repartidor: tipoEnvio === 'express' ? 50 : 30 };
+    : {
+        comision_plataforma: COMISION_FLAT,
+        pago_repartidor: tipoEnvio === 'express' ? PAGO_REPARTIDOR.EXPRESS : PAGO_REPARTIDOR.STANDARD,
+      };
 
   // Promo efectivo: driver se queda con la tarifa completa, plataforma cobra $0
   if (metodo_pago === 'efectivo' && promoEfectivoActiva(promos)) {
-    const feeBase = tipoEnvio === 'express' ? 60 : 35;
+    const feeBase = tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
     return { comision_plataforma: 0, pago_repartidor: feeBase };
   }
 

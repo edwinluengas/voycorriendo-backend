@@ -85,8 +85,13 @@ const actualizarPerfil = async (req, res) => {
       }
     }
 
+    // tipo_vehiculo ya NO es editable: solo existen entregas en motocicleta
+    // (2026-07-26). Se fuerza aquí en vez de rechazar el request para que un
+    // APK viejo mandando 'bicicleta' no deje al repartidor sin poder guardar.
+    repartidor.tipo_vehiculo = 'motocicleta';
+
     const camposEditables = [
-      'tipo_vehiculo', 'marca_vehiculo', 'modelo_vehiculo',
+      'marca_vehiculo', 'modelo_vehiculo',
       'anio_vehiculo', 'placa_vehiculo', 'color_vehiculo',
       'clabe_bancaria', 'banco',
       'foto_ine_frente', 'foto_ine_reverso',
@@ -282,7 +287,7 @@ const crearPerfil = async (req, res) => {
     }
 
     const {
-      tipo_vehiculo, marca_vehiculo, modelo_vehiculo,
+      marca_vehiculo, modelo_vehiculo,
       anio_vehiculo, placa_vehiculo, color_vehiculo,
       clabe_bancaria, banco,
     } = req.body;
@@ -302,7 +307,7 @@ const crearPerfil = async (req, res) => {
 
     const repartidor = await Repartidor.create({
       usuario_id: req.usuario.id,
-      tipo_vehiculo,
+      tipo_vehiculo: 'motocicleta',   // única modalidad desde 2026-07-26
       marca_vehiculo,
       modelo_vehiculo,
       anio_vehiculo,

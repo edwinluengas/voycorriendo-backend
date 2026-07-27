@@ -1,53 +1,39 @@
 /**
  * Cálculo económico — VoyCorriendo
- * Las tarifas se cargan desde config_zonas y config_comisiones en DB (cache 5 min).
- * Fallback a valores locales si DB no responde.
+ *
+ * TARIFA PLANA (decisión del dueño, 2026-07-26): el envío NUNCA depende de la
+ * distancia. Standard $35, Express $60, punto. La DB (`config_zonas`) se usa
+ * SOLO para la cobertura máxima en km; las columnas `surcharge_inicio_km` /
+ * `surcharge_por_km` quedaron desactivadas y ya NO se leen — eran la causa
+ * real de que la tarifa cambiara entre pedidos (fee = 35 + $5 por cada km
+ * arriba de 3, así que un pedido a 4.7 km cobraba $43.55 en vez de $35).
+ * Si alguien vuelve a poblar esas columnas en DB, este código las ignora.
+ *
+ * La fuente de verdad de los montos es `config/precios.js` (env-overridable
+ * con FEE_STANDARD / FEE_EXPRESS).
  */
 const {
-  TARIFAS_CLIENTE, PAGO_REPARTIDOR, MAX_DISTANCE_KM,
+  TARIFAS_CLIENTE, MAX_DISTANCE_KM,
 } = require('../config/precios');
 
-const r2 = (n) => Math.round(n * 100) / 100;
-
-// ─── Costo de envío al cliente (zona-based) ───────────────
+// ─── Costo de envío al cliente (FLAT por tipo de envío) ───
 // Retorna { zona, costo, fueraDeCobertura, desglose }
 const calcularCostoEnvio = async ({ distanciaKm, tipoEnvio = 'standard' }) => {
-  try {
-    const { getZona } = require('../services/config.service');
-    const zona = await getZona(tipoEnvio);
-    if (zona) {
-      const maxKm = Number(zona.max_km);
-      if (distanciaKm == null || distanciaKm > maxKm) {
-        return { zona: null, costo: 0, fueraDeCobertura: true, desglose: {} };
-      }
-      let costo = Number(zona.fee_base);
-      if (zona.surcharge_inicio_km != null && distanciaKm > Number(zona.surcharge_inicio_km)) {
-        const excedente = distanciaKm - Number(zona.surcharge_inicio_km);
-        costo += excedente * Number(zona.surcharge_por_km);
-        costo = r2(costo);
-      }
-      return {
-        zona: distanciaKm <= 2 ? 'A' : distanciaKm <= 3 ? 'B' : 'C',
-        costo,
-        fueraDeCobertura: false,
-        desglose: { base: Number(zona.fee_base), tipoEnvio, distanciaKm },
-      };
-    }
-  } catch (e) {
-    console.warn('[precios] Usando fallback (config.service falló):', e.message);
+  if (tipoEnvio === 'pickup') {
+    return { zona: null, costo: 0, fueraDeCobertura: false, desglose: { flat: 0, tipoEnvio } };
   }
 
-  // Fallback a config local
-  const maxFallback = tipoEnvio === 'express' ? 4 : MAX_DISTANCE_KM;
-  if (distanciaKm == null || distanciaKm > maxFallback) {
+  const maxKm = await getMaxKm(tipoEnvio);
+  if (distanciaKm == null || distanciaKm > maxKm) {
     return { zona: null, costo: 0, fueraDeCobertura: true, desglose: {} };
   }
-  const costoFallback = tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
+
+  const costo = tipoEnvio === 'express' ? TARIFAS_CLIENTE.EXPRESS : TARIFAS_CLIENTE.STANDARD;
   return {
-    zona: distanciaKm <= 2 ? 'A' : 'B',
-    costo: costoFallback,
+    zona: distanciaKm <= 2 ? 'A' : distanciaKm <= 3 ? 'B' : 'C',
+    costo,
     fueraDeCobertura: false,
-    desglose: { flat: costoFallback, tipoEnvio },
+    desglose: { flat: costo, tipoEnvio, distanciaKm },
   };
 };
 
@@ -57,8 +43,10 @@ const getMaxKm = async (tipoEnvio = 'standard') => {
     const { getZona } = require('../services/config.service');
     const zona = await getZona(tipoEnvio);
     if (zona) return Number(zona.max_km);
-  } catch (_) {}
-  return tipoEnvio === 'express' ? 4 : MAX_DISTANCE_KM;
+  } catch (e) {
+    console.warn('[precios] Usando cobertura fallback (config.service falló):', e.message);
+  }
+  return MAX_DISTANCE_KM;
 };
 
 module.exports = {

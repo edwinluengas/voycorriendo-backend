@@ -42,7 +42,7 @@ const dashboard = async (req, res) => {
       Pedido.count({ where: { creado_en: { [Op.gte]: hoy } } }),
       Negocio.findAll({
         where: { verificacion_estado: estadosPendientes },
-        include: [{ model: Usuario, as: 'dueno', attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'] }],
+        include: [{ model: Usuario, as: 'dueno', attributes: ['id', 'nombre', 'apellido', 'telefono', 'lada', 'email'] }],
         order: [['enviado_revision_en', 'ASC NULLS LAST']],
         attributes: [
           'id', 'nombre', 'categoria', 'telefono', 'direccion',
@@ -52,7 +52,7 @@ const dashboard = async (req, res) => {
       }),
       Repartidor.findAll({
         where: { verificacion_estado: estadosPendientes },
-        include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'] }],
+        include: [{ model: Usuario, as: 'usuario', attributes: ['id', 'nombre', 'apellido', 'telefono', 'lada', 'email'] }],
         order: [['enviado_revision_en', 'ASC NULLS LAST']],
         attributes: [
           'id', 'tipo_vehiculo', 'placa_vehiculo', 'verificacion_estado', 'verificacion_nota',
@@ -104,7 +104,7 @@ const listarRepartidores = async (req, res) => {
       include: [{
         model: Usuario,
         as: 'usuario',
-        attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'],
+        attributes: ['id', 'nombre', 'apellido', 'telefono', 'lada', 'email'],
       }],
       order: [['actualizado_en', 'DESC']],
     });
@@ -419,7 +419,7 @@ const listarNegocios = async (req, res) => {
       include: [{
         model: Usuario,
         as: 'dueno',
-        attributes: ['id', 'nombre', 'apellido', 'telefono', 'email'],
+        attributes: ['id', 'nombre', 'apellido', 'telefono', 'lada', 'email'],
       }],
       order: [['actualizado_en', 'DESC']],
     });
@@ -566,7 +566,7 @@ const listarUsuarios = async (req, res) => {
     }
     const usuarios = await Usuario.findAll({
       where,
-      attributes: ['id', 'nombre', 'apellido', 'telefono', 'email', 'rol', 'modo_activo', 'estado', 'creado_en'],
+      attributes: ['id', 'nombre', 'apellido', 'telefono', 'lada', 'email', 'rol', 'modo_activo', 'estado', 'creado_en'],
       order: [['creado_en', 'DESC']],
       limit: 200,
     });

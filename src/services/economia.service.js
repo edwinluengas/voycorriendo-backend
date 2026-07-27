@@ -1,7 +1,7 @@
 const PlatformRevenue    = require('../models/PlatformRevenue');
 const LedgerConciliacion = require('../models/LedgerConciliacion');
 const { getComision }    = require('./config.service');
-const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA, AVISO_PEDIDOS_DEUDA, MP_FEE_PCT, MP_FEE_FIJO, IVA_PCT } = require('../config/precios');
+const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA, AVISO_PEDIDOS_DEUDA, MP_FEE_PCT, MP_FEE_FIJO, IVA_PCT, TARIFAS_CLIENTE } = require('../config/precios');
 const tg = require('./telegram.service');
 
 // ─── Procesar entrega ─────────────────────────────────────
@@ -168,11 +168,11 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
 // Legacy: zonas premium eliminadas
 const esZonaPremium = () => false;
 
-// Exponer getComision para uso en pedidosController
+// Tarifa plana al cliente — una sola fuente de verdad (config/precios.js)
 const calcularFeeCliente = ({ tipoEnvio }) => {
-  if (tipoEnvio === 'express') return 60;
+  if (tipoEnvio === 'express') return TARIFAS_CLIENTE.EXPRESS;
   if (tipoEnvio === 'pickup')  return 0;
-  return 35;
+  return TARIFAS_CLIENTE.STANDARD;
 };
 
 module.exports = { calcularFeeCliente, esZonaPremium, procesarEntrega };

@@ -19,9 +19,13 @@ const Repartidor = sequelize.define('Repartidor', {
   foto_licencia: { type: DataTypes.STRING, allowNull: true },
   foto_tarjeta_circulacion: { type: DataTypes.STRING, allowNull: true },
   // Vehículo
+  // Solo motocicleta (2026-07-26): las entregas en bicicleta se eliminaron
+  // del servicio. Se dejó como VARCHAR en vez de ENUM para no volver a
+  // depender de un tipo de Postgres que hay que migrar a mano.
   tipo_vehiculo: {
-    type: DataTypes.ENUM('motocicleta', 'bicicleta'),
+    type: DataTypes.STRING(20),
     defaultValue: 'motocicleta',
+    validate: { isIn: { args: [['motocicleta']], msg: 'Solo se permiten entregas en motocicleta.' } },
   },
   marca_vehiculo: { type: DataTypes.STRING(50), allowNull: true },
   modelo_vehiculo: { type: DataTypes.STRING(50), allowNull: true },
