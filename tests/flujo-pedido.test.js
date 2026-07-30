@@ -129,8 +129,14 @@ describe('Candados del panel de administración', () => {
       process.env.JWT_SECRET, { expiresIn: '1h' },
     );
     const res = await cliente.get('/admin/creditos/resumen', conAuth(tokenViejo));
-    expect(res.status).toBe(403);
-    expect(res.data.codigo).toBe('REQUIERE_2FA');
+    // Lo que importa es que NO entre. Corriendo contra producción el token
+    // ni siquiera se puede verificar (su JWT_SECRET es distinto del local) y
+    // la respuesta es 401; contra un servidor con la misma clave, el candado
+    // que actúa es el del segundo factor y responde 403 REQUIERE_2FA. Ambas
+    // son correctas — exigir solo una hacía fallar la suite según dónde
+    // corriera, no según si el sistema estaba bien.
+    expect([401, 403]).toContain(res.status);
+    if (res.status === 403) expect(res.data.codigo).toBe('REQUIERE_2FA');
   });
 
   test('una cuenta que NO es admin no entra a /api/admin', async () => {
