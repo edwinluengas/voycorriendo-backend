@@ -68,11 +68,15 @@ const Pedido = sequelize.define('Pedido', {
   // no cambian); lo que realmente se cobra al medio de pago es
   // total - credito_aplicado.
   credito_aplicado: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-  // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma encima
+  // Límite efectivo: aplica al subtotal de productos; el fee de envío se suma
+  // encima. El monto sale de config/precios.js — estaba hardcodeado aquí en
+  // DOS lugares (este getter y el hook de abajo), y eran los que seguían
+  // rechazando pedidos de más de $500 aunque el tope ya fuera $700.
   excede_limite_efectivo: {
     type: DataTypes.VIRTUAL,
     get() {
-      return this.metodo_pago === 'efectivo' && parseFloat(this.subtotal) > 500;
+      const { LIMITE_EFECTIVO } = require('../config/precios');
+      return this.metodo_pago === 'efectivo' && parseFloat(this.subtotal) > LIMITE_EFECTIVO;
     },
   },
   // Estado del pedido
@@ -119,11 +123,16 @@ const Pedido = sequelize.define('Pedido', {
   comentario:   { type: DataTypes.TEXT, allowNull: true },
   propina:      { type: DataTypes.DECIMAL(10, 2), allowNull: true, defaultValue: 0 },
   ciudad:       { type: DataTypes.STRING(50), allowNull: true },
+  // 'pickup' = el cliente pasa por su pedido al negocio (sin envío ni
+  // repartidor). VARCHAR en vez de ENUM: el tipo de Postgres hay que migrarlo
+  // a mano cada vez que se agrega un valor, y el CHECK de la tabla ya limita
+  // los válidos (ver migrarDB).
   tipo_envio: {
-    type: DataTypes.ENUM('express', 'standard'),
+    type: DataTypes.STRING(20),
     defaultValue: 'standard',
+    validate: { isIn: { args: [['standard', 'express', 'pickup']], msg: 'Tipo de envío no válido.' } },
   },
-  fee_cliente:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 35.00 },
+  fee_cliente:  { type: DataTypes.DECIMAL(10, 2), defaultValue: 40.00 },
   zona_premium: { type: DataTypes.BOOLEAN, defaultValue: false },
   batch_id: {
     type: DataTypes.UUID,
@@ -137,9 +146,11 @@ const Pedido = sequelize.define('Pedido', {
   updatedAt: 'actualizado_en',
   hooks: {
     beforeCreate: (pedido) => {
-      // Límite en subtotal (sin envío), igual que la validación del controller
-      if (pedido.metodo_pago === 'efectivo' && parseFloat(pedido.subtotal) > 500) {
-        throw new Error('Los pedidos en efectivo no pueden superar $500 MXN en productos. Por favor elige otro método de pago.');
+      // Último candado del límite de efectivo (el controller ya lo valida con
+      // un mensaje amable; esto atrapa cualquier camino que no pase por ahí).
+      const { LIMITE_EFECTIVO } = require('../config/precios');
+      if (pedido.metodo_pago === 'efectivo' && parseFloat(pedido.subtotal) > LIMITE_EFECTIVO) {
+        throw new Error(`Los pedidos en efectivo no pueden superar $${LIMITE_EFECTIVO} MXN en productos.`);
       }
     },
   },

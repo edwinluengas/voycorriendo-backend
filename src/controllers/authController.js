@@ -67,6 +67,16 @@ const registro = async (req, res) => {
         mensaje: 'Debes aceptar los Términos de Uso y el Aviso de Privacidad para crear tu cuenta.',
       });
     }
+    // Correo obligatorio (2026-07-29): sin él, un usuario que olvide su
+    // contraseña no tiene forma de recuperarla — el SMS depende de Twilio y
+    // Telegram de que el usuario lo vincule a mano.
+    if (!email || !String(email).includes('@')) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Necesitamos tu correo electrónico: es con lo que podrás recuperar tu contraseña si la olvidas.',
+        campo: 'email',
+      });
+    }
 
     // Teléfono internacional: (lada, número nacional). Sin lada → México.
     const { lada, telefono } = normalizarTelefono(req.body.telefono, req.body.lada);
@@ -488,7 +498,10 @@ const recuperarPassword = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Escribe tu número de celular o tu correo.' });
     }
 
-    if ((canal === 'email' || canal === 'ambos') && !emailConfigurado()) {
+    // Si el correo no está habilitado en el servidor, solo se corta el flujo
+    // cuando tampoco hay otro camino: un usuario con Telegram vinculado sí
+    // puede recibir su código aunque pidió correo.
+    if ((canal === 'email' || canal === 'ambos') && !emailConfigurado() && !usuario?.telegram_chat_id) {
       return res.status(503).json({
         ok: false,
         mensaje: 'El envío por correo todavía no está habilitado. Recibe tu código por SMS.',
@@ -540,7 +553,25 @@ const recuperarPassword = async (req, res) => {
       if (!r.ok) fallos.push(`Email: ${r.motivo}`);
     }
 
-    if (!enviadoSMS && !enviadoEmail) {
+    // Telegram como canal ADICIONAL para quien lo tenga vinculado. Es el más
+    // confiable hoy (gratis, sin depender de Twilio ni de un proveedor de
+    // correo) y salva el caso en que el SMS y el correo fallen los dos.
+    let enviadoTelegram = false;
+    if (usuario.telegram_chat_id) {
+      try {
+        const tg = require('../services/telegram.service');
+        await tg.enviar(usuario.telegram_chat_id,
+          `🔑 <b>Recuperar tu contraseña</b>\n\nTu código es:\n\n<code>${codigo}</code>\n\n`
+          + `Vence en ${RESET_VIGENCIA_MIN} minutos. Escríbelo en la app: `
+          + `<i>Iniciar sesión → ¿Olvidaste tu contraseña?</i>\n\n`
+          + `Si no lo pediste, ignora este mensaje: tu contraseña actual sigue funcionando.`);
+        enviadoTelegram = true;
+      } catch (e) {
+        fallos.push(`Telegram: ${e.message}`);
+      }
+    }
+
+    if (!enviadoSMS && !enviadoEmail && !enviadoTelegram) {
       // Aquí SÍ hay que ser claro: la cuenta existe y aún así no salió nada.
       // Callarlo dejaría al usuario esperando un código que nunca llega.
       console.error('[reset] No se pudo entregar el código:', fallos.join(' | '));
@@ -551,12 +582,16 @@ const recuperarPassword = async (req, res) => {
       });
     }
 
-    console.log(`[reset] Código enviado a ${enmascarar(destino)} (sms=${enviadoSMS}, email=${enviadoEmail})`);
+    console.log(`[reset] Código enviado a ${enmascarar(destino)} (sms=${enviadoSMS}, email=${enviadoEmail}, telegram=${enviadoTelegram})`);
+    const canalesUsados = [
+      enviadoSMS && 'SMS',
+      enviadoEmail && 'correo',
+      enviadoTelegram && 'Telegram',
+    ].filter(Boolean);
     res.json({
       ok: true,
-      mensaje: enviadoSMS && enviadoEmail ? 'Te enviamos un código por SMS y correo.'
-        : enviadoSMS ? 'Te enviamos un código por SMS.'
-        : 'Te enviamos un código a tu correo.',
+      mensaje: `Te enviamos un código por ${canalesUsados.join(' y ')}.`,
+      canales: canalesUsados,
       vigencia_min: RESET_VIGENCIA_MIN,
       // Pistas enmascaradas para que el usuario sepa a dónde llegó el código
       destino: {

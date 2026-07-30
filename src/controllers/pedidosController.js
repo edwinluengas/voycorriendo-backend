@@ -4,7 +4,10 @@ const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
-const { PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA } = require('../config/precios');
+const {
+  PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA,
+  LIMITE_EFECTIVO, METODOS_PAGO_ACTIVOS, metodoPagoActivo,
+} = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const pagosService = require('../services/pagos.service');
 const creditosService = require('../services/creditos.service');
@@ -12,6 +15,7 @@ const tg = require('../services/telegram.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
 const { bloquearRepartidorPermanente } = require('../services/seguridadCuentas.service');
+const { hayRepartidoresParaEnvio, mensajeSoloPickup } = require('../services/disponibilidad.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -116,6 +120,24 @@ const crearPedido = async (req, res) => {
       }
     }
 
+    // 2.5. ¿Hay quién lo entregue? Si nadie está en línea con cupo, el pedido
+    // a domicilio se quedaría en 'listo' hasta que el job de timeout lo
+    // cancele — el negocio cocinando para nada y el cliente esperando. En ese
+    // caso solo se ofrece pickup, y el mensaje se enmarca como beneficio
+    // (ahorras el envío) en vez de "no tenemos repartidores".
+    if (tipo_envio !== 'pickup') {
+      const disponibilidad = await hayRepartidoresParaEnvio(negocio.ciudad || 'puerto_escondido');
+      if (!disponibilidad.disponible) {
+        return res.status(409).json({
+          ok: false,
+          mensaje: mensajeSoloPickup(subtotal),
+          codigo: 'SOLO_PICKUP',
+          solo_pickup: true,
+          ahorro_envio: calcularFeeCliente({ tipoEnvio: tipo_envio }),
+        });
+      }
+    }
+
     // 3. Calcular distancia y validar cobertura por tipo_envio
     // IMPORTANTE: si no podemos determinar la distancia (falta ubicación del
     // negocio o del cliente, o falla el cálculo), el pedido se RECHAZA — antes
@@ -165,6 +187,19 @@ const crearPedido = async (req, res) => {
     if (!metodosValidos.includes(metodo_pago)) {
       return res.status(400).json({ ok: false, mensaje: 'Método de pago no válido.' });
     }
+    // Métodos DESACTIVADOS temporalmente (fase de prueba real: solo efectivo).
+    // El candado va aquí, en el servidor: una app vieja o alguien llamando la
+    // API directo no debe poder colar un pedido con un método apagado.
+    if (!metodoPagoActivo(metodo_pago)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: metodo_pago === 'efectivo'
+          ? 'El pago en efectivo no está disponible por ahora.'
+          : 'Por ahora solo aceptamos pago en EFECTIVO al recibir tu pedido. El pago con tarjeta estará disponible muy pronto.',
+        codigo: 'METODO_PAGO_DESACTIVADO',
+        metodos_activos: METODOS_PAGO_ACTIVOS,
+      });
+    }
     if (metodo_pago === 'transferencia' && negocio.categoria !== 'ahivoy store') {
       return res.status(400).json({
         ok: false,
@@ -196,11 +231,18 @@ const crearPedido = async (req, res) => {
 
     const total = subtotal + fee_cliente + propina;
 
-    // 6. Límite efectivo: productos ≤ $500 (el envío se suma encima)
-    if (metodo_pago === 'efectivo' && subtotal > 500) {
+    // 6. Límite de efectivo: se mide sobre el subtotal de PRODUCTOS (el envío
+    // se suma encima). El monto viene de config/precios.js — antes estaba
+    // hardcodeado aquí Y como env var en pagos.service, así que cambiarlo en
+    // un lado dejaba el otro desalineado.
+    if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
+      const alternativas = METODOS_PAGO_ACTIVOS.filter((m) => m !== 'efectivo');
       return res.status(400).json({
         ok: false,
-        mensaje: `Pagos en efectivo solo para pedidos hasta $500 MXN en productos. Tu subtotal es $${subtotal.toFixed(2)}. Elige tarjeta o Mercado Pago.`,
+        mensaje: `Pagos en efectivo solo para pedidos hasta $${LIMITE_EFECTIVO} MXN en productos. Tu subtotal es $${subtotal.toFixed(2)}.`
+          + (alternativas.length ? ' Elige otro método de pago.' : ' Quita algo del carrito para continuar.'),
+        codigo: 'LIMITE_EFECTIVO',
+        limite: LIMITE_EFECTIVO,
       });
     }
 
@@ -260,7 +302,12 @@ const crearPedido = async (req, res) => {
           const pc = Number(paga_con);
           return (!isNaN(pc) && pc >= totalNeto && pc <= 10000) ? pc : null;
         })() : null,
-        direccion_entrega,
+        // PICKUP: el cliente pasa al negocio, así que la "dirección de
+        // entrega" es la del propio negocio (el cliente no escribe ninguna).
+        // Guardarla así deja el ticket y el historial legibles.
+        direccion_entrega: tipo_envio === 'pickup'
+          ? `Recoge en tienda — ${[negocio.nombre, negocio.direccion, negocio.colonia].filter(Boolean).join(', ')}`
+          : direccion_entrega,
         latitud_entrega,
         longitud_entrega,
         notas_entrega,
@@ -578,6 +625,23 @@ const actualizarEstado = async (req, res) => {
     // una entrega a domicilio (en_camino -> entregado), sin importar quién hace
     // la llamada (repartidor o admin). Antes solo se exigía si rolEfectivo era
     // 'repartidor', dejando a un admin cerrar el pedido sin código.
+    // En PICKUP el pedido pasa de 'listo' a 'entregado' cuando el cliente
+    // llega al mostrador — y ahí el código importa igual: es lo que prueba
+    // que se le entregó a quien hizo el pedido y no a cualquiera que dijo su
+    // nombre. Antes esta transición no pedía nada.
+    if (estado === 'entregado' && pedido.estado === 'listo' && pedido.tipo_envio === 'pickup') {
+      const codigoProvisto = req.body.codigo_entrega;
+      if (!codigoProvisto) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: 'Pide al cliente su código de entrega (lo tiene en la app) para confirmar que se lo entregaste.',
+        });
+      }
+      if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
+        return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídeselo de nuevo al cliente.' });
+      }
+    }
+
     if (estado === 'entregado' && pedido.estado === 'en_camino') {
       const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
       if (!codigoProvisto) {
@@ -694,12 +758,19 @@ const actualizarEstado = async (req, res) => {
       }
     }
 
-    // Al entregar: economía
+    // Al entregar: economía.
+    // PICKUP no tiene repartidor, y este bloque estaba condicionado a que lo
+    // hubiera — así que un pedido para recoger en tienda se cerraba SIN
+    // ledger, sin comisión y sin deuda del restaurante: ingreso $0 para la
+    // plataforma y cero rastro contable de la venta.
     if (estado === 'entregado') {
-      if (pedido.repartidor_id) {
+      const esPickupEntregado = pedido.tipo_envio === 'pickup';
+      if (pedido.repartidor_id || esPickupEntregado) {
         try {
-          const repartidor = await Repartidor.findByPk(pedido.repartidor_id);
-          if (repartidor) await procesarEntrega({ pedido, repartidor });
+          const repartidor = pedido.repartidor_id
+            ? await Repartidor.findByPk(pedido.repartidor_id)
+            : null;
+          if (repartidor || esPickupEntregado) await procesarEntrega({ pedido, repartidor });
         } catch (e) {
           console.error('Error en procesarEntrega:', e.message);
         }
@@ -779,6 +850,41 @@ const actualizarEstado = async (req, res) => {
     res.json({ ok: true, mensaje: `Pedido actualizado a: ${estado}`, data: { pedido } });
   } catch (error) {
     res.status(500).json({ ok: false, mensaje: 'Error al actualizar el estado.' });
+  }
+};
+
+// ─── GET /api/pedidos/disponibilidad ─────────────────────
+// La app lo consulta ANTES de mostrar las opciones de envío: si nadie puede
+// entregar en este momento, solo se ofrece pickup. El mensaje va enmarcado
+// como beneficio (te ahorras el envío), nunca como "no tenemos repartidores".
+// Query: negocio_id (opcional, para tomar su ciudad)
+const disponibilidadEnvio = async (req, res) => {
+  try {
+    let ciudad = 'puerto_escondido';
+    if (req.query.negocio_id) {
+      const negocio = await Negocio.findByPk(req.query.negocio_id, { attributes: ['ciudad'] });
+      if (negocio?.ciudad) ciudad = negocio.ciudad;
+    }
+    const disponibilidad = await hayRepartidoresParaEnvio(ciudad);
+    const feeStandard = calcularFeeCliente({ tipoEnvio: 'standard' });
+
+    res.json({
+      ok: true,
+      data: {
+        envio_disponible: disponibilidad.disponible,
+        // Tipos de envío que la app debe ofrecer en este momento
+        tipos_disponibles: disponibilidad.disponible
+          ? ['standard', 'express', 'pickup']
+          : ['pickup'],
+        mensaje: disponibilidad.disponible ? null : mensajeSoloPickup(Date.now() % 997),
+        ahorro_envio: disponibilidad.disponible ? 0 : feeStandard,
+      },
+    });
+  } catch (error) {
+    console.error('[disponibilidad] error:', error.message);
+    // Ante un error, no se le apaga el envío a nadie: la app ofrece todo y el
+    // candado real sigue estando en crearPedido.
+    res.json({ ok: true, data: { envio_disponible: true, tipos_disponibles: ['standard', 'express', 'pickup'], mensaje: null } });
   }
 };
 
@@ -1086,5 +1192,5 @@ const subirFotoINE = async (req, res) => {
 
 module.exports = {
   crearPedido, misPedidos, obtenerPedido, actualizarEstado,
-  calificarPedido, pedidosDelNegocio, cotizarEnvio, subirFotoINE,
+  calificarPedido, pedidosDelNegocio, cotizarEnvio, disponibilidadEnvio, subirFotoINE,
 };

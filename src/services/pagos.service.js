@@ -2,34 +2,45 @@
  * ──────────────────────────────────────────────────────────────
  *  Servicio de Pagos - VoyCorriendo
  *  Métodos soportados: efectivo, tarjeta, transferencia, mercado_pago
- *  Regla de negocio: pagos en efectivo ≤ $500 MXN.
+ *  Cuáles están HABILITADOS hoy y el tope de efectivo viven en
+ *  config/precios.js (METODOS_PAGO_ACTIVOS / LIMITE_EFECTIVO).
  * ──────────────────────────────────────────────────────────────
  */
 
 const axios  = require('axios');
 const crypto = require('crypto');
 const tg = require('./telegram.service');
+const { LIMITE_EFECTIVO, METODOS_PAGO_ACTIVOS, metodoPagoActivo } = require('../config/precios');
 
 const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
 const MP_BASE_URL       = 'https://api.mercadopago.com';
-const LIMITE_EFECTIVO   = parseFloat(process.env.LIMITE_EFECTIVO || 500);
 const API_PUBLIC_URL    = process.env.API_PUBLIC_URL || 'https://voycorriendo-backend-production.up.railway.app';
 const APP_DEEP_LINK     = process.env.APP_DEEP_LINK  || null;
 
-// ─── Validación de límite de efectivo ─────────────────────────
+// ─── Validación de método y límite de efectivo ────────────────
 // El límite aplica al SUBTOTAL de productos. El fee de envío se cobra encima.
-// Total pagado en efectivo = subtotal (≤$500) + costo_envio
+// Total pagado en efectivo = subtotal (≤ LIMITE_EFECTIVO) + costo_envio
 const validarMetodoPago = ({ metodo_pago, subtotal, costo_envio = 0 }) => {
   const metodosValidos = ['efectivo', 'tarjeta', 'transferencia', 'mercado_pago'];
   if (!metodosValidos.includes(metodo_pago)) {
     return { ok: false, mensaje: 'Método de pago no válido.' };
   }
-  if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
-    const totalConEnvio = (subtotal + parseFloat(costo_envio || 0)).toFixed(2);
+  if (!metodoPagoActivo(metodo_pago)) {
     return {
       ok: false,
-      mensaje: `Efectivo solo disponible cuando los productos no superen $${LIMITE_EFECTIVO.toLocaleString('es-MX')} MXN. Tu subtotal es $${subtotal.toFixed(2)} (total con envío: $${totalConEnvio}). Elige tarjeta o Mercado Pago.`,
+      mensaje: 'Por ahora solo aceptamos pago en EFECTIVO al recibir tu pedido.',
+      codigo: 'METODO_PAGO_DESACTIVADO',
+    };
+  }
+  if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
+    const totalConEnvio = (subtotal + parseFloat(costo_envio || 0)).toFixed(2);
+    const alternativas = METODOS_PAGO_ACTIVOS.filter((m) => m !== 'efectivo');
+    return {
+      ok: false,
+      mensaje: `Efectivo solo disponible cuando los productos no superen $${LIMITE_EFECTIVO.toLocaleString('es-MX')} MXN. Tu subtotal es $${subtotal.toFixed(2)} (total con envío: $${totalConEnvio}).`
+        + (alternativas.length ? ' Elige otro método de pago.' : ' Quita algo del carrito para continuar.'),
+      codigo: 'LIMITE_EFECTIVO',
     };
   }
   return { ok: true };

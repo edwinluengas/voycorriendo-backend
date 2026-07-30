@@ -8,7 +8,10 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { proteger, soloAdmin } = require('../middleware/auth');
 const ctrl = require('../controllers/adminController');
-const speiCtrl = require('../controllers/speiController');
+// speiController ELIMINADO (2026-07-29): sus dos endpoints listaban y
+// "ejecutaban" filas de DriverPayment que nunca se creaban — siempre vacíos.
+// Las liquidaciones reales son solicitarDeposito/retiroDiario (repartidor) y
+// liquidar-semanal (negocio).
 
 const router = express.Router();
 
@@ -69,10 +72,6 @@ router.get   ('/usuarios',                     ctrl.listarUsuarios);
 // ─── Bloqueos permanentes (placas/direcciones vetadas) ──────
 router.get   ('/bloqueos-permanentes',         ctrl.listarBloqueosPermanentes);
 router.delete('/bloqueos-permanentes/:id',     ctrl.eliminarBloqueoPermanente);
-
-// ─── Pagos SPEI ──────────────────────────────────────────────
-router.get  ('/pagos/spei/pendientes', speiCtrl.pendientes);
-router.post ('/pagos/spei/ejecutar',   speiCtrl.ejecutar);
 
 // ─── Revenue reporting ───────────────────────────────────────
 router.get  ('/revenue', ctrl.revenueReport);

@@ -193,14 +193,29 @@ describe('Pedido con tarjeta no visible al negocio hasta que se pague', () => {
     }
   });
 
-  test('un pedido con tarjeta sin capturar no aparece en la lista del negocio', async () => {
-    const { token: tokenCliente }  = await login('cliente');
-    const { token: tokenNegocio }  = await login('negocio');
+  // El pedido con tarjeta se inserta DIRECTO en la base, no por la API: el
+  // pago con tarjeta está desactivado durante la fase de prueba real (solo
+  // efectivo), pero la regla que se prueba aquí —el negocio no debe ver un
+  // pedido digital sin cobrar— sigue vigente y hay que seguir cuidándola
+  // para cuando se reactive.
+  const insertarPedidoTarjeta = async (pagoEstado) => {
+    const { usuario: cli } = await login('cliente');
+    const numero = `MND-TJ${Date.now()}`.slice(0, 12);
+    const { rows } = await db.query(`
+      INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago,
+                           pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente,
+                           direccion_entrega, latitud_entrega, longitud_entrega)
+      VALUES ($1, $2, $3, '[]'::jsonb, 200, 40, 240, 'tarjeta', $4, 'pendiente', 'standard',
+              'puerto_escondido', '1234', 40, 'Test automatizado — ignorar', $5, $6)
+      RETURNING id, pago_estado
+    `, [numero, cli.id, NEGOCIO_DON_BETO.id, pagoEstado, DESTINO_CERCA.lat, DESTINO_CERCA.lng]);
+    return rows[0];
+  };
 
-    const res = await crearPedido(tokenCliente, { metodo_pago: 'tarjeta' });
-    expect(res.status).toBe(201);
-    pedidoId = res.data.data.pedido.id;
-    expect(res.data.data.pedido.pago_estado).toBe('pendiente');
+  test('un pedido con tarjeta sin capturar no aparece en la lista del negocio', async () => {
+    const { token: tokenNegocio } = await login('negocio');
+    const pedido = await insertarPedidoTarjeta('pendiente');
+    pedidoId = pedido.id;
 
     const lista = await cliente.get('/pedidos/negocio/mis-pedidos', conAuth(tokenNegocio));
     const idsVisibles = lista.data.data.pedidos.map((p) => p.id);
@@ -208,17 +223,57 @@ describe('Pedido con tarjeta no visible al negocio hasta que se pague', () => {
   });
 
   test('el mismo pedido SÍ aparece una vez que pago_estado pasa a capturado', async () => {
-    const { token: tokenCliente } = await login('cliente');
     const { token: tokenNegocio } = await login('negocio');
-
-    const res = await crearPedido(tokenCliente, { metodo_pago: 'tarjeta' });
-    pedidoId = res.data.data.pedido.id;
+    const pedido = await insertarPedidoTarjeta('pendiente');
+    pedidoId = pedido.id;
 
     await db.query(`UPDATE pedidos SET pago_estado = 'capturado' WHERE id = $1`, [pedidoId]);
 
     const lista = await cliente.get('/pedidos/negocio/mis-pedidos', conAuth(tokenNegocio));
     const idsVisibles = lista.data.data.pedidos.map((p) => p.id);
     expect(idsVisibles).toContain(pedidoId);
+  });
+
+  test('la API rechaza un pedido con tarjeta mientras el método está apagado', async () => {
+    const { token } = await login('cliente');
+    const res = await crearPedido(token, { metodo_pago: 'tarjeta' });
+    expect(res.status).toBe(400);
+    expect(res.data.codigo).toBe('METODO_PAGO_DESACTIVADO');
+  });
+});
+
+describe('Fase de prueba real — efectivo, tope $700 y pickup', () => {
+  const creados = [];
+  afterAll(async () => {
+    if (creados.length) await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
+  });
+
+  test('el tope de efectivo es $700 de productos', async () => {
+    const { token } = await login('cliente');
+    // 30 × $22 = $660 → pasa (con el tope viejo de $500 habría fallado)
+    const ok = await crearPedido(token, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 30 }] });
+    expect(ok.status).toBe(201);
+    creados.push(ok.data.data.pedido.id);
+
+    // 33 × $22 = $726 → se rechaza
+    const excede = await crearPedido(token, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 33 }] });
+    expect(excede.status).toBe(400);
+    expect(excede.data.mensaje).toMatch(/700/);
+  });
+
+  test('pickup se crea sin dirección ni GPS y no cobra envío', async () => {
+    const { token } = await login('cliente');
+    const res = await cliente.post('/pedidos', {
+      negocio_id: NEGOCIO_DON_BETO.id,
+      items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }],
+      metodo_pago: 'efectivo',
+      tipo_envio: 'pickup',
+    }, conAuth(token));
+    expect(res.status).toBe(201);
+    const pedido = res.data.data.pedido;
+    creados.push(pedido.id);
+    expect(parseFloat(pedido.costo_envio)).toBe(0);
+    expect(pedido.direccion_entrega).toMatch(/Recoge en tienda/i);
   });
 });
 

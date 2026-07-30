@@ -1,7 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const {
-  crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido, pedidosDelNegocio, cotizarEnvio, subirFotoINE,
+  crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido, pedidosDelNegocio, cotizarEnvio, disponibilidadEnvio, subirFotoINE,
 } = require('../controllers/pedidosController');
 const { proteger, restringirA } = require('../middleware/auth');
 
@@ -12,7 +12,14 @@ router.use(proteger);  // Todos los endpoints de pedidos requieren login
 router.post('/', [
   body('negocio_id').isUUID().withMessage('negocio_id inválido'),
   body('items').isArray({ min: 1 }).withMessage('Debes incluir al menos un producto'),
-  body('direccion_entrega').notEmpty().withMessage('La dirección de entrega es obligatoria'),
+  // En PICKUP el cliente pasa por su pedido al negocio: no hay dirección de
+  // entrega que pedirle. El controlador la rellena con la del negocio para
+  // que el ticket y el historial sigan siendo legibles.
+  body('direccion_entrega')
+    .if(body('tipo_envio').not().equals('pickup'))
+    .notEmpty().withMessage('La dirección de entrega es obligatoria'),
+  body('tipo_envio').optional({ values: 'falsy' })
+    .isIn(['standard', 'express', 'pickup']).withMessage('Tipo de envío no válido'),
   body('metodo_pago')
     .isIn(['efectivo', 'tarjeta', 'transferencia', 'mercado_pago'])
     .withMessage('Método de pago no válido'),
@@ -21,6 +28,8 @@ router.post('/', [
 router.get('/',       misPedidos);
 // IMPORTANTE: las rutas estáticas van ANTES de /:id para que no las absorba
 router.get('/cotizar',             cotizarEnvio);
+// Qué tipos de envío ofrecer AHORA (si no hay repartidor en línea: solo pickup)
+router.get('/disponibilidad',      disponibilidadEnvio);
 router.get('/negocio/mis-pedidos', pedidosDelNegocio); // proteger ya aplicado, el controller valida propiedad
 router.post('/ine-foto',           subirFotoINE);
 router.get('/:id',    obtenerPedido);

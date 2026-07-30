@@ -47,8 +47,27 @@ const PAGO_REPARTIDOR = {
   EXPRESS:  num('PAGO_REP_EXPRESS',  TARIFAS_CLIENTE.EXPRESS),   // entrega express
 };
 
+// ─── 3b. Métodos de pago habilitados ────────────────────────
+// FASE DE PRUEBA REAL (2026-07-29, decisión del dueño): solo EFECTIVO. El
+// pago con tarjeta queda desactivado hasta que él lo reactive — el código
+// sigue completo y probado, solo no se ofrece ni se acepta.
+//
+// Para reactivar: variable de entorno METODOS_PAGO_ACTIVOS con la lista
+// separada por comas, p. ej. `efectivo,tarjeta` o `efectivo,tarjeta,transferencia`.
+// La app lee lo mismo desde /api/config-publica, así que basta cambiar la
+// variable en Railway y reiniciar — no hace falta un build nuevo.
+const METODOS_PAGO_ACTIVOS = (process.env.METODOS_PAGO_ACTIVOS || 'efectivo')
+  .split(',').map((m) => m.trim().toLowerCase()).filter(Boolean);
+
+const metodoPagoActivo = (metodo) => METODOS_PAGO_ACTIVOS.includes(String(metodo || '').toLowerCase());
+
 // ─── 4. Reglas de negocio ───────────────────────────────────
 const PEDIDO_MINIMO     = num('PEDIDO_MINIMO',      150);  // mínimo en productos (MXN)
+// Tope de EFECTIVO: se mide sobre el subtotal de PRODUCTOS (el envío se suma
+// encima). $700 desde 2026-07-29 — antes $500, y el número vivía duplicado
+// en pagos.service (env var) y hardcodeado en pedidosController, así que
+// cambiarlo en un lado dejaba el otro desalineado.
+const LIMITE_EFECTIVO   = num('LIMITE_EFECTIVO',    700);
 const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',      5);  // radio máximo de entrega
 // Bloqueo automático del restaurante: ya NO es por monto acumulado ($1,000
 // antes) — ahora es por CANTIDAD de pedidos en efectivo sin liquidar. Al
@@ -113,6 +132,9 @@ module.exports = {
   TARIFAS_CLIENTE,
   COMISION_FLAT,
   PAGO_REPARTIDOR,
+  METODOS_PAGO_ACTIVOS,
+  metodoPagoActivo,
+  LIMITE_EFECTIVO,
   PEDIDO_MINIMO,
   MAX_DISTANCE_KM,
   LIMITE_PEDIDOS_DEUDA,

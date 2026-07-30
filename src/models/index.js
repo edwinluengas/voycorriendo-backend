@@ -4,7 +4,6 @@ const Negocio          = require('./Negocio');
 const Producto         = require('./Producto');
 const Pedido           = require('./Pedido');
 const DeliveryBatch    = require('./DeliveryBatch');
-const DriverPayment    = require('./DriverPayment');
 const PlatformRevenue  = require('./PlatformRevenue');
 const ConfigZona       = require('./ConfigZona');
 const ConfigComision   = require('./ConfigComision');
@@ -44,11 +43,7 @@ Pedido.belongsTo(DeliveryBatch, { foreignKey: 'batch_id', as: 'batch' });
 DeliveryBatch.hasMany(Pedido,   { foreignKey: 'batch_id', as: 'pedidos' });
 
 // ─── Pagos a repartidor ───────────────────────────────────
-Repartidor.hasMany(DriverPayment, { foreignKey: 'driver_id', as: 'pagos' });
-DriverPayment.belongsTo(Repartidor, { foreignKey: 'driver_id', as: 'repartidor' });
 
-Pedido.hasOne(DriverPayment, { foreignKey: 'order_id', as: 'pago_repartidor_detalle' });
-DriverPayment.belongsTo(Pedido, { foreignKey: 'order_id', as: 'pedido' });
 
 // ─── Revenue de la plataforma ─────────────────────────────
 Pedido.hasOne(PlatformRevenue, { foreignKey: 'order_id', as: 'revenue' });
@@ -68,7 +63,7 @@ TarjetaGuardada.belongsTo(Usuario, { foreignKey: 'usuario_id', as: 'usuario' });
 
 module.exports = {
   Usuario, Repartidor, Negocio, Producto, Pedido,
-  DeliveryBatch, DriverPayment, PlatformRevenue,
+  DeliveryBatch, PlatformRevenue,
   ConfigZona, ConfigComision,
   PromoConfig, LedgerConciliacion, FondoRepartidor,
   TarjetaGuardada, BloqueoPermanente, Liquidacion, PerdidaPedido, CreditoCliente,

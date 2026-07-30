@@ -15,7 +15,12 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 
 const { conectarDB, sequelize } = require('./config/database');
-const { iniciarJobPagosSemanales } = require('./jobs/pagos-semanales.job');
+// El job de "pagos semanales SPEI" se ELIMINÓ (2026-07-29): leía filas de
+// DriverPayment que NINGÚN código creaba nunca, así que cada viernes corría y
+// no pagaba nada — daba la falsa impresión de que las liquidaciones estaban
+// automatizadas. El pago real al repartidor se hace por
+// `repartidoresController.solicitarDeposito` / `retiroDiario`, y el corte del
+// negocio por `POST /admin/negocios/:id/liquidar-semanal`.
 const { iniciarJobPedidoTimeout } = require('./jobs/pedidoTimeout.job');
 const { iniciarJobLimpiezaIneCliente } = require('./jobs/limpiezaIneCliente.job');
 const { registrarWebhook } = require('./services/telegram.service');
@@ -194,6 +199,25 @@ app.get('/api/salud', (req, res) => {
   });
 });
 
+// Configuración pública que la app consulta al arrancar. Permite prender o
+// apagar cosas (p. ej. el pago con tarjeta) cambiando una variable de entorno
+// en Railway, SIN tener que compilar y distribuir un APK nuevo. No expone
+// nada sensible: son las mismas reglas que el cliente ya ve en pantalla.
+app.get('/api/config-publica', (req, res) => {
+  const p = require('./config/precios');
+  res.json({
+    ok: true,
+    data: {
+      metodos_pago_activos: p.METODOS_PAGO_ACTIVOS,
+      limite_efectivo:      p.LIMITE_EFECTIVO,
+      pedido_minimo:        p.PEDIDO_MINIMO,
+      fee_envio:            { standard: p.TARIFAS_CLIENTE.STANDARD, express: p.TARIFAS_CLIENTE.EXPRESS },
+      max_km:               p.MAX_DISTANCE_KM,
+      max_pedidos_ruta:     3,
+    },
+  });
+});
+
 app.use('/api/auth',         authRoutes);
 app.use('/api/usuarios',     usuariosRoutes);
 app.use('/api/negocios',     negociosRoutes);
@@ -264,37 +288,15 @@ const migrarDB = async () => {
     creado_en TIMESTAMPTZ DEFAULT NOW()
   )`);
 
-  // ─── Modelo de negocio V2 ─────────────────────────────────
-  // Token tiers configurables desde DB (Silver / Golden / Diamond)
-  await run(`CREATE TABLE IF NOT EXISTS token_tiers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    nombre VARCHAR(50) NOT NULL UNIQUE,
-    label VARCHAR(50) NOT NULL,
-    tokens INTEGER NOT NULL,
-    precio NUMERIC(10,2) NOT NULL,
-    vigencia_dias INTEGER NOT NULL,
-    costo_por_token NUMERIC(10,4) NOT NULL,
-    activo BOOLEAN NOT NULL DEFAULT true,
-    orden INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
-  await run(`INSERT INTO token_tiers (nombre, label, tokens, precio, vigencia_dias, costo_por_token, orden)
-    VALUES
-      ('silver',  'Silver',  50,  1100, 45,  22, 1),
-      ('golden',  'Golden',  200, 4000, 90,  20, 2),
-      ('diamond', 'Diamond', 500, 9500, 120, 19, 3)
-    ON CONFLICT (nombre) DO NOTHING`);
-
-  // Historial FIFO de consumo de tokens por pedido
-  await run(`CREATE TABLE IF NOT EXISTS token_consumos (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    restaurant_token_id UUID NOT NULL,
-    restaurant_id UUID NOT NULL,
-    pedido_id UUID NOT NULL,
-    tokens_consumidos INTEGER NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-  )`);
+  // ─── Sistema de tokens: ELIMINADO (2026-07-19) ────────────
+  // El modelo de negocio con tokens se retiró por completo; nada del código
+  // los lee ni los escribe. Aquí quedaban el CREATE de `token_tiers`,
+  // `token_consumos` y su seed — y ese INSERT fallaba en CADA arranque
+  // ("null value in column id"), porque la tabla se creó alguna vez sin el
+  // DEFAULT de id. Era un error recurrente en los logs que ya no significaba
+  // nada: sembrar precios de un producto que no existe. Se quitaron los
+  // CREATE y el seed. Las TABLAS viejas se dejan en la base (sin DROP) por si
+  // alguien quiere consultar el histórico; están inertes.
 
   // Configuración de zonas de entrega por tipo_envio
   await run(`CREATE TABLE IF NOT EXISTS config_zonas (
@@ -400,15 +402,12 @@ const migrarDB = async () => {
   )`);
 
   // Columnas nuevas en tablas existentes
-  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS tokens_negativos_permitidos INTEGER NOT NULL DEFAULT -10`);
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS paga_con NUMERIC(10,2)`);
-  await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS precio_pagado NUMERIC(10,2)`);
-  await run(`ALTER TABLE restaurant_tokens ADD COLUMN IF NOT EXISTS tokens_comprados INTEGER`);
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS propina NUMERIC(10,2) DEFAULT 0`);
-
-  // Convertir pack_type de ENUM a VARCHAR (permite silver/golden/diamond + valores futuros)
-  await run(`ALTER TABLE restaurant_tokens ALTER COLUMN pack_type TYPE VARCHAR(20) USING pack_type::text`);
-  await run(`DROP TYPE IF EXISTS "enum_restaurant_tokens_pack_type"`);
+  // Se quitaron los ALTER de `restaurant_tokens` y de
+  // `negocios.tokens_negativos_permitidos`: pertenecen al sistema de tokens
+  // eliminado y se ejecutaban en cada arranque para mantener columnas que
+  // nadie lee.
 
   // ── v1.2.17 — Modelo de negocio definitivo ────────────────
   // comision_plataforma = $35 flat, cobrada al RESTAURANTE (no al cliente).
@@ -652,6 +651,23 @@ const migrarDB = async () => {
   // de "quién hizo qué" barre la tabla completa.
   await run(`CREATE INDEX IF NOT EXISTS idx_audit_admin_fecha ON audit_logs (admin_id, creado_en DESC)`);
 
+  // ── PICKUP habilitado en la base (2026-07-29) ─────────────────
+  // El CHECK original solo admitía 'standard' y 'express', así que un pedido
+  // para recoger en tienda REVENTABA con error 500 aunque el código lo
+  // soportara desde hace tiempo (nunca se había podido usar).
+  await run(`ALTER TABLE pedidos DROP CONSTRAINT IF EXISTS pedidos_tipo_envio_check`);
+  await run(`ALTER TABLE pedidos ADD CONSTRAINT pedidos_tipo_envio_check
+    CHECK (tipo_envio IN ('standard', 'express', 'pickup'))`);
+
+  // El tope de efectivo vive en config/precios.js (hoy $700 de productos).
+  // Había además un CHECK fijo de "total <= 1000" que, al subir el tope,
+  // habría rechazado pedidos con un error 500 sin mensaje entendible. Se
+  // reemplaza por un techo absurdo (solo atrapa basura) y la regla real la
+  // aplica la aplicación, que sí puede explicarle al cliente qué pasó.
+  await run(`ALTER TABLE pedidos DROP CONSTRAINT IF EXISTS limite_efectivo`);
+  await run(`ALTER TABLE pedidos ADD CONSTRAINT limite_efectivo
+    CHECK (metodo_pago <> 'efectivo' OR total <= 10000)`);
+
   console.log('[migración] Completada.');
 };
 
@@ -662,7 +678,6 @@ const iniciar = async () => {
   await migrarDB();
   console.log('Modelos conectados a la base de datos.');
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
-  iniciarJobPagosSemanales();
   iniciarJobPedidoTimeout();
   iniciarJobLimpiezaIneCliente();
   await registrarWebhook();

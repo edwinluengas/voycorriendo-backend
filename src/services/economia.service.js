@@ -17,7 +17,12 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
 
   // Obtener comisión desde DB
   const comision = await getComision(metodoPago, tipoEnvio);
-  const pagoRepa = comision.pago_repartidor;
+  // PICKUP: el cliente pasó por su pedido, no hubo repartidor. El pago al
+  // repartidor es CERO — sin esto, getComision caía al fallback de standard
+  // y el ledger registraba un pago de $40 a un repartidor que no existe.
+  // La comisión al restaurante sí se mantiene: la plataforma generó la venta.
+  const esPickup = tipoEnvio === 'pickup';
+  const pagoRepa = esPickup ? 0 : comision.pago_repartidor;
   const netPlat  = comision.comision_plataforma;
 
   // Modo de liquidación de comida
@@ -129,18 +134,38 @@ const procesarEntrega = async ({ pedido, repartidor }) => {
   }
 
   // ── Tracking de deuda para pedidos en efectivo ─────────────
-  // En efectivo: el repartidor paga al restaurante y cobra al cliente.
-  // El restaurante queda debiendo el FEE ($35) a la plataforma.
-  if (metodoPago === 'efectivo' && repartidor) {
+  // En efectivo a domicilio: el repartidor paga al restaurante y cobra al
+  // cliente. El restaurante queda debiendo el FEE ($35) a la plataforma.
+  // En PICKUP el restaurante cobra directo al cliente y no hay repartidor,
+  // pero la comisión se debe igual — sin este `|| esPickup` la plataforma
+  // ganaba $0 en pickup y un negocio podía empujar todo a pickup para no
+  // pagar comisión nunca.
+  if (metodoPago === 'efectivo' && (repartidor || esPickup)) {
     try {
       const { Negocio, Usuario } = require('../models');
       const negocio = await Negocio.findByPk(pedido.negocio_id);
       if (negocio) {
+        // PICKUP con crédito de plataforma: el cliente le paga al restaurante
+        // solo el neto (total − crédito), así que el restaurante queda corto
+        // por el monto del crédito y la plataforma se lo debe. Se netea
+        // contra la comisión que él debe pagar. En entregas a domicilio esto
+        // no aplica: ahí al que le falta el dinero es al repartidor y ya se
+        // le abona a su fondo más arriba.
+        const creditoPickup = esPickup ? creditoAplicado : 0;
+        const comisionNeta = Math.round(Math.max(0, COMISION_FLAT - creditoPickup) * 100) / 100;
+        if (creditoPickup > COMISION_FLAT) {
+          const aFavor = (creditoPickup - COMISION_FLAT).toFixed(2);
+          tg.enviarAdmin(
+            `💳 <b>${pedido.numero}</b> (pickup): el crédito de $${creditoPickup.toFixed(2)} supera la comisión de $${COMISION_FLAT}. `
+            + `La plataforma le queda debiendo $${aFavor} a <b>${negocio.nombre}</b> — pagarlo en el corte.`,
+          ).catch(() => {});
+        }
+
         // Incremento ATÓMICO a nivel DB — dos entregas en efectivo del
         // mismo negocio casi simultáneas ya no se pisan el incremento
         // (read-modify-write en JS perdía actualizaciones bajo carrera).
         await negocio.increment(
-          { deuda_plataforma: COMISION_FLAT, pedidos_efectivo_pendientes: 1 }
+          { deuda_plataforma: comisionNeta, pedidos_efectivo_pendientes: 1 }
         );
         await negocio.reload();
         const nuevaDeuda    = parseFloat(negocio.deuda_plataforma || 0);

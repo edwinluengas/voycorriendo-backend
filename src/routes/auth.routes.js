@@ -64,7 +64,14 @@ const validarRegistro = [
     .matches(/^\+?\d{1,4}$/).withMessage('El código de país no es válido'),
   body('pais').optional({ values: 'falsy' })
     .isLength({ min: 2, max: 2 }).withMessage('El país no es válido'),
-  body('email').optional({ values: 'falsy' }).isEmail().withMessage('El correo no es válido'),
+  // El correo es OBLIGATORIO desde 2026-07-29: es el único canal de
+  // recuperación de contraseña que funciona para cualquier usuario (el SMS
+  // depende de Twilio y Telegram de que el usuario lo vincule). Sin correo,
+  // quien olvide su contraseña se queda sin forma de recuperar su cuenta.
+  body('email')
+    .trim().notEmpty().withMessage('El correo electrónico es obligatorio')
+    .isEmail().withMessage('El correo no es válido')
+    .normalizeEmail({ gmail_remove_dots: false }),
   // Doble candado contra escalación de privilegios por 'rol' (el controlador
   // también lo valida). 'admin' NUNCA es auto-servicio: solo por DB o
   // scripts/crear-admin.js.
