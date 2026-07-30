@@ -71,6 +71,10 @@ const Repartidor = sequelize.define('Repartidor', {
   // Independiente de 'disponible' (que indica que esta esperando pedido).
   conectado: { type: DataTypes.BOOLEAN, defaultValue: false },
   conectado_desde: { type: DataTypes.DATE, allowNull: true },
+  // Última vez que su app habló con el servidor. `conectado` solo dice que
+  // prendió el switch; esto dice si de verdad sigue ahí. Ver
+  // services/disponibilidad.service.js.
+  ultimo_latido: { type: DataTypes.DATE, allowNull: true },
   // Ciudad/zona donde opera el repartidor. Mismo slug que en Negocio.
   // Por ahora todos quedan en 'puerto_escondido'; al expandirnos a otra ciudad
   // crearemos repartidores con su slug correspondiente.

@@ -30,6 +30,25 @@ const router = express.Router();
 // cada controlador.
 router.use(proteger);
 
+// ─── Latido de actividad ─────────────────────────────────
+// Cualquier request de un repartidor cuenta como señal de vida: su app
+// consulta pedidos disponibles cada 10 s mientras trabaja. Esto es lo que
+// distingue "está trabajando" de "prendió el switch y cerró la app" — sin
+// ello, un switch olvidado hacía creer que había servicio a domicilio y se
+// aceptaban pedidos que nadie recogía (pedido real MND-151740, 2026-07-30).
+// No bloquea la respuesta: se dispara y sigue.
+router.use(async (req, res, next) => {
+  next();
+  try {
+    const { Repartidor } = require('../models');
+    const rep = await Repartidor.findOne({
+      where: { usuario_id: req.usuario.id },
+      attributes: ['id', 'conectado'],
+    });
+    if (rep?.conectado) require('../services/disponibilidad.service').registrarLatido(rep.id);
+  } catch (_) { /* el latido nunca debe afectar la petición del usuario */ }
+});
+
 // ─── Onboarding (wizard multi-paso) ──────────────────────
 router.post ('/activar',           activarModo);
 router.patch('/perfil', [

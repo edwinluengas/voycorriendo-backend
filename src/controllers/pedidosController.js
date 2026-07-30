@@ -807,11 +807,21 @@ const actualizarEstado = async (req, res) => {
     // Notificaciones en tiempo real
     const io = req.app.get('io');
     const payloadBase = { pedido_id: pedido.id, numero: pedido.numero, estado, actualizado_en: new Date() };
-    // Al ir en camino, incluir el código al room privado del pedido (solo lo ve el cliente)
-    const payloadCliente = estado === 'en_camino'
-      ? { ...payloadBase, codigo_entrega: pedido.codigo_entrega }
-      : payloadBase;
-    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payloadCliente);
+
+    // VULNERABILIDAD CORREGIDA (2026-07-30): el código de entrega se emitía
+    // a `pedido:<id>`, una sala donde también están el REPARTIDOR y el
+    // negocio. Es decir, el repartidor recibía el código del cliente en el
+    // instante de ponerse en camino y podía cerrar la entrega sin haber
+    // llegado con nadie — justo lo que ese código existe para impedir (la
+    // capa REST sí lo ocultaba: obtenerPedido lo borra si no eres el
+    // cliente). Ahora el código va SOLO a la sala privada del cliente.
+    io.to(`pedido:${pedido.id}`).emit('estado_pedido', payloadBase);
+    if (['en_camino', 'listo'].includes(estado) && pedido.codigo_entrega) {
+      io.to(`usuario:${pedido.cliente_id}`).emit('estado_pedido', {
+        ...payloadBase,
+        codigo_entrega: pedido.codigo_entrega,
+      });
+    }
     if (pedido.negocio_id) io.to(`negocio:${pedido.negocio_id}`).emit('estado_pedido', payloadBase);
 
     try {

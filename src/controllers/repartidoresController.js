@@ -249,6 +249,10 @@ const conectarse = async (req, res) => {
 
     repartidor.conectado = !!conectado;
     repartidor.conectado_desde = conectado ? new Date() : null;
+    // El latido arranca AQUÍ: conectarse es, por definición, señal de vida.
+    // Al desconectarse se limpia para que no quede un rastro que lo haga
+    // parecer disponible si alguien vuelve a prender el flag por otra vía.
+    repartidor.ultimo_latido = conectado ? new Date() : null;
     if (latitud != null) repartidor.latitud = latitud;
     if (longitud != null) repartidor.longitud = longitud;
     if (!conectado) repartidor.disponible = false;  // si se desconecta, ya no esta disponible

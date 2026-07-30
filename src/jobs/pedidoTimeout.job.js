@@ -221,8 +221,19 @@ function iniciarJobPedidoTimeout() {
     } catch (e) {
       console.error('[PedidoTimeout] Error en liberarCreditoAtrapado:', e.message);
     }
+    // Apaga el switch de los repartidores que llevan rato sin dar señal, para
+    // que su propia pantalla diga la verdad y para que la cobertura a
+    // domicilio refleje quién está realmente trabajando.
+    try {
+      const { desconectarInactivos, LATIDO_DESCONECTAR_MIN } = require('../services/disponibilidad.service');
+      const n = await desconectarInactivos();
+      if (n > 0) console.log(`[PedidoTimeout] ${n} repartidor(es) desconectado(s) por ${LATIDO_DESCONECTAR_MIN} min sin actividad.`);
+    } catch (e) {
+      console.error('[PedidoTimeout] Error desconectando repartidores inactivos:', e.message);
+    }
   });
-  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min, libera crédito atrapado por tarjeta rechazada en cada corrida.`);
+  const { LATIDO_DESCONECTAR_MIN } = require('../services/disponibilidad.service');
+  console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min, libera crédito atrapado, y desconecta repartidores con más de ${LATIDO_DESCONECTAR_MIN} min sin actividad.`);
 }
 
 module.exports = { iniciarJobPedidoTimeout };

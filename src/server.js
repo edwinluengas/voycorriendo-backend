@@ -61,6 +61,12 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id} usuario:${socket.userId}`);
 
+  // Sala PRIVADA por usuario. Existe para lo que no debe pasar por la sala
+  // compartida del pedido: a `pedido:<id>` están unidos el cliente, el
+  // negocio Y el repartidor, así que todo lo que se emite ahí lo ven los
+  // tres. El código de entrega se manda por aquí.
+  if (socket.userId) socket.join(`usuario:${socket.userId}`);
+
   socket.on('unirse_pedido', async (pedido_id) => {
     try {
       const { Pedido, Repartidor, Negocio } = require('./models');
@@ -126,6 +132,9 @@ io.on('connection', (socket) => {
       if (!rep) return;
       const pedido = await Pedido.findByPk(pedido_id, { attributes: ['repartidor_id'] });
       if (!pedido || String(pedido.repartidor_id) !== String(rep.id)) return;
+      // Moverse con un pedido asignado es la señal de vida más fuerte que
+      // existe: está literalmente en la calle entregando.
+      require('./services/disponibilidad.service').registrarLatido(rep.id);
     } catch (e) {
       console.warn('[socket] Error validando ubicacion:', e.message);
       return;
@@ -650,6 +659,18 @@ const migrarDB = async () => {
   // La bitácora se consulta por admin y por fecha; sin índice, cada revisión
   // de "quién hizo qué" barre la tabla completa.
   await run(`CREATE INDEX IF NOT EXISTS idx_audit_admin_fecha ON audit_logs (admin_id, creado_en DESC)`);
+
+  // ── Latido de actividad del repartidor (2026-07-30) ───────────
+  // Sin esto, `conectado = true` era un flag que nadie apagaba: una cuenta
+  // llevaba CINCO DÍAS marcada en línea (prendió el switch y cerró la app),
+  // el sistema creyó que había servicio a domicilio y aceptó un pedido que
+  // nadie recogió (MND-151740). Ahora se exige señal de vida reciente.
+  await run(`ALTER TABLE repartidores ADD COLUMN IF NOT EXISTS ultimo_latido TIMESTAMPTZ`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_repartidores_disponibles
+    ON repartidores (conectado, ultimo_latido) WHERE conectado = true`);
+  // Los que ya estaban marcados como conectados no tienen latido: se apagan
+  // para no arrastrar el dato mentiroso al primer arranque con este código.
+  await run(`UPDATE repartidores SET conectado = false WHERE conectado = true AND ultimo_latido IS NULL`);
 
   // ── PICKUP habilitado en la base (2026-07-29) ─────────────────
   // El CHECK original solo admitía 'standard' y 'express', así que un pedido
