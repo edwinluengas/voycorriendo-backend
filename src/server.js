@@ -223,6 +223,16 @@ app.get('/api/config-publica', (req, res) => {
       fee_envio:            { standard: p.TARIFAS_CLIENTE.STANDARD, express: p.TARIFAS_CLIENTE.EXPRESS },
       max_km:               p.MAX_DISTANCE_KM,
       max_pedidos_ruta:     3,
+      // Canales por los que HOY se puede entregar un código de recuperación.
+      // La app usa esto para no ofrecerle al usuario una opción que no va a
+      // llegarle: el correo depende de que haya proveedor configurado y el
+      // SMS de que Twilio esté activo. Telegram siempre se ofrece — depende
+      // de que cada usuario lo tenga vinculado, no del servidor.
+      canales_recuperacion: [
+        require('./services/sms.service').smsConfigurado() && 'sms',
+        require('./services/email.service').emailConfigurado() && 'email',
+        'telegram',
+      ].filter(Boolean),
     },
   });
 });
