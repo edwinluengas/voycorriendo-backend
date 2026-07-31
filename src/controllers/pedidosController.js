@@ -629,32 +629,37 @@ const actualizarEstado = async (req, res) => {
     // llega al mostrador — y ahí el código importa igual: es lo que prueba
     // que se le entregó a quien hizo el pedido y no a cualquiera que dijo su
     // nombre. Antes esta transición no pedía nada.
-    if (estado === 'entregado' && pedido.estado === 'listo' && pedido.tipo_envio === 'pickup') {
+    // NINGÚN pedido se cierra sin el código del cliente. Un solo candado para
+    // TODOS los caminos a 'entregado' — a domicilio, para recoger y por
+    // paquetería — y para TODOS los roles, admin incluido. Antes cada camino
+    // tenía su propia regla: el de paquetería (en_envio → entregado) no pedía
+    // nada, así que ese pedido se podía dar por entregado sin ninguna prueba.
+    // El código lo tiene solo el cliente (obtenerPedido se lo oculta a
+    // repartidor y negocio), así que exigirlo es exigir que el cliente esté
+    // presente. Si un pedido no se puede entregar, el camino es CANCELARLO,
+    // no cerrarlo como si hubiera llegado.
+    if (estado === 'entregado') {
       const codigoProvisto = req.body.codigo_entrega;
+      const mensajePedirCodigo = pedido.tipo_envio === 'pickup'
+        ? 'Pide al cliente su código de entrega (lo tiene en la app) para confirmar que se lo entregaste.'
+        : 'Ingresa el código de entrega del cliente para confirmar.';
+
       if (!codigoProvisto) {
+        return res.status(400).json({ ok: false, mensaje: mensajePedirCodigo, codigo: 'CODIGO_REQUERIDO' });
+      }
+      if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
         return res.status(400).json({
           ok: false,
-          mensaje: 'Pide al cliente su código de entrega (lo tiene en la app) para confirmar que se lo entregaste.',
+          mensaje: 'Código incorrecto. Pídeselo de nuevo al cliente.',
+          codigo: 'CODIGO_INCORRECTO',
         });
       }
-      if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
-        return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídeselo de nuevo al cliente.' });
-      }
-    }
 
-    if (estado === 'entregado' && pedido.estado === 'en_camino') {
-      const { codigo_entrega: codigoProvisto, foto_entrega } = req.body;
-      if (!codigoProvisto) {
-        return res.status(400).json({ ok: false, mensaje: 'Ingresa el código de entrega del cliente para confirmar.' });
-      }
-      if (String(codigoProvisto) !== String(pedido.codigo_entrega)) {
-        return res.status(400).json({ ok: false, mensaje: 'Código incorrecto. Pídelo al cliente.' });
-      }
       // La foto es evidencia adicional opcional, no reemplaza el código
-      if (foto_entrega) {
+      if (req.body.foto_entrega) {
         try {
           const ruta = `entregas/${pedido.id}_${Date.now()}.jpg`;
-          const url = await subirImagen('documentos-negocios', ruta, foto_entrega, 'image/jpeg');
+          const url = await subirImagen('documentos-negocios', ruta, req.body.foto_entrega, 'image/jpeg');
           camposActualizar.foto_entrega = url;
         } catch (_) {}
       }
