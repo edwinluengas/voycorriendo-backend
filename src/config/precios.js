@@ -68,7 +68,12 @@ const PEDIDO_MINIMO     = num('PEDIDO_MINIMO',      150);  // mínimo en product
 // en pagos.service (env var) y hardcodeado en pedidosController, así que
 // cambiarlo en un lado dejaba el otro desalineado.
 const LIMITE_EFECTIVO   = num('LIMITE_EFECTIVO',    700);
-const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',      5);  // radio máximo de entrega
+const MAX_DISTANCE_KM   = num('MAX_DISTANCE_KM',    6.5);  // radio máximo de entrega
+// 6.5 km desde 2026-07-31: la distancia ya no se mide en línea recta sino
+// corregida por FACTOR_RUTA_REAL (1.3), así que 5 km "rectos" de antes
+// equivalen a ~6.5 km de recorrido estimado. Se subió el número para
+// conservar EXACTAMENTE la misma área que se venía atendiendo — lo que
+// cambia es que ahora el km que se muestra es el que de verdad se maneja.
 // Bloqueo automático del restaurante: ya NO es por monto acumulado ($1,000
 // antes) — ahora es por CANTIDAD de pedidos en efectivo sin liquidar. Al
 // llegar a LIMITE_PEDIDOS_DEUDA se bloquea y debe transferir por SPEI lo

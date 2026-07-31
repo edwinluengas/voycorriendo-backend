@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { GOOGLE_MAPS_ACTIVO } = require('../config/mapas');
 
 // Ordena destinos: express primero, luego standard.
 const priorizarDestinos = (pedidos) => {
@@ -32,7 +33,11 @@ const calcularRuta = async (origen, pedidos) => {
 
   const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-  if (!GOOGLE_MAPS_API_KEY) {
+  // Google apagado (periodo de prueba): se devuelven los waypoints en orden
+  // sin salir a la red. Nota: esta funcion usa Directions LEGACY, que Google
+  // ya no habilita en proyectos nuevos — si algun dia se enciende Google,
+  // migrar esto a Routes API igual que rutaPorCalles.
+  if (!GOOGLE_MAPS_ACTIVO || !GOOGLE_MAPS_API_KEY) {
     // Sin API key devolvemos los waypoints ordenados sin datos de Maps
     return { waypoints: destinos, route_data: null };
   }
@@ -105,7 +110,8 @@ const rutaPorCalles = async (puntos) => {
   const validos = (puntos || []).filter(
     (p) => p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)),
   );
-  if (!key || validos.length < 2) return null;
+  // Sin facturacion activa esta llamada solo genera trafico fallido.
+  if (!GOOGLE_MAPS_ACTIVO || !key || validos.length < 2) return null;
 
   const punto = (p) => ({ location: { latLng: { latitude: Number(p.lat), longitude: Number(p.lng) } } });
 
