@@ -484,7 +484,10 @@ const recuperarPassword = async (req, res) => {
     return res.status(400).json({ ok: false, mensaje: errores.array()[0].msg, errores: errores.array() });
   }
   try {
-    const canal = ['sms', 'email', 'ambos'].includes(req.body.canal) ? req.body.canal : 'sms';
+    // 'telegram' es un canal más desde 2026-07-31: hoy es el único que
+    // entrega de verdad para quien lo tenga vinculado (Twilio sigue en trial
+    // y el correo depende de que haya proveedor configurado).
+    const canal = ['sms', 'email', 'telegram', 'ambos'].includes(req.body.canal) ? req.body.canal : 'sms';
     const emailBuscado = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
 
     let usuario = null;
@@ -506,6 +509,13 @@ const recuperarPassword = async (req, res) => {
         ok: false,
         mensaje: 'El envío por correo todavía no está habilitado. Recibe tu código por SMS.',
         codigo: 'EMAIL_NO_CONFIGURADO',
+      });
+    }
+    if (canal === 'telegram' && usuario && !usuario.telegram_chat_id) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Tu cuenta no tiene Telegram vinculado. Vincúlalo desde tu perfil o recibe el código por SMS.',
+        codigo: 'SIN_TELEGRAM',
       });
     }
 
@@ -537,6 +547,8 @@ const recuperarPassword = async (req, res) => {
     let enviadoSMS = false, enviadoEmail = false;
     const fallos = [];
 
+    // 'telegram' pide EXPLÍCITAMENTE ese canal; abajo se manda igual como
+    // respaldo a quien lo tenga vinculado, sin importar el canal elegido.
     if (canal === 'sms' || canal === 'ambos') {
       try {
         await enviarSMS(destino, `VoyCorriendo: tu código para cambiar tu contraseña es ${codigo}. Vence en ${RESET_VIGENCIA_MIN} minutos.`);
