@@ -228,11 +228,7 @@ app.get('/api/config-publica', (req, res) => {
       // llegarle: el correo depende de que haya proveedor configurado y el
       // SMS de que Twilio esté activo. Telegram siempre se ofrece — depende
       // de que cada usuario lo tenga vinculado, no del servidor.
-      canales_recuperacion: [
-        require('./services/sms.service').smsConfigurado() && 'sms',
-        require('./services/email.service').emailConfigurado() && 'email',
-        'telegram',
-      ].filter(Boolean),
+      canales_recuperacion: require('./utils/canalesRecuperacion').canalesActivos(),
     },
   });
 });

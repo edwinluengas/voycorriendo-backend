@@ -34,6 +34,7 @@ const generarOTP = () => randomInt(0, 1000000).toString().padStart(6, '0');
 // propio cliente de Twilio duplicado, así que apagar el SMS en un lado lo
 // dejaba encendido en el otro.
 const { enviarSMSSeguro, smsConfigurado } = require('../services/sms.service');
+const { sugerirOtros, ETIQUETA_CANAL } = require('../utils/canalesRecuperacion');
 
 // Envía SMS en formato E.164 usando la lada real de la cuenta (ya no se
 // asume +52: Puerto Escondido tiene clientes extranjeros).
@@ -503,7 +504,7 @@ const recuperarPassword = async (req, res) => {
     if (canal === 'sms' && !smsConfigurado()) {
       return res.status(503).json({
         ok: false,
-        mensaje: 'El envío por SMS no está disponible por ahora. Recibe tu código por correo o por Telegram.',
+        mensaje: `El envío por SMS no está disponible por ahora. ${sugerirOtros('sms')}`,
         codigo: 'SMS_NO_DISPONIBLE',
       });
     }
@@ -526,23 +527,25 @@ const recuperarPassword = async (req, res) => {
     if ((canal === 'email' || canal === 'ambos') && !emailConfigurado() && !usuario?.telegram_chat_id) {
       return res.status(503).json({
         ok: false,
-        mensaje: 'El envío por correo todavía no está habilitado. Recibe tu código por SMS.',
+        mensaje: `El envío por correo todavía no está habilitado. ${sugerirOtros('email')}`,
         codigo: 'EMAIL_NO_CONFIGURADO',
       });
     }
     if (canal === 'telegram' && usuario && !usuario.telegram_chat_id) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Tu cuenta no tiene Telegram vinculado. Vincúlalo desde tu perfil o recibe el código por SMS.',
+        mensaje: `Tu cuenta no tiene Telegram vinculado. Vincúlalo desde tu perfil. ${sugerirOtros('telegram')}`,
         codigo: 'SIN_TELEGRAM',
       });
     }
 
+    // Misma respuesta exista o no la cuenta — este endpoint no debe servir
+    // para averiguar qué números/correos están registrados. El canal que se
+    // nombra es el que el usuario ELIGIÓ, no uno fijo: decir "por SMS" a
+    // quien pidió Telegram lo manda a revisar el buzón equivocado.
     const respuestaNeutra = {
       ok: true,
-      mensaje: canal === 'email'
-        ? 'Si esa cuenta existe, te enviamos un código a tu correo.'
-        : 'Si esa cuenta existe, te enviamos un código por SMS.',
+      mensaje: `Si esa cuenta existe, te enviamos un código ${ETIQUETA_CANAL[canal] || 'por correo'}.`,
       vigencia_min: RESET_VIGENCIA_MIN,
     };
     if (!usuario) return res.json(respuestaNeutra);
@@ -550,7 +553,7 @@ const recuperarPassword = async (req, res) => {
     if ((canal === 'email' || canal === 'ambos') && !usuario.email) {
       return res.status(400).json({
         ok: false,
-        mensaje: 'Tu cuenta no tiene correo registrado. Recibe el código por SMS.',
+        mensaje: `Tu cuenta no tiene correo registrado. ${sugerirOtros('email')}`,
         codigo: 'SIN_EMAIL',
       });
     }
