@@ -30,20 +30,14 @@ const generarToken = (usuario, { dosFactores = false } = {}) => {
 const generarOTP = () => randomInt(0, 1000000).toString().padStart(6, '0');
 
 // Cliente Twilio (solo si está configurado)
-const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
-  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-  : null;
+// El envío de SMS vive en services/sms.service.js — este controlador tenía su
+// propio cliente de Twilio duplicado, así que apagar el SMS en un lado lo
+// dejaba encendido en el otro.
+const { enviarSMSSeguro, smsConfigurado } = require('../services/sms.service');
 
 // Envía SMS en formato E.164 usando la lada real de la cuenta (ya no se
 // asume +52: Puerto Escondido tiene clientes extranjeros).
-const enviarSMS = async ({ telefono, lada }, mensaje) => {
-  if (!twilioClient) throw new Error('SMS no configurado en el servidor.');
-  await twilioClient.messages.create({
-    body: mensaje,
-    from: process.env.TWILIO_PHONE_NUMBER,
-    to: aE164({ lada, telefono }),
-  });
-};
+const enviarSMS = ({ telefono, lada }, mensaje) => enviarSMSSeguro({ telefono, lada }, mensaje);
 
 // Busca por el par (lada, teléfono). Las cuentas creadas antes de que
 // existiera la columna `lada` quedaron con el default '52', y los APK ya
@@ -140,8 +134,10 @@ const registro = async (req, res) => {
       acepta_marketing: !!acepta_marketing,
     });
 
-    // Intentar enviar OTP por SMS de forma asíncrona (no bloquea el registro)
-    if (process.env.TWILIO_ACCOUNT_SID) {
+    // Intentar enviar OTP por SMS de forma asíncrona (no bloquea el registro).
+    // Con el SMS apagado no se genera ni se guarda ningún código: no tiene
+    // sentido dejarle un OTP pendiente a alguien que nunca lo va a recibir.
+    if (smsConfigurado()) {
       const otpPlano = generarOTP();
       bcrypt.hash(otpPlano, 10).then(async (otpHash) => {
         await usuario.update({
@@ -308,17 +304,27 @@ const login = async (req, res) => {
     }
     await seguridad.limpiarIntentos(usuario);
 
-    const esProduccion = process.env.NODE_ENV === 'production' && !!process.env.TWILIO_ACCOUNT_SID;
+    const esProduccion = process.env.NODE_ENV === 'production';
+    // Exigir "teléfono verificado" solo tiene sentido si EXISTE forma de
+    // verificarlo. Con el SMS apagado no la hay, así que exigirlo dejaría a
+    // esa gente encerrada sin salida posible (pasó de verdad: una clienta
+    // registrada el 13-jul quedaba fuera porque el SMS nunca le llegó).
+    const puedeVerificarse = smsConfigurado();
 
-    if (!esProduccion && (!usuario.telefono_verificado || usuario.estado !== 'activo')) {
-      await usuario.update({ telefono_verificado: true, estado: 'activo' });
-      console.log(`[DEV] Usuario auto-verificado en login: ${enmascarar({ lada, telefono })}`);
+    if ((!esProduccion || !puedeVerificarse) && !usuario.telefono_verificado) {
+      await usuario.update({ telefono_verificado: true });
+    }
+    if (!esProduccion && usuario.estado !== 'activo') {
+      await usuario.update({ estado: 'activo' });
+      console.log(`[DEV] Usuario auto-activado en login: ${enmascarar({ lada, telefono })}`);
     }
 
-    if (esProduccion && !usuario.telefono_verificado) {
+    if (esProduccion && puedeVerificarse && !usuario.telefono_verificado) {
       return res.status(403).json({ ok: false, mensaje: 'Verifica tu número de teléfono primero.' });
     }
-    if (esProduccion && usuario.estado !== 'activo') {
+    // El estado SÍ se respeta siempre: 'suspendido' o 'inactivo' es una
+    // decisión de un admin y tiene su propia vía para revertirse.
+    if (esProduccion && !['activo', 'pendiente'].includes(usuario.estado)) {
       return res.status(403).json({ ok: false, mensaje: 'Tu cuenta no está activa. Contacta a soporte.' });
     }
 
@@ -487,7 +493,20 @@ const recuperarPassword = async (req, res) => {
     // 'telegram' es un canal más desde 2026-07-31: hoy es el único que
     // entrega de verdad para quien lo tenga vinculado (Twilio sigue en trial
     // y el correo depende de que haya proveedor configurado).
-    const canal = ['sms', 'email', 'telegram', 'ambos'].includes(req.body.canal) ? req.body.canal : 'sms';
+    // El canal por defecto ya no es SMS: con Twilio apagado, quien no
+    // especifique canal se quedaría esperando un mensaje que nunca sale.
+    const canalPedido = req.body.canal;
+    const canal = ['sms', 'email', 'telegram', 'ambos'].includes(canalPedido)
+      ? canalPedido
+      : (emailConfigurado() ? 'email' : 'telegram');
+
+    if (canal === 'sms' && !smsConfigurado()) {
+      return res.status(503).json({
+        ok: false,
+        mensaje: 'El envío por SMS no está disponible por ahora. Recibe tu código por correo o por Telegram.',
+        codigo: 'SMS_NO_DISPONIBLE',
+      });
+    }
     const emailBuscado = req.body.email ? String(req.body.email).trim().toLowerCase() : null;
 
     let usuario = null;
