@@ -176,6 +176,42 @@ describe('Sistema de tokens eliminado', () => {
   });
 });
 
+describe('El catálogo público NO filtra datos personales del dueño', () => {
+  // Regresión de una fuga real (2026-07-31): el feed usaba lista NEGRA de
+  // columnas, así que cada columna nueva salía pública por omisión. Estaba
+  // entregando —sin token— la INE del dueño, su RFC, su comprobante de
+  // domicilio, su teléfono, su banco y su deuda con la plataforma.
+  const PROHIBIDOS = [
+    'documento_ine_dueno', 'documento_rfc', 'comprobante_domicilio',
+    'telefono', 'banco', 'clabe_bancaria', 'deuda_plataforma',
+    'pedidos_efectivo_pendientes', 'verificacion_nota', 'estado_motivo',
+    'usuario_id', 'comision_porcentaje',
+  ];
+
+  test('GET /negocios (sin token) no devuelve documentos ni datos financieros', async () => {
+    const res = await cliente.get('/negocios');
+    expect(res.status).toBe(200);
+    const negocios = res.data?.data?.negocios || [];
+    expect(negocios.length).toBeGreaterThan(0);
+    for (const n of negocios) {
+      const filtrados = PROHIBIDOS.filter((c) => c in n);
+      expect(filtrados).toEqual([]);
+    }
+    // Y lo que sí necesita la app tiene que seguir llegando.
+    expect(negocios[0]).toHaveProperty('nombre');
+    expect(negocios[0]).toHaveProperty('foto_portada');
+  });
+
+  test('GET /negocios/:id (sin token) tampoco los devuelve', async () => {
+    const lista = await cliente.get('/negocios');
+    const id = lista.data.data.negocios[0].id;
+    const res = await cliente.get(`/negocios/${id}`);
+    expect(res.status).toBe(200);
+    const n = res.data?.data?.negocio || {};
+    expect(PROHIBIDOS.filter((c) => c in n)).toEqual([]);
+  });
+});
+
 describe('Validación de cobertura de entrega (bug MND-280836)', () => {
   test('rechaza un pedido a una distancia imposible (>5km)', async () => {
     const { token } = await login('cliente');

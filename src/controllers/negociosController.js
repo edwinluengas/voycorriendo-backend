@@ -2,7 +2,10 @@ const { Negocio, Producto, Usuario, Pedido, LedgerConciliacion, Liquidacion } = 
 const { Op, literal } = require('sequelize');
 const crypto = require('crypto');
 const { validationResult } = require('express-validator');
-const { subirImagen } = require('../services/storage.service');
+const { subirImagen, obtenerUrlFirmada } = require('../services/storage.service');
+const {
+  BUCKET_PUBLICO_NEGOCIOS, BUCKET_PRIVADO_NEGOCIOS, TIPOS_PRIVADOS_NEGOCIO,
+} = require('../config/buckets');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
 const tg = require('../services/telegram.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
@@ -13,6 +16,21 @@ const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
 // ═══════════════════════════════════════════════════════════
 // PUBLIC: feed para clientes
 // ═══════════════════════════════════════════════════════════
+
+// Lo ÚNICO que puede salir por los endpoints sin token. Es lista BLANCA a
+// propósito: con `exclude` (lista negra) cada columna nueva quedaba pública
+// por omisión, y así se estaban entregando a cualquiera —sin login— la INE
+// del dueño, su RFC, su comprobante de domicilio, su teléfono, su banco, su
+// deuda con la plataforma y las notas internas de moderación.
+// Al agregar una columna, decidir explícitamente si es pública y sumarla aquí.
+const CAMPOS_PUBLICOS_NEGOCIO = [
+  'id', 'nombre', 'descripcion', 'categoria', 'destacado', 'destacado_calidad',
+  'tipo_entrega', 'logo', 'foto_portada', 'foto_local',
+  'direccion', 'colonia', 'ciudad', 'latitud', 'longitud',
+  'horarios', 'activo', 'abierto_ahora', 'verificacion_estado',
+  'tiempo_entrega_min', 'tiempo_entrega_max',
+  'calificacion_promedio', 'total_pedidos',
+];
 
 // ─── GET /api/negocios ────────────────────────────────────
 const listarNegocios = async (req, res) => {
@@ -40,7 +58,7 @@ const listarNegocios = async (req, res) => {
         ['destacado_calidad', 'DESC'],
         ['calificacion_promedio', 'DESC'],
       ],
-      attributes: { exclude: ['clabe_bancaria', 'usuario_id'] },
+      attributes: CAMPOS_PUBLICOS_NEGOCIO,
     });
 
     res.json({
@@ -62,7 +80,7 @@ const listarNegocios = async (req, res) => {
 const obtenerNegocio = async (req, res) => {
   try {
     const negocio = await Negocio.findByPk(req.params.id, {
-      attributes: { exclude: ['clabe_bancaria'] },
+      attributes: CAMPOS_PUBLICOS_NEGOCIO,
       include: [{
         model: Producto,
         as: 'productos',
@@ -250,14 +268,25 @@ const subirDocumento = async (req, res) => {
       return res.status(404).json({ ok: false, mensaje: 'Activa primero el modo negocio.' });
     }
 
+    // Los documentos de identidad (INE, RFC, comprobante) van a un bucket
+    // PRIVADO: solo se abren con URL firmada desde el panel del admin. Las
+    // fotos de vitrina (logo, portada, local) sí son públicas — las enseña
+    // la app a cualquier cliente.
+    const esPrivado = TIPOS_PRIVADOS_NEGOCIO.includes(tipo);
+    const bucket = esPrivado ? BUCKET_PRIVADO_NEGOCIOS : BUCKET_PUBLICO_NEGOCIOS;
+
     const ext = safeExt(mime);
     const ruta = `negocios/${negocio.id}/${tipo}_${Date.now()}.${ext}`;
-    const url = await subirImagen('documentos-negocios', ruta, base64, mime);
+    const url = await subirImagen(bucket, ruta, base64, mime);
 
     negocio[columna] = url;
     await negocio.save();
 
-    res.json({ ok: true, mensaje: 'Documento subido.', data: { url, tipo } });
+    // En DB queda la URL canónica; al wizard se le devuelve una firmada
+    // temporal para que la vista previa del documento recién subido cargue
+    // (la del bucket privado no abre sin firma).
+    const urlVista = esPrivado ? (await obtenerUrlFirmada(bucket, url)) || url : url;
+    res.json({ ok: true, mensaje: 'Documento subido.', data: { url: urlVista, tipo } });
   } catch (error) {
     console.error('Error en subirDocumento:', error);
     res.status(500).json({

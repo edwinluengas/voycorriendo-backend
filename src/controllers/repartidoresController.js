@@ -2,7 +2,8 @@ const { Repartidor, Usuario, Pedido, Negocio, DeliveryBatch, FondoRepartidor, Le
 const { Op } = require('sequelize');
 const crypto = require('crypto');
 const { validationResult } = require('express-validator');
-const { subirImagen } = require('../services/storage.service');
+const { subirImagen, obtenerUrlFirmada } = require('../services/storage.service');
+const { BUCKET_PRIVADO_REPARTIDORES } = require('../config/buckets');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -148,14 +149,20 @@ const subirFoto = async (req, res) => {
       return res.json({ ok: true, mensaje: 'Foto de perfil guardada.', data: { url, tipo } });
     }
 
-    // Documentos del repartidor
+    // Documentos del repartidor: INE, licencia y tarjeta de circulación son
+    // identificaciones oficiales, así que van al bucket PRIVADO — solo el
+    // panel del admin las abre, con URL firmada temporal. (La foto de perfil
+    // de arriba sí es pública: el cliente la ve al recibir su pedido.)
     const ruta = `repartidores/${req.usuario.id}/${tipo}_${Date.now()}.${ext}`;
-    const url = await subirImagen('documentos-repartidores', ruta, base64, mime);
+    const url = await subirImagen(BUCKET_PRIVADO_REPARTIDORES, ruta, base64, mime);
 
     repartidor[columna] = url;
     await repartidor.save();
 
-    res.json({ ok: true, mensaje: 'Foto subida.', data: { url, tipo } });
+    // En DB queda la URL canónica; al wizard se le devuelve una firmada
+    // temporal para que la vista previa cargue (el bucket es privado).
+    const urlVista = (await obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, url)) || url;
+    res.json({ ok: true, mensaje: 'Foto subida.', data: { url: urlVista, tipo } });
   } catch (error) {
     console.error('Error en subirFoto:', error);
     res.status(500).json({

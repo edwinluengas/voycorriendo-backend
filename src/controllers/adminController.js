@@ -14,8 +14,14 @@ const crypto = require('crypto');
 const { bloquearRepartidorPermanente, bloquearNegocioPermanente, liberarPlacaPropia, liberarDireccionPropia } = require('../services/seguridadCuentas.service');
 const creditosService = require('../services/creditos.service');
 
-const BUCKET_REPARTIDORES = 'documentos-repartidores';
-const BUCKET_NEGOCIOS     = 'documentos-negocios';
+// Los documentos de identidad viven en buckets PRIVADOS (ver config/buckets.js):
+// solo se abren con URL firmada temporal, que es justo lo que hace esta vista.
+// Las fotos de vitrina (portada, local) siguen en el bucket público.
+const {
+  BUCKET_PUBLICO_NEGOCIOS,
+  BUCKET_PRIVADO_NEGOCIOS,
+  BUCKET_PRIVADO_REPARTIDORES,
+} = require('../config/buckets');
 
 // ─── GET /api/admin/dashboard ───────────────────────────────
 // Numeros generales para la pantalla principal del admin.
@@ -128,10 +134,10 @@ const obtenerRepartidor = async (req, res) => {
 
     // Firmamos las URLs de los documentos para poder verlos en el panel
     const [ineFrente, ineReverso, licencia, tarjeta] = await Promise.all([
-      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_ine_frente),
-      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_ine_reverso),
-      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_licencia),
-      obtenerUrlFirmada(BUCKET_REPARTIDORES, r.foto_tarjeta_circulacion),
+      obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, r.foto_ine_frente),
+      obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, r.foto_ine_reverso),
+      obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, r.foto_licencia),
+      obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, r.foto_tarjeta_circulacion),
     ]);
 
     const rData = r.toJSON();
@@ -441,11 +447,11 @@ const obtenerNegocio = async (req, res) => {
     if (!n) return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
 
     const [fotoLocal, fotoPortada, comprobante, ine, rfc] = await Promise.all([
-      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.foto_local),
-      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.foto_portada),
-      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.comprobante_domicilio),
-      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_ine_dueno),
-      obtenerUrlFirmada(BUCKET_NEGOCIOS, n.documento_rfc),
+      obtenerUrlFirmada(BUCKET_PUBLICO_NEGOCIOS, n.foto_local),
+      obtenerUrlFirmada(BUCKET_PUBLICO_NEGOCIOS, n.foto_portada),
+      obtenerUrlFirmada(BUCKET_PRIVADO_NEGOCIOS, n.comprobante_domicilio),
+      obtenerUrlFirmada(BUCKET_PRIVADO_NEGOCIOS, n.documento_ine_dueno),
+      obtenerUrlFirmada(BUCKET_PRIVADO_NEGOCIOS, n.documento_rfc),
     ]);
 
     res.json({
