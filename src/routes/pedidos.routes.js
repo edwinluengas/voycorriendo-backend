@@ -2,6 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const {
   crearPedido, misPedidos, obtenerPedido, actualizarEstado, calificarPedido, pedidosDelNegocio, cotizarEnvio, disponibilidadEnvio, subirFotoINE,
+  rutaDelPedido,
 } = require('../controllers/pedidosController');
 const { proteger, restringirA } = require('../middleware/auth');
 
@@ -32,6 +33,9 @@ router.get('/cotizar',             cotizarEnvio);
 router.get('/disponibilidad',      disponibilidadEnvio);
 router.get('/negocio/mis-pedidos', pedidosDelNegocio); // proteger ya aplicado, el controller valida propiedad
 router.post('/ine-foto',           subirFotoINE);
+// Ruta por calles para el mapa en vivo. Va ANTES de '/:id' no por orden
+// (es más específica), sino para que se lea junto al detalle del pedido.
+router.get('/:id/ruta', rutaDelPedido);
 router.get('/:id',    obtenerPedido);
 router.patch('/:id/estado', [
   body('estado').notEmpty().withMessage('El estado es obligatorio'),

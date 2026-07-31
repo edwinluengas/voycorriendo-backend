@@ -85,4 +85,68 @@ const calcularRuta = async (origen, pedidos) => {
   }
 };
 
-module.exports = { calcularRuta };
+/**
+ * Ruta REAL por calles entre 2 o 3 puntos (repartidor → negocio → entrega),
+ * para dibujarla en el mapa en vivo de las tres pantallas.
+ *
+ * Usa la Routes API NUEVA (routes.googleapis.com), no la Directions legacy:
+ * Google ya no habilita las legacy en proyectos nuevos — de hecho
+ * `calcularRuta` de arriba lleva tiempo devolviendo route_data:null por eso.
+ *
+ * Devuelve null si la API no está disponible (proyecto sin facturación, API
+ * sin habilitar, timeout). El mapa de la app dibuja entonces la línea recta:
+ * degradar a una referencia de rumbo es mejor que quedarse sin mapa.
+ *
+ * @param {Array<{lat:number,lng:number}>} puntos  en orden de recorrido
+ * @returns {Promise<{polyline:string, distancia_km:number, duracion_min:number}|null>}
+ */
+const rutaPorCalles = async (puntos) => {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const validos = (puntos || []).filter(
+    (p) => p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)),
+  );
+  if (!key || validos.length < 2) return null;
+
+  const punto = (p) => ({ location: { latLng: { latitude: Number(p.lat), longitude: Number(p.lng) } } });
+
+  try {
+    const { data } = await axios.post(
+      'https://routes.googleapis.com/directions/v2:computeRoutes',
+      {
+        origin:        punto(validos[0]),
+        destination:   punto(validos[validos.length - 1]),
+        intermediates: validos.slice(1, -1).map(punto),
+        travelMode:    'DRIVE',
+        languageCode:  'es',
+        units:         'METRIC',
+      },
+      {
+        timeout: 5000,
+        headers: {
+          'X-Goog-Api-Key':    key,
+          'X-Goog-FieldMask':  'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+        },
+      },
+    );
+
+    const r = data?.routes?.[0];
+    if (!r?.polyline?.encodedPolyline) return null;
+
+    return {
+      polyline:     r.polyline.encodedPolyline,
+      distancia_km: Number((r.distanceMeters / 1000).toFixed(2)),
+      duracion_min: Math.ceil(parseInt(r.duration, 10) / 60) || null,
+    };
+  } catch (e) {
+    // Se avisa una sola vez por arranque para no llenar los logs: si el
+    // proyecto no tiene facturación, esto fallaría en CADA pedido.
+    if (!rutaPorCalles._avisado) {
+      console.warn('[routing] Routes API no disponible, el mapa usará línea recta:',
+        e.response?.data?.error?.message || e.message);
+      rutaPorCalles._avisado = true;
+    }
+    return null;
+  }
+};
+
+module.exports = { calcularRuta, rutaPorCalles };

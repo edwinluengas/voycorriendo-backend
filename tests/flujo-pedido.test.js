@@ -357,6 +357,26 @@ describe('Permisos — un repartidor no puede tocar pedidos ajenos', () => {
     expect(intento.data.mensaje).toMatch(/no te pertenece/i);
   });
 
+  test('la ruta del mapa en vivo solo la ve quien participa en el pedido', async () => {
+    const { token: tokenCliente } = await login('cliente');
+    const { token: tokenRepartidor } = await login('repartidor');
+
+    // El cliente dueño del pedido sí puede pedirla. `ruta` puede venir null
+    // (Google responde denegado mientras el proyecto no tenga facturación);
+    // lo que se verifica aquí es el permiso y la forma de la respuesta.
+    const propio = await cliente.get(`/pedidos/${pedidoId}/ruta`, conAuth(tokenCliente));
+    expect(propio.status).toBe(200);
+    expect(propio.data.data).toHaveProperty('ruta');
+
+    // Un repartidor que NO está asignado a este pedido, no.
+    const ajeno = await cliente.get(`/pedidos/${pedidoId}/ruta`, conAuth(tokenRepartidor));
+    expect(ajeno.status).toBe(403);
+
+    // Y sin sesión, tampoco.
+    const anonimo = await cliente.get(`/pedidos/${pedidoId}/ruta`);
+    expect(anonimo.status).toBe(401);
+  });
+
   test('registrar pago en efectivo de un pedido ajeno devuelve 403 (no autorizado), no un error de rol', async () => {
     // Este es el caso exacto del bug de modo_activo desincronizado que se
     // arregló hoy: el endpoint YA NO debe bloquear por rol/modo — debe

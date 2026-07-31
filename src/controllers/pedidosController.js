@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
+const { rutaPorCalles } = require('../services/routing.service');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const {
   PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA,
@@ -1205,7 +1206,55 @@ const subirFotoINE = async (req, res) => {
   }
 };
 
+// ─── GET /api/pedidos/:id/ruta ─────────────────────────────
+// Ruta REAL por calles para el mapa en vivo: repartidor → negocio → entrega.
+// La posición del repartidor viaja en query (?lat&lng) porque cambia cada
+// pocos segundos y no vale la pena leerla de la DB.
+//
+// Devuelve `ruta: null` cuando Google no está disponible; la app dibuja
+// entonces la línea recta. Que no haya ruta por calles no debe dejar sin
+// mapa a nadie.
+const rutaDelPedido = async (req, res) => {
+  try {
+    const pedido = await Pedido.findByPk(req.params.id, {
+      attributes: ['id', 'cliente_id', 'repartidor_id', 'negocio_id', 'latitud_entrega', 'longitud_entrega', 'recogido_en'],
+      include: [
+        { model: Negocio, as: 'negocio', attributes: ['id', 'usuario_id', 'latitud', 'longitud'] },
+        { model: Repartidor, as: 'repartidor', attributes: ['id', 'usuario_id'] },
+      ],
+    });
+    if (!pedido) return res.status(404).json({ ok: false, mensaje: 'Pedido no encontrado.' });
+
+    const esCliente    = pedido.cliente_id === req.usuario.id;
+    const esRepartidor = pedido.repartidor?.usuario_id === req.usuario.id;
+    const esNegocio    = pedido.negocio?.usuario_id === req.usuario.id;
+    const esAdmin      = req.usuario.rol === 'admin';
+    if (!esCliente && !esRepartidor && !esNegocio && !esAdmin) {
+      return res.status(403).json({ ok: false, mensaje: 'No tienes acceso a este pedido.' });
+    }
+
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const repartidorPos = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+
+    // Si ya recogió, el tramo al negocio sobra: va derecho a entregar.
+    const negocioPos = !pedido.recogido_en && pedido.negocio?.latitud && pedido.negocio?.longitud
+      ? { lat: pedido.negocio.latitud, lng: pedido.negocio.longitud }
+      : null;
+    const entregaPos = pedido.latitud_entrega && pedido.longitud_entrega
+      ? { lat: pedido.latitud_entrega, lng: pedido.longitud_entrega }
+      : null;
+
+    const ruta = await rutaPorCalles([repartidorPos, negocioPos, entregaPos].filter(Boolean));
+    res.json({ ok: true, data: { ruta } });
+  } catch (error) {
+    console.error('Error en rutaDelPedido:', error);
+    res.status(500).json({ ok: false, mensaje: 'No se pudo calcular la ruta.' });
+  }
+};
+
 module.exports = {
   crearPedido, misPedidos, obtenerPedido, actualizarEstado,
   calificarPedido, pedidosDelNegocio, cotizarEnvio, disponibilidadEnvio, subirFotoINE,
+  rutaDelPedido,
 };
