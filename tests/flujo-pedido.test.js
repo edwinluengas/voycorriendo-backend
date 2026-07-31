@@ -35,9 +35,24 @@ const pedidosACancelar = []; // ids creados durante los tests, se cancelan/borra
 
 beforeAll(async () => {
   db = await conectar();
+  // La cobertura a domicilio exige un repartidor conectado Y con señal de
+  // vida reciente (ver services/disponibilidad.service.js). Sin esto la
+  // suite depende de cómo haya quedado la base de la corrida anterior: si el
+  // repartidor de prueba quedó desconectado, TODOS los pedidos a domicilio
+  // se rechazan con SOLO_PICKUP y fallan tests que no tienen nada roto.
+  await db.query(`
+    UPDATE repartidores SET conectado = true, ultimo_latido = NOW()
+     WHERE usuario_id = (SELECT id FROM usuarios WHERE telefono = '0000000004')`);
 });
 
 afterAll(async () => {
+  // Se deja al repartidor de prueba desconectado: que la suite no altere el
+  // estado real de la operación más allá de su propia corrida.
+  try {
+    await db.query(`
+      UPDATE repartidores SET conectado = false, ultimo_latido = NULL
+       WHERE usuario_id = (SELECT id FROM usuarios WHERE telefono = '0000000004')`);
+  } catch (_) {}
   // Red de seguridad: cualquier pedido de prueba que haya quedado vivo se cancela.
   for (const id of pedidosACancelar) {
     try {
