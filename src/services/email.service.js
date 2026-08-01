@@ -83,9 +83,50 @@ const enviarPorSMTP = async ({ para, asunto, html, texto }) => {
   return { ok: true, proveedor: 'smtp' };
 };
 
-const enviarEmail = async ({ para, asunto, html, texto }) => {
+// PUENTE TEMPORAL mientras no hay dominio verificado en Resend.
+//
+// Sin dominio propio, Resend SOLO entrega al correo dueño de la cuenta, así
+// que un correo dirigido a un cliente simplemente no sale. Con
+// EMAIL_REDIRIGIR_A definido, todo se manda a ese buzón con el destinatario
+// real en grande arriba, para poder reenviarlo a mano y que nadie se quede
+// sin su código.
+//
+// Se apaga borrando la variable — hacerlo depender de una variable explícita
+// y no de "detectar si hay dominio" es a propósito: el día que se verifique
+// el dominio, esto tiene que apagarse a mano y con intención, no quedarse
+// encendido mandándole a una sola persona los correos de todos.
+const REDIRIGIR_A = process.env.EMAIL_REDIRIGIR_A || null;
+
+const marcarReenvio = ({ para, asunto, html, texto }) => ({
+  para: REDIRIGIR_A,
+  asunto: `[Reenviar a ${para}] ${asunto}`,
+  html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto">
+      <div style="background:#FFF4ED;border:2px solid #FF5C00;border-radius:12px;padding:16px;margin-bottom:20px">
+        <p style="margin:0 0 6px;font-size:13px;color:#9A3412;font-weight:800;letter-spacing:.5px">
+          REENVIAR ESTE CORREO A:
+        </p>
+        <p style="margin:0;font-size:20px;font-weight:800;color:#111827">${para}</p>
+        <p style="margin:8px 0 0;font-size:12px;color:#6B7280">
+          Llega aquí porque VoyCorriendo todavía no tiene dominio verificado en Resend.
+          Reenvíalo tal cual y borra este recuadro.
+        </p>
+      </div>
+      ${html || ''}
+    </div>`,
+  texto: `>>> REENVIAR A: ${para} <<<
+
+${texto || ''}`,
+});
+
+const enviarEmail = async (mensaje) => {
+  let { para, asunto, html, texto } = mensaje;
   if (!para) return { ok: false, motivo: 'sin_destinatario' };
   if (!emailConfigurado()) return { ok: false, motivo: 'no_configurado' };
+
+  if (REDIRIGIR_A && para.toLowerCase() !== REDIRIGIR_A.toLowerCase()) {
+    console.log(`[email] Redirigido: era para ${para}, se manda a ${REDIRIGIR_A} para reenvío manual.`);
+    ({ para, asunto, html, texto } = marcarReenvio({ para, asunto, html, texto }));
+  }
   try {
     return hayResend()
       ? await enviarPorResend({ para, asunto, html, texto })
