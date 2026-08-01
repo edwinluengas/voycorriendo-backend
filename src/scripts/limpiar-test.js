@@ -54,13 +54,6 @@ async function main() {
   `);
   console.log(`✅ Fondos de test reseteados: ${fondos.length}`);
 
-  // 5. Reset tokens VoyTokens de cuentas test (a 13 para la cuenta cliente test)
-  await sequelize.query(`
-    UPDATE usuarios SET voytokens = CASE telefono WHEN '0000000002' THEN 13 ELSE 0 END
-    WHERE telefono IN (${telefonosSQL})
-  `);
-  console.log('✅ VoyTokens de cuentas test reseteados');
-
   // 6. Resumen del estado actual
   const [[{ total_pedidos }]] = await sequelize.query(
     `SELECT COUNT(*) as total_pedidos FROM pedidos WHERE estado NOT IN ('cancelado', 'rechazado')`

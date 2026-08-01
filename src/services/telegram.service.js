@@ -66,11 +66,6 @@ const alertaPedidoEntregado = async (negocioChatId, pedido) => {
   await enviar(negocioChatId, txt);
 };
 
-const alertaTokensBajos = async (negocioChatId, tokensRestantes) => {
-  const txt = `⚠️ <b>Tokens bajos</b>: te quedan <b>${tokensRestantes}</b> tokens.\nSin tokens se cobra $30 por entrega. <a href="voycorriendo://tokens">Comprar tokens</a>`;
-  await enviar(negocioChatId, txt);
-};
-
 // ─── Alertas de repartidor ─────────────────────────────────────
 
 const alertaPedidoAsignado = async (driverChatId, pedido) => {
@@ -119,7 +114,6 @@ module.exports = {
   registrarWebhook,
   alertaNuevoPedido,
   alertaPedidoEntregado,
-  alertaTokensBajos,
   alertaPedidoAsignado,
   alertaPagoSPEI,
   alertaSPEIFallido,
