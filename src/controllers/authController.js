@@ -581,10 +581,18 @@ const recuperarPassword = async (req, res) => {
       }
     }
     if ((canal === 'email' || canal === 'ambos') && usuario.email) {
-      const plantilla = emailCodigoReset(codigo, usuario.nombre);
-      const r = await enviarEmail({ para: usuario.email, ...plantilla });
-      enviadoEmail = r.ok;
-      if (!r.ok) fallos.push(`Email: ${r.motivo}`);
+      // El correo se manda SIN esperarlo. El código ya quedó guardado, que es
+      // lo que importa: bloquear la respuesta hasta que el proveedor conteste
+      // hacía que la petición tardara hasta dos minutos y la app la cortara
+      // con "revisa tu internet" — el usuario acababa culpando a su wifi de
+      // una lentitud del servidor. Si el correo falla, queda en los logs y la
+      // persona puede reintentar o usar Telegram.
+      enviadoEmail = true;
+      enviarEmail({ para: usuario.email, ...emailCodigoReset(codigo, usuario.nombre) })
+        .then((r) => {
+          if (!r.ok) console.error(`[reset] Email a ${enmascarar(destino)} falló: ${r.motivo}`);
+        })
+        .catch((e) => console.error('[reset] Email lanzó:', e.message));
     }
 
     // Telegram como canal ADICIONAL para quien lo tenga vinculado. Es el más
