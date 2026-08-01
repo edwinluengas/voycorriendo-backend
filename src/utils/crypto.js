@@ -14,10 +14,22 @@ const getKey = () => {
 };
 
 // AES-256-GCM: encrypt(plaintext) → "enc:iv_b64:tag_b64:ct_b64"
+//
+// FALLA RUIDOSAMENTE si no hay llave. Antes devolvía el texto plano tal
+// cual, así que un entorno sin CLABE_ENCRYPTION_KEY —un script corrido
+// desde una laptop, un contenedor mal configurado— guardaba datos
+// bancarios SIN CIFRAR y nadie se enteraba: la columna se veía igual de
+// llena. Un candado que se apaga solo en silencio no es un candado.
+// Pasó de verdad: el seed de pruebas dejó dos CLABEs en claro en la base.
 const encrypt = (plaintext) => {
   if (!plaintext) return plaintext;
   const key = getKey();
-  if (!key) return plaintext;
+  if (!key) {
+    throw new Error(
+      'CLABE_ENCRYPTION_KEY ausente o inválida: no se puede guardar un dato bancario sin cifrar. '
+      + 'Defínela (64 caracteres hex) antes de escribir CLABEs.',
+    );
+  }
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);

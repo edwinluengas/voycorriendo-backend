@@ -23,7 +23,9 @@ require('dotenv').config();
 const { Sequelize } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { Usuario, Repartidor, Negocio, Producto, FondoRepartidor } = require('../models');
-const { encrypt } = require('../utils/crypto');
+// La CLABE NO se siembra: encrypt() ahora exige CLABE_ENCRYPTION_KEY y
+// correr el seed desde una laptop sin esa llave dejaba el dato bancario en
+// claro en la base. Se captura desde la app, que corre contra produccion.
 
 const TELEFONO = process.env.SEED_TELEFONO || '5545074460';
 const APLICAR  = process.argv.includes('--aplicar');
@@ -139,7 +141,6 @@ const REPARTIDOR = {
     disponible: true,
     ultimo_latido: new Date(),
     resolucion_en: new Date(),
-    clabe_bancaria: encrypt('012180012345678901'),
   });
   await FondoRepartidor.findOrCreate({
     where: { repartidor_id: rep.id },
@@ -163,7 +164,6 @@ const REPARTIDOR = {
     deuda_plataforma: 0,
     pedidos_efectivo_pendientes: 0,
     resolucion_en: new Date(),
-    clabe_bancaria: encrypt('012180012345678901'),
     banco: 'BBVA',
   });
   console.log('  ✓ perfil de NEGOCIO aprobado, abierto y con GPS');
