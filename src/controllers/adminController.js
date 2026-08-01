@@ -13,6 +13,7 @@ const { logAdmin } = require('../utils/audit');
 const crypto = require('crypto');
 const { bloquearRepartidorPermanente, bloquearNegocioPermanente, liberarPlacaPropia, liberarDireccionPropia } = require('../services/seguridadCuentas.service');
 const creditosService = require('../services/creditos.service');
+const aprobaciones = require('../services/aprobaciones.service');
 
 // Los documentos de identidad viven en buckets PRIVADOS (ver config/buckets.js):
 // solo se abren con URL firmada temporal, que es justo lo que hace esta vista.
@@ -168,14 +169,11 @@ const aprobarRepartidor = async (req, res) => {
     const { id } = req.params;
     const r = await Repartidor.findByPk(id);
     if (!r) return res.status(404).json({ ok: false, mensaje: 'Repartidor no encontrado.' });
-    const estadoAntes = { verificacion_estado: r.verificacion_estado };
-    r.verificacion_estado = 'aprobado';
-    r.verificacion_nota   = null;
-    r.antecedentes_ok     = true;
-    r.resolucion_en       = new Date();
-    await r.save();
-    logAdmin({ adminId: req.usuario.id, accion: 'aprobar_repartidor', entidadTipo: 'repartidor', entidadId: r.id, estadoAntes, estadoDespues: { verificacion_estado: 'aprobado' }, ip: req.ip });
-    res.json({ ok: true, data: { repartidor: r } });
+    // Aprobar y avisar viven juntos en aprobaciones.service: el bot de
+    // Telegram usa exactamente el mismo camino, así que ningún canal puede
+    // quedarse sin mandar el correo al repartidor.
+    const { avisos } = await aprobaciones.aprobarRepartidor(r, { adminId: req.usuario.id, origen: 'panel admin' });
+    res.json({ ok: true, data: { repartidor: r, avisos } });
   } catch (e) {
     console.error('Error aprobar repartidor:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al aprobar.' });
@@ -484,14 +482,8 @@ const aprobarNegocio = async (req, res) => {
     if (!n.latitud || !n.longitud) {
       return res.status(400).json({ ok: false, mensaje: 'No se puede aprobar: el negocio no tiene ubicación GPS confirmada. Los repartidores no podrían encontrarlo.' });
     }
-    const estadoAntes = { verificacion_estado: n.verificacion_estado, activo: n.activo };
-    n.verificacion_estado = 'aprobado';
-    n.verificacion_nota   = null;
-    n.activo              = true;
-    n.resolucion_en       = new Date();
-    await n.save();
-    logAdmin({ adminId: req.usuario.id, accion: 'aprobar_negocio', entidadTipo: 'negocio', entidadId: n.id, estadoAntes, estadoDespues: { verificacion_estado: 'aprobado', activo: true }, ip: req.ip });
-    res.json({ ok: true, data: { negocio: n } });
+    const { avisos } = await aprobaciones.aprobarNegocio(n, { adminId: req.usuario.id, origen: 'panel admin' });
+    res.json({ ok: true, data: { negocio: n, avisos } });
   } catch (e) {
     console.error('Error aprobar negocio:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al aprobar.' });

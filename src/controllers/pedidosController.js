@@ -13,6 +13,7 @@ const { calcularFeeCliente, procesarEntrega } = require('../services/economia.se
 const pagosService = require('../services/pagos.service');
 const creditosService = require('../services/creditos.service');
 const tg = require('../services/telegram.service');
+const eventos = require('../services/eventos.service');
 const push = require('../services/notificaciones.service');
 const { subirImagen } = require('../services/storage.service');
 const { bloquearRepartidorPermanente } = require('../services/seguridadCuentas.service');
@@ -335,6 +336,10 @@ const crearPedido = async (req, res) => {
         items: itemsDetallados,
         distancia_km: distanciaKm,
       });
+      // Bitacora en vivo para el dueno de la plataforma (no es el aviso al
+      // negocio, que va aparte): enterarse de que entro un pedido sin
+      // tener que abrir la base.
+      eventos.pedidoCreado(pedido, negocio);
       const dueno = await Usuario.findByPk(negocio.usuario_id, { attributes: ['telegram_chat_id', 'token_push'] });
       if (dueno?.telegram_chat_id) {
         tg.alertaNuevoPedido(dueno.telegram_chat_id, pedido).catch((e) => console.warn('[notif] Telegram error:', e.message));
@@ -695,6 +700,11 @@ const actualizarEstado = async (req, res) => {
       return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue actualizado por otra solicitud. Refresca e intenta de nuevo.' });
     }
     Object.assign(pedido, camposActualizar);
+
+    // Bitácora en vivo: cada transición del pedido llega al chat del dueño,
+    // para poder seguir un pedido completo sin abrir la base.
+    eventos.pedidoCambioEstado(pedido, estadoPrevio,
+      req.usuario?.nombre ? `${req.usuario.nombre} (${rolEfectivo || req.usuario.modo_activo || req.usuario.rol})` : null);
 
     // Al cancelar/rechazar un pedido con cobro digital YA capturado: reembolso
     // automático vía la Refunds API de MP. Independiente de esto y de

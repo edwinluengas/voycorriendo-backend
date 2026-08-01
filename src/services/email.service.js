@@ -77,4 +77,38 @@ const emailCodigoReset = (codigo, nombre) => ({
     </div>`,
 });
 
-module.exports = { enviarEmail, emailConfigurado, emailCodigoReset };
+
+// Aviso de que el perfil quedó aprobado. Es el momento en que la persona
+// puede empezar a trabajar, así que se le dice EXACTAMENTE qué hacer ahora:
+// un correo que solo felicita no sirve de nada.
+const emailPerfilAprobado = (nombre, tipo) => {
+  const esRepartidor = tipo === 'repartidor';
+  const queSigue = esRepartidor
+    ? 'Abre la app, cambia a <b>modo repartidor</b> desde tu perfil y conéctate para empezar a recibir pedidos.'
+    : 'Abre la app, cambia a <b>modo negocio</b> desde tu perfil, carga tus productos y abre tu tienda para recibir pedidos.';
+  const queSigueTexto = esRepartidor
+    ? 'Abre la app, cambia a modo repartidor desde tu perfil y conectate para empezar a recibir pedidos.'
+    : 'Abre la app, cambia a modo negocio desde tu perfil, carga tus productos y abre tu tienda para recibir pedidos.';
+
+  return {
+    asunto: `¡Tu perfil de ${esRepartidor ? 'repartidor' : 'negocio'} fue aprobado!`,
+    texto: `Hola ${nombre || ''}, tu perfil de ${esRepartidor ? 'repartidor' : 'negocio'} en VoyCorriendo `
+         + `ya fue revisado y aprobado. ${queSigueTexto}`,
+    html: `
+      <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;padding:24px">
+        <h2 style="color:#FF5C00;margin:0 0 8px">VoyCorriendo</h2>
+        <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:12px;padding:18px;margin:16px 0">
+          <p style="font-size:18px;font-weight:700;color:#166534;margin:0">
+            ✅ Tu perfil de ${esRepartidor ? 'repartidor' : 'negocio'} fue aprobado
+          </p>
+        </div>
+        <p style="font-size:15px;color:#111827">Hola ${nombre || ''}, ya revisamos tus documentos y todo está en orden.</p>
+        <p style="font-size:15px;color:#111827">${queSigue}</p>
+        <p style="font-size:13px;color:#6B7280;margin-top:20px">
+          ¿Dudas? Escríbenos a <a href="mailto:voycorriendoadmin@gmail.com" style="color:#FF5C00">voycorriendoadmin@gmail.com</a>.
+        </p>
+      </div>`,
+  };
+};
+
+module.exports = { enviarEmail, emailConfigurado, emailCodigoReset, emailPerfilAprobado };

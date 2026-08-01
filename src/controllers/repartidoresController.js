@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const crypto = require('crypto');
 const { validationResult } = require('express-validator');
 const { subirImagen, obtenerUrlFirmada } = require('../services/storage.service');
+const eventos = require('../services/eventos.service');
 const { BUCKET_PRIVADO_REPARTIDORES } = require('../config/buckets');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
@@ -217,6 +218,7 @@ const enviarARevision = async (req, res) => {
       });
     }
     repartidor.verificacion_estado = 'en_revision';
+    eventos.perfilEnRevision('repartidor', req.usuario, repartidor.placa_vehiculo);
     repartidor.enviado_revision_en = new Date();
     await repartidor.save();
 

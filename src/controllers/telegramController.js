@@ -227,6 +227,111 @@ const manejarUpdate = async (req, res) => {
     }
   }
 
+  // ── Comandos de ADMIN: aprobar perfiles desde el propio Telegram ──
+  // Sin abrir la app ni el panel: el dueño recibe el aviso de "nuevo perfil
+  // en revisión" y puede resolverlo ahí mismo. Usa el MISMO servicio que el
+  // panel, así que el correo al interesado y la bitácora salen igual.
+  if (/^\/(pendientes|aprobar|rechazar)(\s|$)/.test(texto)) {
+    const admin = await Usuario.findOne({ where: { telegram_chat_id: chatId } });
+    if (!admin || admin.rol !== 'admin') {   // rol REAL, no el toggle modo_activo
+      return enviar(chatId, '⛔ Este comando es solo para administradores.');
+    }
+    const aprobaciones = require('../services/aprobaciones.service');
+    const { Repartidor, Negocio } = require('../models');
+
+    // Se identifica por TELÉFONO y no por UUID: un UUID no se teclea en el
+    // celular sin equivocarse.
+    const buscarPorTelefono = async (tel) => {
+      const limpio = String(tel).replace(/\D/g, '');
+      if (!limpio) return null;
+      const usuario = await Usuario.findOne({ where: { telefono: limpio.slice(-10) } });
+      if (!usuario) return null;
+      const [rep, neg] = await Promise.all([
+        Repartidor.findOne({ where: { usuario_id: usuario.id } }),
+        Negocio.findOne({ where: { usuario_id: usuario.id } }),
+      ]);
+      return { usuario, rep, neg };
+    };
+
+    try {
+      if (texto.startsWith('/pendientes')) {
+        const { repartidores, negocios } = await aprobaciones.listarPendientes();
+        if (!repartidores.length && !negocios.length) {
+          return enviar(chatId, '✅ No hay perfiles esperando revisión.');
+        }
+        let msg = '📋 <b>Perfiles en revisión</b>\n';
+        for (const r of repartidores) {
+          const u = r.usuario || {};
+          const docs = [r.foto_ine_frente && 'INE-F', r.foto_ine_reverso && 'INE-R',
+                        r.foto_licencia && 'licencia', r.foto_tarjeta_circulacion && 'circulación']
+                        .filter(Boolean).join(', ') || 'ninguno';
+          msg += '\n🛵 <b>' + (u.nombre || '') + ' ' + (u.apellido || '') + '</b>\n'
+               + '   Tel: <code>' + u.telefono + '</code> · Placa: ' + (r.placa_vehiculo || '—') + '\n'
+               + '   Documentos: ' + docs + '\n'
+               + '   <code>/aprobar ' + u.telefono + '</code>\n';
+        }
+        for (const n of negocios) {
+          const u = n.dueno || {};
+          msg += '\n🏪 <b>' + (n.nombre || 'sin nombre') + '</b>\n'
+               + '   Tel: <code>' + u.telefono + '</code> · GPS: ' + (n.latitud && n.longitud ? 'sí' : '⚠️ FALTA') + '\n'
+               + '   <code>/aprobar ' + u.telefono + '</code>\n';
+        }
+        msg += '\nPara rechazar: <code>/rechazar TELÉFONO motivo</code>';
+        return enviar(chatId, msg);
+      }
+
+      const partes = texto.trim().split(/\s+/);
+      const tel = partes[1];
+      if (!tel) return enviar(chatId, 'Escribe el teléfono, ej. <code>/aprobar 5538969422</code>');
+
+      const encontrado = await buscarPorTelefono(tel);
+      if (!encontrado) return enviar(chatId, 'No encontré ninguna cuenta con el teléfono ' + tel + '.');
+      const { usuario, rep, neg } = encontrado;
+
+      const pendiente = (e) => e && ['pendiente', 'en_revision'].includes(e.verificacion_estado);
+      const objetivo = pendiente(rep) ? { tipo: 'repartidor', entidad: rep }
+                     : pendiente(neg) ? { tipo: 'negocio', entidad: neg } : null;
+
+      if (!objetivo) {
+        const estados = [rep && 'repartidor: ' + rep.verificacion_estado,
+                         neg && 'negocio: ' + neg.verificacion_estado].filter(Boolean).join(' · ') || 'sin perfiles';
+        return enviar(chatId, 'Esa cuenta no tiene nada en revisión.\nEstado actual → ' + estados);
+      }
+
+      if (texto.startsWith('/aprobar')) {
+        // Mismo candado que el panel: un negocio sin GPS no se aprueba,
+        // porque ningún repartidor podría encontrarlo.
+        if (objetivo.tipo === 'negocio' && (!objetivo.entidad.latitud || !objetivo.entidad.longitud)) {
+          return enviar(chatId, '⛔ No se puede aprobar: el negocio no tiene ubicación GPS confirmada.');
+        }
+        const fn = objetivo.tipo === 'repartidor' ? aprobaciones.aprobarRepartidor : aprobaciones.aprobarNegocio;
+        const { avisos } = await fn(objetivo.entidad, { adminId: admin.id, origen: 'bot de Telegram' });
+        return enviar(chatId,
+          '✅ Aprobado el perfil de <b>' + objetivo.tipo + '</b> de ' + (usuario.nombre || '') +
+          ' (' + usuario.telefono + ').\nCorreo enviado: ' + (avisos.email ? 'sí' : 'no (sin correo o proveedor caído)'));
+      }
+
+      // /rechazar TELÉFONO motivo…
+      const motivo = partes.slice(2).join(' ').trim();
+      if (motivo.length < 5) {
+        return enviar(chatId, 'Da un motivo claro (mínimo 5 caracteres):\n<code>/rechazar 5538969422 la INE no se lee</code>');
+      }
+      await objetivo.entidad.update({
+        verificacion_estado: 'rechazado',
+        verificacion_nota: motivo,
+        resolucion_en: new Date(),
+      });
+      try {
+        if (usuario.telegram_chat_id) {
+          await require('../services/telegram.service').alertaRechazado(usuario.telegram_chat_id, motivo);
+        }
+      } catch (_) {}
+      return enviar(chatId, '🚫 Rechazado el perfil de ' + objetivo.tipo + ' de ' + (usuario.nombre || '') + '.\nMotivo: ' + motivo);
+    } catch (e) {
+      return enviar(chatId, '❌ Error: ' + e.message);
+    }
+  }
+
   // Comando desconocido
   enviar(chatId, 'Comandos disponibles:\n/estado — Ver cuenta vinculada\n/desvincular — Dejar de recibir alertas');
 };

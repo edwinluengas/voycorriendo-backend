@@ -8,6 +8,7 @@ const {
 } = require('../config/buckets');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
 const tg = require('../services/telegram.service');
+const eventos = require('../services/eventos.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
@@ -344,6 +345,7 @@ const enviarARevision = async (req, res) => {
     }
 
     negocio.verificacion_estado = 'en_revision';
+    eventos.perfilEnRevision('negocio', req.usuario, negocio.nombre);
     negocio.enviado_revision_en = new Date();
     await negocio.save();
 
