@@ -7,6 +7,7 @@ const {
   BUCKET_PUBLICO_NEGOCIOS, BUCKET_PRIVADO_NEGOCIOS, TIPOS_PRIVADOS_NEGOCIO,
 } = require('../config/buckets');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
+const { CIUDAD_DEFAULT } = require('../config/ciudades');
 const tg = require('../services/telegram.service');
 const eventos = require('../services/eventos.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
@@ -44,7 +45,7 @@ const listarNegocios = async (req, res) => {
       activo: true,
       verificacion_estado: 'aprobado',
       estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
-      ciudad: ciudad || 'puerto_escondido',
+      ciudad: ciudad || CIUDAD_DEFAULT,
     };
     if (categoria) where.categoria = categoria;
     if (buscar) {
@@ -129,7 +130,7 @@ const activarModoNegocio = async (req, res) => {
       usuario_id: req.usuario.id,
       verificacion_estado: esAdmin ? 'aprobado' : 'pendiente',
       activo: esAdmin,
-      ciudad: 'puerto_escondido',
+      ciudad: CIUDAD_DEFAULT,
     });
     res.status(201).json({
       ok: true,
@@ -520,7 +521,7 @@ const crearNegocio = async (req, res) => {
       categoria,
       direccion,
       colonia,
-      ciudad: ciudad || 'puerto_escondido',
+      ciudad: ciudad || CIUDAD_DEFAULT,
       telefono,
       horarios,
       latitud:  latitud  != null ? latitud  : null,

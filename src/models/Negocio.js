@@ -1,6 +1,7 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { encrypt, decrypt } = require('../utils/crypto');
+const { CIUDAD_DEFAULT } = require('../config/ciudades');
 
 const Negocio = sequelize.define('Negocio', {
   id: {
@@ -58,7 +59,7 @@ const Negocio = sequelize.define('Negocio', {
   ciudad: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    defaultValue: 'puerto_escondido',
+    defaultValue: CIUDAD_DEFAULT,
   },
   latitud: { type: DataTypes.DECIMAL(10, 8), allowNull: true },
   longitud: { type: DataTypes.DECIMAL(11, 8), allowNull: true },

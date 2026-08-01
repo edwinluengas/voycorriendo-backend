@@ -229,6 +229,14 @@ app.get('/api/config-publica', (req, res) => {
       // SMS de que Twilio esté activo. Telegram siempre se ofrece — depende
       // de que cada usuario lo tenga vinculado, no del servidor.
       canales_recuperacion: require('./utils/canalesRecuperacion').canalesActivos(),
+      // Plazas donde opera el servicio. La app las usa para que el cliente
+      // elija la suya (o se detecta por GPS): son pueblos distintos y a ~25 km,
+      // asi que el catalogo de uno no tiene por que verse en el otro.
+      ciudades: require('./config/ciudades').CIUDADES.map((c) => ({
+        slug: c.slug, nombre: c.nombre, estado: c.estado,
+        latitud: c.latitud, longitud: c.longitud,
+      })),
+      ciudad_default: require('./config/ciudades').CIUDAD_DEFAULT,
     },
   });
 });

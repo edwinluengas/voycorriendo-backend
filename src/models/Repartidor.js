@@ -1,6 +1,7 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { encrypt, decrypt } = require('../utils/crypto');
+const { CIUDAD_DEFAULT } = require('../config/ciudades');
 
 const Repartidor = sequelize.define('Repartidor', {
   id: {
@@ -76,12 +77,12 @@ const Repartidor = sequelize.define('Repartidor', {
   // services/disponibilidad.service.js.
   ultimo_latido: { type: DataTypes.DATE, allowNull: true },
   // Ciudad/zona donde opera el repartidor. Mismo slug que en Negocio.
-  // Por ahora todos quedan en 'puerto_escondido'; al expandirnos a otra ciudad
-  // crearemos repartidores con su slug correspondiente.
+  // El slug sale de config/ciudades.js — agregar una plaza nueva no
+  // requiere tocar este modelo.
   ciudad: {
     type: DataTypes.STRING(50),
     allowNull: false,
-    defaultValue: 'puerto_escondido',
+    defaultValue: CIUDAD_DEFAULT,
   },
   tier: {
     type: DataTypes.ENUM('daily', 'weekly'),

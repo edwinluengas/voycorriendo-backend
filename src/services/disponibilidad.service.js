@@ -54,7 +54,7 @@ const mensajeSoloPickup = (semilla = 0) =>
  * @param {string} ciudad  ciudad del negocio/pedido
  * @returns {{ disponible: boolean, conectados: number, con_cupo: number }}
  */
-const hayRepartidoresParaEnvio = async (ciudad = 'puerto_escondido') => {
+const hayRepartidoresParaEnvio = async (ciudad = CIUDAD_DEFAULT) => {
   try {
     const [fila] = await sequelize.query(
       `SELECT

@@ -5,6 +5,7 @@ const { validationResult } = require('express-validator');
 const { subirImagen, obtenerUrlFirmada } = require('../services/storage.service');
 const eventos = require('../services/eventos.service');
 const { BUCKET_PRIVADO_REPARTIDORES } = require('../config/buckets');
+const { CIUDAD_DEFAULT } = require('../config/ciudades');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -32,7 +33,7 @@ const activarModo = async (req, res) => {
     const repartidor = await Repartidor.create({
       usuario_id: req.usuario.id,
       verificacion_estado: 'pendiente',
-      ciudad: 'puerto_escondido',
+      ciudad: CIUDAD_DEFAULT,
     });
     res.status(201).json({
       ok: true,

@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
+const { CIUDAD_DEFAULT } = require('../config/ciudades');
 const { rutaPorCalles } = require('../services/routing.service');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
@@ -129,7 +130,7 @@ const crearPedido = async (req, res) => {
     // caso solo se ofrece pickup, y el mensaje se enmarca como beneficio
     // (ahorras el envío) en vez de "no tenemos repartidores".
     if (tipo_envio !== 'pickup') {
-      const disponibilidad = await hayRepartidoresParaEnvio(negocio.ciudad || 'puerto_escondido');
+      const disponibilidad = await hayRepartidoresParaEnvio(negocio.ciudad || CIUDAD_DEFAULT);
       if (!disponibilidad.disponible) {
         return res.status(409).json({
           ok: false,
@@ -298,7 +299,7 @@ const crearPedido = async (req, res) => {
         metodo_pago,
         pago_estado:      pagadoTotalConCredito ? 'capturado' : 'pendiente',
         pago_referencia:  pagadoTotalConCredito ? `CREDITO-${Date.now()}` : null,
-        ciudad:           negocio.ciudad || 'puerto_escondido',
+        ciudad:           negocio.ciudad || CIUDAD_DEFAULT,
         tipo_envio,
         fee_cliente,
         paga_con:         metodo_pago === 'efectivo' ? (() => {
@@ -901,7 +902,7 @@ const actualizarEstado = async (req, res) => {
 // Query: negocio_id (opcional, para tomar su ciudad)
 const disponibilidadEnvio = async (req, res) => {
   try {
-    let ciudad = 'puerto_escondido';
+    let ciudad = CIUDAD_DEFAULT;
     if (req.query.negocio_id) {
       const negocio = await Negocio.findByPk(req.query.negocio_id, { attributes: ['ciudad'] });
       if (negocio?.ciudad) ciudad = negocio.ciudad;
