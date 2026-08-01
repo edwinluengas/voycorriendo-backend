@@ -33,11 +33,19 @@ const enviarPorSMTP = async ({ para, asunto, html, texto }) => {
   // require diferido: nodemailer es opcional, no queremos romper el arranque
   // del servidor si no está instalado y nadie usa SMTP.
   const nodemailer = require('nodemailer');
+  // TIMEOUTS OBLIGATORIOS. Sin ellos, un SMTP que no contesta deja la
+  // petición colgada hasta que el proxy la corta — se midió en producción:
+  // 121 segundos y un 502. La app corta a los 15 s y muestra "revisa tu
+  // internet", así que el usuario cree que el problema es suyo cuando en
+  // realidad el servidor está esperando a Gmail.
   const transporte = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 587),
     secure: String(process.env.SMTP_SECURE || '') === 'true' || Number(process.env.SMTP_PORT) === 465,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    connectionTimeout: 8000,   // abrir la conexión
+    greetingTimeout:   8000,   // que el servidor salude
+    socketTimeout:     10000,  // inactividad durante el envío
   });
   await transporte.sendMail({ from: REMITENTE, to: para, subject: asunto, html, text: texto });
   return { ok: true, proveedor: 'smtp' };

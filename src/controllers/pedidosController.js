@@ -4,6 +4,7 @@ const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
 const { rutaPorCalles } = require('../services/routing.service');
+const { obtenerUrlFirmada } = require('../services/storage.service');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const {
   PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA,
@@ -427,6 +428,20 @@ const obtenerPedido = async (req, res) => {
 
     // El código solo lo ve el CLIENTE — el repartidor lo recibe verbalmente, el negocio no lo necesita
     const pedidoData = pedido.toJSON();
+
+    // La foto del INE vive en un bucket PRIVADO desde 2026-07-31, así que su
+    // URL directa ya no abre: hay que firmarla. El negocio la necesita para
+    // verificar la edad al entregar alcohol, y sin esto solo veía un hueco.
+    // Se firma para quien tiene por qué verla y se omite para el resto.
+    if (pedidoData.ine_foto_url) {
+      if (esNegocio || esAdmin || esCliente) {
+        const { BUCKET_PRIVADO_CLIENTES } = require('../config/buckets');
+        pedidoData.ine_foto_url =
+          (await obtenerUrlFirmada(BUCKET_PRIVADO_CLIENTES, pedidoData.ine_foto_url)) || null;
+      } else {
+        delete pedidoData.ine_foto_url;   // el repartidor no la necesita
+      }
+    }
     if (!esCliente && !esAdmin) {
       delete pedidoData.codigo_entrega;
     }
