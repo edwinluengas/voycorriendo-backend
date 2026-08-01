@@ -5,13 +5,13 @@
  * local con haversine × FACTOR_RUTA_REAL. Cero llamadas de red, cero costo,
  * respuesta instantánea.
  *
- * Con Google ENCENDIDO: 1) caché en route_cache, 2) Distance Matrix
- * (distancia real por carretera), 3) fallback a la estimación local.
+ * Con Google ENCENDIDO: 1) caché en route_cache, 2) Routes API (distancia
+ * real por carretera, sujeta a la cuota propia), 3) estimación local.
  */
-const axios = require('axios');
 const crypto = require('crypto');
 const { sequelize } = require('../config/database');
-const { GOOGLE_MAPS_ACTIVO, FACTOR_RUTA_REAL } = require('../config/mapas');
+const { googleActivo, FACTOR_RUTA_REAL } = require('../config/mapas');
+const { computeRoutes } = require('../services/googleMaps.client');
 
 const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const CACHE_TTL_H = 24;
@@ -71,27 +71,17 @@ const escribirCache = async (origenHash, destinoHash, distancia_km, duracion_min
   } catch (_) { /* cache write failure is non-fatal */ }
 };
 
-// ─── Google Maps Distance Matrix ──────────────────────────
+// ─── Distancia real por Routes API ────────────────────────
+// Antes esto pegaba a la Distance Matrix API (legacy). Se eliminó: Google
+// ya no la habilita en proyectos nuevos y factura como SKU aparte — era la
+// que acumulaba las 608 solicitudes fallidas. Ahora sale por el cliente
+// único, que además descuenta la cuota diaria/mensual.
 const googleDistanciaKm = async (lat1, lon1, lat2, lon2) => {
-  if (!GOOGLE_API_KEY) throw new Error('Sin GOOGLE_MAPS_API_KEY');
-  const { data } = await axios.get('https://maps.googleapis.com/maps/api/distancematrix/json', {
-    timeout: 5000,
-    params: {
-      origins:      `${lat1},${lon1}`,
-      destinations: `${lat2},${lon2}`,
-      units:        'metric',
-      mode:         'driving',
-      key:          GOOGLE_API_KEY,
-    },
+  const r = await computeRoutes({
+    puntos: [{ lat: lat1, lng: lon1 }, { lat: lat2, lng: lon2 }],
   });
-  const elem = data?.rows?.[0]?.elements?.[0];
-  if (!elem || elem.status !== 'OK') {
-    throw new Error(`Google Maps respondió: ${elem?.status || 'sin datos'}`);
-  }
-  return {
-    km:  elem.distance.value / 1000,
-    min: Math.ceil((elem.duration?.value || 0) / 60),
-  };
+  if (!r) throw new Error('Routes API no disponible');
+  return { km: r.distancia_km, min: r.duracion_min };
 };
 
 /**
@@ -116,7 +106,7 @@ const calcularDistanciaKm = async (origen, destino) => {
   // Google apagado: se resuelve en local y NO se toca la red ni la base.
   // Calcular haversine cuesta microsegundos — cachearlo en Postgres sería
   // más lento que recalcularlo.
-  if (!GOOGLE_MAPS_ACTIVO) {
+  if (!googleActivo()) {
     return { km: estimacionLocalKm(lat1, lon1, lat2, lon2), fuente: 'estimada' };
   }
 

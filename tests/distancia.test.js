@@ -25,13 +25,17 @@ describe('Estimación de distancia sin Google', () => {
     }
   });
 
-  beforeEach(() => { llamadasDeRed.length = 0; });
+  beforeEach(() => {
+    llamadasDeRed.length = 0;
+    // Estos tests describen el comportamiento con Google APAGADO, sin
+    // importar cómo esté la variable en el entorno donde corran.
+    process.env.GOOGLE_MAPS_ACTIVO = 'false';
+  });
+
+  afterAll(() => { delete process.env.GOOGLE_MAPS_ACTIVO; });
 
   test('NO hace ninguna llamada de red con GOOGLE_MAPS_ACTIVO apagado', async () => {
     const { calcularDistanciaKm } = require('../src/utils/distancia');
-    const { GOOGLE_MAPS_ACTIVO } = require('../src/config/mapas');
-
-    expect(GOOGLE_MAPS_ACTIVO).toBe(false);   // el default mientras no se pague
 
     await calcularDistanciaKm({ lat: 15.8631, lng: -97.0676 }, { lat: 15.8650, lng: -97.0700 });
     expect(llamadasDeRed).toEqual([]);
@@ -75,5 +79,18 @@ describe('Estimación de distancia sin Google', () => {
 
     const { km } = await calcularDistanciaKm(origen, destino);
     expect(km).toBeLessThanOrEqual(MAX_DISTANCE_KM);
+  });
+});
+
+describe('El default del proyecto mantiene Google apagado', () => {
+  // Blinda que nadie deje `GOOGLE_MAPS_ACTIVO=true` metido en el código:
+  // encenderlo tiene que ser una decisión explícita del entorno (Railway),
+  // nunca algo que llegue por accidente en un commit.
+  test('sin la variable definida, Google está apagado', () => {
+    const previo = process.env.GOOGLE_MAPS_ACTIVO;
+    delete process.env.GOOGLE_MAPS_ACTIVO;
+    const { googleActivo } = require('../src/config/mapas');
+    expect(googleActivo()).toBe(false);
+    if (previo !== undefined) process.env.GOOGLE_MAPS_ACTIVO = previo;
   });
 });

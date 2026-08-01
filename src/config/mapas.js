@@ -19,7 +19,10 @@
  * verificarlo en el APK, no se puede comprobar desde el backend.
  */
 
-const GOOGLE_MAPS_ACTIVO =
+// Se lee en cada consulta, no al cargar el módulo: cambiar la variable en
+// Railway surte efecto con solo reiniciar, y los tests pueden probar los dos
+// modos (encendido y apagado) sin recargar módulos.
+const googleActivo = () =>
   String(process.env.GOOGLE_MAPS_ACTIVO || 'false').toLowerCase() === 'true';
 
 /**
@@ -36,4 +39,4 @@ const GOOGLE_MAPS_ACTIVO =
  */
 const FACTOR_RUTA_REAL = parseFloat(process.env.FACTOR_RUTA_REAL || '1.3');
 
-module.exports = { GOOGLE_MAPS_ACTIVO, FACTOR_RUTA_REAL };
+module.exports = { googleActivo, FACTOR_RUTA_REAL };

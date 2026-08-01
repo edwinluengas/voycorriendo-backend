@@ -416,6 +416,17 @@ const migrarDB = async () => {
     UNIQUE(origen_hash, destino_hash)
   )`);
 
+  // Contador propio de llamadas facturables a Google Maps. Las cuotas de la
+  // consola de Google topan CANTIDAD de solicitudes, no dinero: este es el
+  // freno que vive en nuestro código (ver services/cuotaGoogle.service.js).
+  await run(`CREATE TABLE IF NOT EXISTS google_api_uso (
+    dia DATE PRIMARY KEY,
+    llamadas INTEGER NOT NULL DEFAULT 0,
+    alertado_diario BOOLEAN NOT NULL DEFAULT false,
+    alertado_mensual BOOLEAN NOT NULL DEFAULT false,
+    creado_en TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
   // Columnas nuevas en tablas existentes
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS paga_con NUMERIC(10,2)`);
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS propina NUMERIC(10,2) DEFAULT 0`);
