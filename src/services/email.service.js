@@ -20,13 +20,45 @@ const haySMTP   = () => !!(process.env.SMTP_HOST && process.env.SMTP_USER && pro
 
 const emailConfigurado = () => hayResend() || haySMTP();
 
+// Resend SOLO deja enviar desde un dominio verificado por ti o desde su
+// remitente de pruebas. Un `from` en gmail/hotmail/outlook lo rechaza con
+// 403 "domain is not verified", y el correo nunca sale — con el agravante
+// de que el error se ve igual que cualquier otro fallo de envío.
+const DOMINIOS_AJENOS = ['gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'live.com', 'icloud.com'];
+const REMITENTE_PRUEBAS = 'VoyCorriendo <onboarding@resend.dev>';
+
+const remitenteParaResend = () => {
+  const dominio = (REMITENTE.match(/@([^>\s]+)/) || [])[1]?.toLowerCase();
+  if (dominio && DOMINIOS_AJENOS.includes(dominio)) {
+    if (!remitenteParaResend._avisado) {
+      console.warn(
+        `[email] EMAIL_FROM usa @${dominio}, que Resend no deja usar como remitente `
+        + `(solo dominios verificados). Se envía desde ${REMITENTE_PRUEBAS} — ojo: sin `
+        + `dominio propio verificado, Resend SOLO entrega al correo dueño de la cuenta.`,
+      );
+      remitenteParaResend._avisado = true;
+    }
+    return REMITENTE_PRUEBAS;
+  }
+  return REMITENTE;
+};
+
 const enviarPorResend = async ({ para, asunto, html, texto }) => {
-  await axios.post(
-    'https://api.resend.com/emails',
-    { from: REMITENTE, to: [para], subject: asunto, html, text: texto },
-    { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }, timeout: 10000 },
-  );
-  return { ok: true, proveedor: 'resend' };
+  try {
+    await axios.post(
+      'https://api.resend.com/emails',
+      { from: remitenteParaResend(), to: [para], subject: asunto, html, text: texto },
+      { headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }, timeout: 10000 },
+    );
+    return { ok: true, proveedor: 'resend' };
+  } catch (e) {
+    // El mensaje de Resend dice exactamente qué está mal (dominio sin
+    // verificar, clave inválida, destinatario no permitido en modo prueba).
+    // Sin esto en el log, diagnosticar por qué no llega un correo es a ciegas.
+    const detalle = e.response?.data?.message || e.response?.data?.error || e.message;
+    console.error(`[email] Resend rechazó el envío (${e.response?.status || 'sin status'}): ${detalle}`);
+    throw e;
+  }
 };
 
 const enviarPorSMTP = async ({ para, asunto, html, texto }) => {
