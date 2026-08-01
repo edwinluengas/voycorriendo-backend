@@ -28,6 +28,39 @@ const { encrypt } = require('../utils/crypto');
 const TELEFONO = process.env.SEED_TELEFONO || '5545074460';
 const APLICAR  = process.argv.includes('--aplicar');
 const TIENDA   = process.argv.includes('--tienda');
+// --tests siembra ADEMÁS el escenario con IDs fijos que espera la suite.
+const TESTS    = process.argv.includes('--tests');
+
+// IDs FIJOS: los tests los tienen escritos a mano (NEGOCIO_DON_BETO,
+// PRODUCTO_PASTOR, PRODUCTO_QUESADILLA). Si cambian aquí, la suite se rompe.
+const DON_BETO = {
+  id: '33333333-0000-0000-0000-000000000001',
+  nombre: 'Tacos Don Beto',
+  descripcion: 'Cuenta de pruebas de la suite automática. No es un negocio real.',
+  categoria: 'restaurante',
+  direccion: 'Calle de pruebas 1', colonia: 'Centro', ciudad: 'puerto_escondido',
+  latitud: 15.8631, longitud: -97.0676,
+  tiempo_entrega_min: 15, tiempo_entrega_max: 30,
+};
+// Segundo negocio con ID fijo (SEGUNDO_NEGOCIO en la suite): tiene que
+// quedar a MÁS de 1.5 km de Don Beto — es el caso de "recoger en un negocio
+// lejano" que debe rechazarse. 0.017° de latitud ≈ 1.9 km.
+const LA_LUPITA = {
+  id: '33333333-0000-0000-0000-000000000002',
+  nombre: 'Mariscos La Lupita',
+  descripcion: 'Cuenta de pruebas de la suite automática. No es un negocio real.',
+  categoria: 'restaurante',
+  direccion: 'Calle de pruebas 2', colonia: 'Centro', ciudad: 'puerto_escondido',
+  latitud: 15.8801, longitud: -97.0676,
+  tiempo_entrega_min: 15, tiempo_entrega_max: 30,
+};
+
+// Los precios importan: 5 pastor + 1 quesadilla = $155, justo por encima
+// del pedido mínimo de $150 que usan los tests.
+const PRODUCTOS_TEST = [
+  { id: '36f7d479-f8c6-484e-9999-7e5561fc78fe', nombre: 'Taco de pastor', precio: 22, categoria: 'Tacos' },
+  { id: '32d21de7-d001-42b1-b614-128327e2f96e', nombre: 'Quesadilla',     precio: 45, categoria: 'Antojitos' },
+];
 
 // Coordenadas reales de Puerto Escondido — el negocio NO puede quedar sin
 // GPS: sin coordenadas no se puede calcular cobertura y no recibe pedidos.
@@ -85,6 +118,7 @@ const REPARTIDOR = {
   console.log(`  1. CLIENTE     — rol base, ya disponible`);
   console.log(`  2. REPARTIDOR  — ${REPARTIDOR.marca_vehiculo} ${REPARTIDOR.modelo_vehiculo}, placa ${REPARTIDOR.placa_vehiculo}`);
   console.log(`  3. NEGOCIO     — ${NEGOCIO.nombre} (${NEGOCIO.categoria}), ${PRODUCTOS.length} productos`);
+  if (TESTS) console.log(`  + escenario de la suite: ${DON_BETO.nombre} y el repartidor de prueba`);
 
   if (!APLICAR) { console.log('\n[simulacro] no se escribió nada.'); await sequelize.close(); return; }
 
@@ -144,6 +178,65 @@ const REPARTIDOR = {
   // La cuenta arranca en modo cliente; desde Perfil se cambia a repartidor o
   // negocio sin cerrar sesión (RootNavigator re-renderiza solo).
   await usuario.update({ modo_activo: 'cliente' });
+
+  // ── Escenario de la SUITE (--tests) ──────────────────────
+  // Los 43 tests apuntan a IDs fijos: "Tacos Don Beto" y dos productos con
+  // precios exactos ($22 y $45, que suman el pedido mínimo). Sin esto la
+  // suite no puede correr, que es como quedarse sin red de seguridad.
+  if (TESTS) {
+    const dueno = await Usuario.findOne({ where: { telefono: '0000000003' } });
+    const driver = await Usuario.findOne({ where: { telefono: '0000000004' } });
+    if (!dueno || !driver) {
+      console.log('\n  · faltan las cuentas 0000000003/0000000004: no se sembró el escenario de tests');
+    } else {
+      const [negT] = await Negocio.findOrCreate({
+        where: { id: DON_BETO.id },
+        defaults: { ...DON_BETO, usuario_id: dueno.id },
+      });
+      await negT.update({
+        ...DON_BETO, usuario_id: dueno.id,
+        verificacion_estado: 'aprobado', estado_cuenta: 'normal',
+        activo: true, abierto_ahora: true, bloqueado_por_deuda: false,
+        deuda_plataforma: 0, pedidos_efectivo_pendientes: 0,
+      });
+      await Producto.destroy({ where: { negocio_id: negT.id } });
+      for (const p of PRODUCTOS_TEST) {
+        await Producto.create({ ...p, negocio_id: negT.id, disponible: true });
+      }
+
+      // Segundo negocio, solo para el caso de "recogida fuera de ruta".
+      // OJO: tiene que ser de OTRO dueño. `pedidosDelNegocio` resuelve el
+      // negocio con findOne({usuario_id}), así que si los dos colgaran de
+      // 0000000003 el backend podría devolver el equivocado y la lista de
+      // pedidos del negocio saldría vacía sin razón aparente.
+      const duenoAlterno = await Usuario.findOne({ where: { telefono: '0000000001' } }) || dueno;
+      const [negL] = await Negocio.findOrCreate({
+        where: { id: LA_LUPITA.id },
+        defaults: { ...LA_LUPITA, usuario_id: duenoAlterno.id },
+      });
+      await negL.update({
+        ...LA_LUPITA, usuario_id: duenoAlterno.id,
+        verificacion_estado: 'aprobado', estado_cuenta: 'normal',
+        activo: true, abierto_ahora: true,
+      });
+
+      const [repT] = await Repartidor.findOrCreate({
+        where: { usuario_id: driver.id },
+        defaults: { usuario_id: driver.id, ...REPARTIDOR, placa_vehiculo: 'TEST0001' },
+      });
+      await repT.update({
+        ...REPARTIDOR, placa_vehiculo: 'TEST0001',
+        verificacion_estado: 'aprobado', antecedentes_ok: true,
+        estado_cuenta: 'normal', baja_permanente: false,
+        conectado: true, disponible: true, ultimo_latido: new Date(),
+      });
+      await FondoRepartidor.findOrCreate({
+        where: { repartidor_id: repT.id },
+        defaults: { repartidor_id: repT.id, monto_disponible: 0, monto_reservado: 0 },
+      });
+      console.log('  ✓ escenario de la suite: Don Beto + La Lupita + productos + repartidor');
+    }
+  }
 
   console.log('\n─────────────────────────────────────────────');
   console.log('Listo. Entra con ' + TELEFONO + ' y cambia de modo desde Perfil.');

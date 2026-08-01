@@ -35,5 +35,8 @@
     "node": ">=18.0.0"
   },
   "author": "VoyCorriendo Dev Team",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "jest": {
+    "maxWorkers": 1
+  }
 }

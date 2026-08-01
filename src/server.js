@@ -243,6 +243,12 @@ app.use('/api/tarjetas',     tarjetasRoutes);
 app.use('/api/admin',        adminRoutes);
 app.use('/api/telegram',     telegramRoutes);
 
+// ─── Páginas legales públicas ──────────────────────────────
+// Google Play exige una URL pública de política de privacidad para publicar
+// la app: no basta con tenerla dentro. Van en la raíz (/privacidad y
+// /terminos), no bajo /api, porque las abre una persona en su navegador.
+app.use('/', require('./routes/legal.routes'));
+
 // ─── Panel web de administracion ───────────────────────────
 // Sirve los archivos estaticos del panel admin en /admin
 // (login.html, dashboard.html, etc.)
