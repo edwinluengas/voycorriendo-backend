@@ -90,6 +90,12 @@ const reservarLlamada = async () => {
 // Avisa UNA vez por día y por tipo de tope. La marca vive en la DB para que
 // un redeploy no vuelva a mandar la misma alerta.
 const avisarTope = async (tipo, usadas, limite) => {
+  // La suite prueba el freno bajando el límite a 2, y corre contra la base
+  // REAL con el token REAL de Telegram: sin esto, cada corrida le manda al
+  // dueño una alerta de "tope alcanzado" que no está pasando. Una alerta que
+  // grita en falso enseña a ignorar las que sí importan.
+  if (process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID) return;
+
   const columna = tipo === 'diario' ? 'alertado_diario' : 'alertado_mensual';
   try {
     const filas = await q(
