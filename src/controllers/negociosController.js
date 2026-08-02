@@ -7,7 +7,7 @@ const {
   BUCKET_PUBLICO_NEGOCIOS, BUCKET_PRIVADO_NEGOCIOS, TIPOS_PRIVADOS_NEGOCIO,
 } = require('../config/buckets');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
-const { CIUDAD_DEFAULT } = require('../config/ciudades');
+const { CIUDAD_DEFAULT, esValida: ciudadValida, SLUGS } = require('../config/ciudades');
 const tg = require('../services/telegram.service');
 const eventos = require('../services/eventos.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
@@ -45,7 +45,11 @@ const listarNegocios = async (req, res) => {
       activo: true,
       verificacion_estado: 'aprobado',
       estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
-      ciudad: ciudad || CIUDAD_DEFAULT,
+      // La ciudad se valida contra las plazas reales: si llegara cualquier
+      // texto del body, el negocio quedaria en una plaza inexistente y no
+      // aparecerian en NINGUN catalogo — el dueno no entenderia por que
+      // nadie lo ve, y desde afuera no habria forma de notarlo.
+      ciudad: ciudadValida(ciudad) ? ciudad : CIUDAD_DEFAULT,
     };
     if (categoria) where.categoria = categoria;
     if (buscar) {
@@ -521,7 +525,11 @@ const crearNegocio = async (req, res) => {
       categoria,
       direccion,
       colonia,
-      ciudad: ciudad || CIUDAD_DEFAULT,
+      // La ciudad se valida contra las plazas reales: si llegara cualquier
+      // texto del body, el negocio quedaria en una plaza inexistente y no
+      // aparecerian en NINGUN catalogo — el dueno no entenderia por que
+      // nadie lo ve, y desde afuera no habria forma de notarlo.
+      ciudad: ciudadValida(ciudad) ? ciudad : CIUDAD_DEFAULT,
       telefono,
       horarios,
       latitud:  latitud  != null ? latitud  : null,
