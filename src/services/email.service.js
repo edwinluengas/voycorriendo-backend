@@ -95,10 +95,18 @@ const enviarPorSMTP = async ({ para, asunto, html, texto }) => {
 // y no de "detectar si hay dominio" es a propósito: el día que se verifique
 // el dominio, esto tiene que apagarse a mano y con intención, no quedarse
 // encendido mandándole a una sola persona los correos de todos.
-const REDIRIGIR_A = process.env.EMAIL_REDIRIGIR_A || null;
+// Se lee en CADA envío, no al cargar el módulo. Como constante, borrar la
+// variable en Railway no apagaba nada hasta reiniciar el proceso: el puente
+// siguió redirigiendo correos a un buzón personal después de que ya se
+// suponía apagado. Un interruptor de privacidad no puede depender de que
+// alguien se acuerde de reiniciar.
+const redirigirA = () => {
+  const v = (process.env.EMAIL_REDIRIGIR_A || '').trim();
+  return v || null;
+};
 
-const marcarReenvio = ({ para, asunto, html, texto }) => ({
-  para: REDIRIGIR_A,
+const marcarReenvio = ({ para, asunto, html, texto }, destino) => ({
+  para: destino,
   asunto: `[Reenviar a ${para}] ${asunto}`,
   html: `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;margin:0 auto">
       <div style="background:#FFF4ED;border:2px solid #FF5C00;border-radius:12px;padding:16px;margin-bottom:20px">
@@ -123,9 +131,10 @@ const enviarEmail = async (mensaje) => {
   if (!para) return { ok: false, motivo: 'sin_destinatario' };
   if (!emailConfigurado()) return { ok: false, motivo: 'no_configurado' };
 
-  if (REDIRIGIR_A && para.toLowerCase() !== REDIRIGIR_A.toLowerCase()) {
-    console.log(`[email] Redirigido: era para ${para}, se manda a ${REDIRIGIR_A} para reenvío manual.`);
-    ({ para, asunto, html, texto } = marcarReenvio({ para, asunto, html, texto }));
+  const destinoPuente = redirigirA();
+  if (destinoPuente && para.toLowerCase() !== destinoPuente.toLowerCase()) {
+    console.log(`[email] Redirigido: era para ${para}, se manda a ${destinoPuente} para reenvío manual.`);
+    ({ para, asunto, html, texto } = marcarReenvio({ para, asunto, html, texto }, destinoPuente));
   }
   try {
     return hayResend()
