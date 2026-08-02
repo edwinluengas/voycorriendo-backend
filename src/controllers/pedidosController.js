@@ -285,6 +285,37 @@ const crearPedido = async (req, res) => {
       // pago — el pedido queda pagado desde ya, sin pasar por MP ni efectivo.
       const pagadoTotalConCredito = totalNeto <= 0;
 
+      // CANDADO ANTI-DUPLICADO. Un doble-tap en "Confirmar", un reintento de
+      // red o volver atrás y repetir dejaba DOS pedidos idénticos: el negocio
+      // prepara dos y el cliente paga uno. Pasó de verdad (MND-706331 y
+      // MND-445393, mismo negocio y monto, con un minuto de diferencia).
+      //
+      // Se busca un pedido vivo del mismo cliente, al mismo negocio y por el
+      // mismo total, creado en los últimos 3 minutos. Si existe, se devuelve
+      // ESE en vez de crear otro: para la app el resultado es idéntico al de
+      // un pedido nuevo, así que un reintento legítimo no se rompe.
+      const VENTANA_DUPLICADO_MS = 3 * 60 * 1000;
+      const duplicado = await Pedido.findOne({
+        where: {
+          cliente_id: req.usuario.id,
+          negocio_id,
+          total,
+          estado: { [Op.notIn]: ['entregado', 'cancelado', 'rechazado'] },
+          creado_en: { [Op.gte]: new Date(Date.now() - VENTANA_DUPLICADO_MS) },
+        },
+        order: [['creado_en', 'DESC']],
+        transaction: t,
+      });
+      if (duplicado) {
+        console.warn(`[pedidos] Duplicado evitado: ${req.usuario.id} ya tiene ${duplicado.numero} al mismo negocio por $${total}`);
+        await t.commit();
+        return res.status(200).json({
+          ok: true,
+          mensaje: 'Ya tienes este pedido en curso.',
+          data: { pedido: duplicado, duplicado_evitado: true },
+        });
+      }
+
       const nuevoPedido = await Pedido.create({
         numero:           generarNumeroPedido(),
         cliente_id:       req.usuario.id,
