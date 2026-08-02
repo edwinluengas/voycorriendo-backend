@@ -233,7 +233,7 @@ app.get('/api/config-publica', (req, res) => {
       // elija la suya (o se detecta por GPS): son pueblos distintos y a ~25 km,
       // asi que el catalogo de uno no tiene por que verse en el otro.
       ciudades: require('./config/ciudades').CIUDADES.map((c) => ({
-        slug: c.slug, nombre: c.nombre, estado: c.estado,
+        slug: c.slug, nombre: c.nombre, marca: c.marca, estado: c.estado,
         latitud: c.latitud, longitud: c.longitud,
       })),
       ciudad_default: require('./config/ciudades').CIUDAD_DEFAULT,

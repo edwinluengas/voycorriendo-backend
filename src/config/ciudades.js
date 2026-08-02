@@ -15,10 +15,23 @@
  * cada negocio y repartidor ya registrado.
  */
 
+// `marca` es como se llama el servicio EN esa plaza. La app lo muestra en
+// la bienvenida y el encabezado: quien vive en Putla no quiere pedirle a
+// una app "de Puerto Escondido", quiere la suya. Es el mismo servicio, pero
+// el nombre local es lo que lo hace propio.
 const CIUDADES = [
+  {
+    slug: 'puerto_escondido',
+    nombre: 'Puerto Escondido',
+    marca: 'VoyCorriendo Puerto Escondido',
+    estado: 'Oaxaca',
+    latitud: 15.8631,
+    longitud: -97.0676,
+  },
   {
     slug: 'putla',
     nombre: 'Putla Villa de Guerrero',
+    marca: 'VoyCorriendo Putla',
     estado: 'Oaxaca',
     // Centro aproximado, solo para ordenar y para detectar la ciudad más
     // cercana cuando el cliente comparte su GPS.
@@ -28,6 +41,7 @@ const CIUDADES = [
   {
     slug: 'zacatepec',
     nombre: 'Santa María Zacatepec',
+    marca: 'VoyCorriendo Zacatepec',
     estado: 'Oaxaca',
     latitud: 16.7833,
     longitud: -97.9833,
@@ -36,12 +50,13 @@ const CIUDADES = [
 
 // La ciudad con la que se crean las cuentas nuevas si no se dice otra cosa.
 // Cambiarla es una variable de entorno, no un despliegue de código.
-const CIUDAD_DEFAULT = process.env.CIUDAD_DEFAULT || 'putla';
+const CIUDAD_DEFAULT = process.env.CIUDAD_DEFAULT || 'puerto_escondido';
 
 const SLUGS = CIUDADES.map((c) => c.slug);
 const esValida = (slug) => SLUGS.includes(slug);
 const buscar = (slug) => CIUDADES.find((c) => c.slug === slug) || null;
 const nombreDe = (slug) => buscar(slug)?.nombre || slug;
+const marcaDe  = (slug) => buscar(slug)?.marca || 'VoyCorriendo';
 
 /**
  * Ciudad más cercana a unas coordenadas. Se usa para asignarle su plaza a
@@ -59,4 +74,4 @@ const masCercana = (lat, lng) => {
   return mejor;
 };
 
-module.exports = { CIUDADES, CIUDAD_DEFAULT, SLUGS, esValida, buscar, nombreDe, masCercana };
+module.exports = { CIUDADES, CIUDAD_DEFAULT, SLUGS, esValida, buscar, nombreDe, marcaDe, masCercana };
