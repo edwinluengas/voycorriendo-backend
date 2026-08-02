@@ -468,12 +468,24 @@ const obtenerPedido = async (req, res) => {
     // verificar la edad al entregar alcohol, y sin esto solo veía un hueco.
     // Se firma para quien tiene por qué verla y se omite para el resto.
     if (pedidoData.ine_foto_url) {
-      if (esNegocio || esAdmin || esCliente) {
+      // El REPARTIDOR también la ve: es quien entrega el producto con
+      // restricción de edad, así que es quien tiene que comprobar que la
+      // persona que recibe es la del documento. Antes se le ocultaba, y
+      // entonces la verificación no la hacía nadie en el momento clave.
+      //
+      // Pero solo si el pedido DE VERDAD lleva algo restringido, y solo
+      // mientras esté en curso: una identificación oficial no tiene por qué
+      // seguir visible cuando el pedido ya se entregó.
+      const llevaRestringido = (pedidoData.items || []).some((it) => it.requiere_id);
+      const enCurso = !['entregado', 'cancelado', 'rechazado'].includes(pedidoData.estado);
+      const repartidorPuedeVerla = esRepartidor && llevaRestringido && enCurso;
+
+      if (esNegocio || esAdmin || esCliente || repartidorPuedeVerla) {
         const { BUCKET_PRIVADO_CLIENTES } = require('../config/buckets');
         pedidoData.ine_foto_url =
           (await obtenerUrlFirmada(BUCKET_PRIVADO_CLIENTES, pedidoData.ine_foto_url)) || null;
       } else {
-        delete pedidoData.ine_foto_url;   // el repartidor no la necesita
+        delete pedidoData.ine_foto_url;
       }
     }
     if (!esCliente && !esAdmin) {
