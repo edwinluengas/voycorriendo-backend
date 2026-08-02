@@ -266,7 +266,7 @@ describe('Pedido con tarjeta no visible al negocio hasta que se pague', () => {
                            pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente,
                            direccion_entrega, latitud_entrega, longitud_entrega)
       VALUES ($1, $2, $3, '[]'::jsonb, 200, 40, 240, 'tarjeta', $4, 'pendiente', 'standard',
-              CIUDAD, '1234', 40, 'Test automatizado — ignorar', $5, $6)
+              '${CIUDAD}', '1234', 40, 'Test automatizado — ignorar', $5, $6)
       RETURNING id, pago_estado
     `, [numero, cli.id, NEGOCIO_DON_BETO.id, pagoEstado, DESTINO_CERCA.lat, DESTINO_CERCA.lng]);
     return rows[0];
@@ -561,7 +561,7 @@ describe('Rutas de ruta (batch) del repartidor', () => {
     const numero = `MND-T${sufijo}${Date.now()}`.slice(0, 12);
     const r = await db.query(`
       INSERT INTO pedidos (numero, cliente_id, negocio_id, items, subtotal, costo_envio, total, metodo_pago, pago_estado, estado, tipo_envio, ciudad, codigo_entrega, fee_cliente, direccion_entrega, latitud_entrega, longitud_entrega)
-      VALUES ($1, $2, $3, '[]'::jsonb, 200, 40, 240, 'efectivo', 'pendiente', 'listo', 'standard', CIUDAD, $4, 40, 'Test automatizado — ignorar', $5, $6)
+      VALUES ($1, $2, $3, '[]'::jsonb, 200, 40, 240, 'efectivo', 'pendiente', 'listo', 'standard', '${CIUDAD}', $4, 40, 'Test automatizado — ignorar', $5, $6)
       RETURNING id
     `, [numero, cli.id, negocioId, codigo, destino?.lat ?? null, destino?.lng ?? null]);
     creados.push(r.rows[0].id);
