@@ -15,12 +15,17 @@
  */
 const tg = require('./telegram.service');
 
-const AVISA_TODO = String(process.env.BOT_AVISA_TODO || 'true').toLowerCase() === 'true';
+// Se lee en CADA consulta, no al cargar el módulo. Como constante, cambiar
+// la variable en Railway no surtía efecto hasta reiniciar el proceso — y
+// eso ya nos mordió: el puente de correo siguió redirigiendo a un buzón
+// personal después de darlo por apagado. Un interruptor que promete
+// 'se cambia sin desplegar' tiene que cumplirlo.
+const avisaTodo = () => String(process.env.BOT_AVISA_TODO || 'true').toLowerCase() === 'true';
 
 const money = (n) => '$' + Number(n || 0).toFixed(2);
 
 const enviar = async (texto) => {
-  if (!AVISA_TODO) return false;
+  if (!avisaTodo()) return false;
   try {
     await tg.enviarAdmin(texto);
     return true;
@@ -83,5 +88,5 @@ const pagoRecibido = ({ pedido, metodo, monto }) => enviar(
 
 module.exports = {
   pedidoCreado, pedidoCambioEstado, perfilEnRevision,
-  usuarioRegistrado, retiroSolicitado, pagoRecibido, AVISA_TODO,
+  usuarioRegistrado, retiroSolicitado, pagoRecibido, avisaTodo,
 };

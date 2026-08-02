@@ -56,10 +56,15 @@ const PAGO_REPARTIDOR = {
 // separada por comas, p. ej. `efectivo,tarjeta` o `efectivo,tarjeta,transferencia`.
 // La app lee lo mismo desde /api/config-publica, así que basta cambiar la
 // variable en Railway y reiniciar — no hace falta un build nuevo.
-const METODOS_PAGO_ACTIVOS = (process.env.METODOS_PAGO_ACTIVOS || 'efectivo')
+// Se lee en CADA consulta, no al cargar el módulo. Como constante, cambiar
+// la variable en Railway no surtía efecto hasta reiniciar el proceso — y
+// eso ya nos mordió: el puente de correo siguió redirigiendo a un buzón
+// personal después de darlo por apagado. Un interruptor que promete
+// 'se cambia sin desplegar' tiene que cumplirlo.
+const metodosPagoActivos = () => (process.env.METODOS_PAGO_ACTIVOS || 'efectivo')
   .split(',').map((m) => m.trim().toLowerCase()).filter(Boolean);
 
-const metodoPagoActivo = (metodo) => METODOS_PAGO_ACTIVOS.includes(String(metodo || '').toLowerCase());
+const metodoPagoActivo = (metodo) => metodosPagoActivos().includes(String(metodo || '').toLowerCase());
 
 // ─── 4. Reglas de negocio ───────────────────────────────────
 const PEDIDO_MINIMO     = num('PEDIDO_MINIMO',      150);  // mínimo en productos (MXN)
@@ -137,7 +142,7 @@ module.exports = {
   TARIFAS_CLIENTE,
   COMISION_FLAT,
   PAGO_REPARTIDOR,
-  METODOS_PAGO_ACTIVOS,
+  metodosPagoActivos,
   metodoPagoActivo,
   LIMITE_EFECTIVO,
   PEDIDO_MINIMO,

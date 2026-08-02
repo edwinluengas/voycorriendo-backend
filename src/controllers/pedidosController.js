@@ -9,7 +9,7 @@ const { obtenerUrlFirmada } = require('../services/storage.service');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
 const {
   PEDIDO_MINIMO, CALIFICACIONES_MIN_PARA_BAJA, CALIFICACION_MIN_PROMEDIO, CLIENTES_DISTINTOS_MIN_PARA_BAJA,
-  LIMITE_EFECTIVO, METODOS_PAGO_ACTIVOS, metodoPagoActivo,
+  LIMITE_EFECTIVO, metodosPagoActivos, metodoPagoActivo,
 } = require('../config/precios');
 const { calcularFeeCliente, procesarEntrega } = require('../services/economia.service');
 const pagosService = require('../services/pagos.service');
@@ -201,7 +201,7 @@ const crearPedido = async (req, res) => {
           ? 'El pago en efectivo no está disponible por ahora.'
           : 'Por ahora solo aceptamos pago en EFECTIVO al recibir tu pedido. El pago con tarjeta estará disponible muy pronto.',
         codigo: 'METODO_PAGO_DESACTIVADO',
-        metodos_activos: METODOS_PAGO_ACTIVOS,
+        metodos_activos: metodosPagoActivos(),
       });
     }
     if (metodo_pago === 'transferencia' && negocio.categoria !== 'ahivoy store') {
@@ -240,7 +240,7 @@ const crearPedido = async (req, res) => {
     // hardcodeado aquí Y como env var en pagos.service, así que cambiarlo en
     // un lado dejaba el otro desalineado.
     if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
-      const alternativas = METODOS_PAGO_ACTIVOS.filter((m) => m !== 'efectivo');
+      const alternativas = metodosPagoActivos().filter((m) => m !== 'efectivo');
       return res.status(400).json({
         ok: false,
         mensaje: `Pagos en efectivo solo para pedidos hasta $${LIMITE_EFECTIVO} MXN en productos. Tu subtotal es $${subtotal.toFixed(2)}.`

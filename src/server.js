@@ -217,7 +217,7 @@ app.get('/api/config-publica', (req, res) => {
   res.json({
     ok: true,
     data: {
-      metodos_pago_activos: p.METODOS_PAGO_ACTIVOS,
+      metodos_pago_activos: p.metodosPagoActivos(),
       limite_efectivo:      p.LIMITE_EFECTIVO,
       pedido_minimo:        p.PEDIDO_MINIMO,
       fee_envio:            { standard: p.TARIFAS_CLIENTE.STANDARD, express: p.TARIFAS_CLIENTE.EXPRESS },

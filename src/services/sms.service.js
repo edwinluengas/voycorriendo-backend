@@ -20,13 +20,18 @@ const cliente = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
 // real nunca le llegaba nada — ofrecerlo era prometer algo que no pasaba.
 // Nada se borra: las credenciales siguen ahí y basta poner SMS_ACTIVO=true
 // para reactivarlo cuando la cuenta salga de trial.
-const SMS_ACTIVO = String(process.env.SMS_ACTIVO || 'false').toLowerCase() === 'true';
+// Se lee en CADA consulta, no al cargar el módulo. Como constante, cambiar
+// la variable en Railway no surtía efecto hasta reiniciar el proceso — y
+// eso ya nos mordió: el puente de correo siguió redirigiendo a un buzón
+// personal después de darlo por apagado. Un interruptor que promete
+// 'se cambia sin desplegar' tiene que cumplirlo.
+const smsActivo = () => String(process.env.SMS_ACTIVO || 'false').toLowerCase() === 'true';
 
-const smsConfigurado = () => SMS_ACTIVO && !!cliente;
+const smsConfigurado = () => smsActivo() && !!cliente;
 
 // destino: { telefono, lada } — acepta también un objeto Usuario.
 const enviarSMSSeguro = async (destino, mensaje) => {
-  if (!SMS_ACTIVO) throw new Error('El envío de SMS está desactivado en el servidor.');
+  if (!smsActivo()) throw new Error('El envío de SMS está desactivado en el servidor.');
   if (!cliente) throw new Error('SMS no configurado en el servidor.');
   const telefono = destino?.telefono;
   const lada = destino?.lada || LADA_DEFAULT;

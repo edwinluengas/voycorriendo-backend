@@ -10,7 +10,7 @@
 const axios  = require('axios');
 const crypto = require('crypto');
 const tg = require('./telegram.service');
-const { LIMITE_EFECTIVO, METODOS_PAGO_ACTIVOS, metodoPagoActivo } = require('../config/precios');
+const { LIMITE_EFECTIVO, metodosPagoActivos, metodoPagoActivo } = require('../config/precios');
 
 const MP_ACCESS_TOKEN   = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET;
@@ -35,7 +35,7 @@ const validarMetodoPago = ({ metodo_pago, subtotal, costo_envio = 0 }) => {
   }
   if (metodo_pago === 'efectivo' && subtotal > LIMITE_EFECTIVO) {
     const totalConEnvio = (subtotal + parseFloat(costo_envio || 0)).toFixed(2);
-    const alternativas = METODOS_PAGO_ACTIVOS.filter((m) => m !== 'efectivo');
+    const alternativas = metodosPagoActivos().filter((m) => m !== 'efectivo');
     return {
       ok: false,
       mensaje: `Efectivo solo disponible cuando los productos no superen $${LIMITE_EFECTIVO.toLocaleString('es-MX')} MXN. Tu subtotal es $${subtotal.toFixed(2)} (total con envío: $${totalConEnvio}).`
