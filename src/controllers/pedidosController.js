@@ -294,14 +294,16 @@ const crearPedido = async (req, res) => {
       // mismo total, creado en los últimos 3 minutos. Si existe, se devuelve
       // ESE en vez de crear otro: para la app el resultado es idéntico al de
       // un pedido nuevo, así que un reintento legítimo no se rompe.
-      const VENTANA_DUPLICADO_MS = 3 * 60 * 1000;
+      // Sin ventana de tiempo: mientras el pedido siga VIVO no se puede
+      // repetir, aunque el negocio tarde media hora en confirmar. La versión
+      // anterior solo miraba los últimos 3 minutos, así que un cliente que
+      // esperaba y volvía a pedir seguía duplicando.
       const duplicado = await Pedido.findOne({
         where: {
           cliente_id: req.usuario.id,
           negocio_id,
           total,
           estado: { [Op.notIn]: ['entregado', 'cancelado', 'rechazado'] },
-          creado_en: { [Op.gte]: new Date(Date.now() - VENTANA_DUPLICADO_MS) },
         },
         order: [['creado_en', 'DESC']],
         transaction: t,
