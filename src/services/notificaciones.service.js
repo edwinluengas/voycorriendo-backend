@@ -4,6 +4,7 @@
  */
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
+const { nombreDe: nombrePlaza } = require('../config/ciudades');
 
 /**
  * Envía push notification(s).
@@ -79,7 +80,10 @@ async function notificarRepartidoresDisponibles(tokens, pedido) {
   await enviarPush(
     tokens,
     '🛵 Nuevo pedido disponible',
-    `#${pedido.numero} · $${parseFloat(pedido.total).toFixed(0)} · ${pedido.ciudad || 'Puerto Escondido'}`,
+    // El nombre bonito, no el slug: al repartidor le llegaba "putla" en la
+    // notificación, que es como se guarda en la base, no como se dice.
+    `#${pedido.numero} · $${parseFloat(pedido.total).toFixed(0)}`
+      + (pedido.ciudad ? ` · ${nombrePlaza(pedido.ciudad)}` : ''),
     { tipo: 'pedido_disponible', pedidoId: pedido.id },
   );
 }
