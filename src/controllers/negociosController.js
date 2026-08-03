@@ -40,16 +40,28 @@ const listarNegocios = async (req, res) => {
     const { categoria, buscar, ciudad, pagina = 1, limite = 50 } = req.query;
     const offset = (pagina - 1) * limite;
 
+    // SIN localidad NO hay catálogo. Antes se caía a la localidad por defecto
+    // "por compatibilidad", y eso es justo lo que hacía que todo el mundo
+    // viera Puerto Escondido: la app pedía sin ciudad y el servidor le
+    // respondía con una cualquiera. Mostrar negocios a quien no sabemos
+    // dónde está es invitarlo a un pedido que nadie puede entregar.
+    if (!ciudadValida(ciudad)) {
+      return res.json({
+        ok: true,
+        data: {
+          negocios: [], total: 0, pagina: 1, paginas: 0,
+          sin_cobertura: true,
+          mensaje: 'Sin cobertura en este lugar.',
+        },
+      });
+    }
+
     // Solo aprobados, activos, y NO suspendidos/bloqueados
     const where = {
       activo: true,
       verificacion_estado: 'aprobado',
       estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
-      // La ciudad se valida contra las plazas reales: si llegara cualquier
-      // texto del body, el negocio quedaria en una plaza inexistente y no
-      // aparecerian en NINGUN catalogo — el dueno no entenderia por que
-      // nadie lo ve, y desde afuera no habria forma de notarlo.
-      ciudad: ciudadValida(ciudad) ? ciudad : CIUDAD_DEFAULT,
+      ciudad,
     };
     if (categoria) where.categoria = categoria;
     if (buscar) {

@@ -37,7 +37,11 @@ const { sequelize } = require('../config/database');
     return;
   }
 
-  const archivo = path.join(__dirname, '..', '..', `backup-pedidos-${new Date().toISOString().slice(0, 10)}.json`);
+  // El nombre lleva la HORA, no solo el día: con solo la fecha, correr el
+  // script dos veces el mismo día pisaba el respaldo bueno con uno del
+  // estado ya vacío — y con él, el único registro de lo borrado.
+  const sello = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const archivo = path.join(__dirname, '..', '..', `backup-pedidos-${sello}.json`);
   fs.writeFileSync(archivo, JSON.stringify({
     generado_en: new Date().toISOString(),
     pedidos, ledger, revenue, batches, perdidas, negocios, fondos,
@@ -58,6 +62,14 @@ const { sequelize } = require('../config/database');
     await exec(`UPDATE negocios SET deuda_plataforma = 0, pedidos_efectivo_pendientes = 0, bloqueado_por_deuda = false`);
     await exec(`UPDATE fondo_repartidor SET monto_disponible = 0, monto_reservado = 0,
                   retiro_pendiente = false, monto_pendiente_confirmar = 0, saldo_por_cobrar = 0`);
+    // Contadores de reputación. También salen de los pedidos borrados: sin
+    // esto un negocio seguía anunciando "33 pedidos" y una calificación con
+    // la base en cero — números que el catálogo público muestra al cliente
+    // y que ya no respaldaba ningún pedido real.
+    await exec(`UPDATE negocios SET total_pedidos = 0, calificacion_promedio = 0,
+                  tasa_cancelacion = 0, tiempo_prep_promedio_min = 0, quejas_30d = 0`);
+    await exec(`UPDATE repartidores SET total_entregas = 0, calificacion_promedio = 0,
+                  ganancias_totales = 0, tasa_cancelacion = 0, tasa_aceptacion = 0`);
     await t.commit();
   } catch (e) {
     await t.rollback();

@@ -62,6 +62,27 @@ afterAll(async () => {
       await db.query(`UPDATE pedidos SET estado = 'cancelado', cancelado_en = NOW() WHERE id = $1 AND estado NOT IN ('cancelado','entregado')`, [id]);
     } catch (_) {}
   }
+
+  // Rastro que la suite dejaba en CADA corrida y nadie limpiaba:
+  //  · `total_pedidos` del negocio de prueba subía +1 por corrida y ese
+  //    número se muestra en el catálogo público, así que el negocio
+  //    presumía pedidos que ya no existen (mismo patrón que el contador de
+  //    deuda que se acumuló en julio hasta casi bloquear la cuenta);
+  //  · las rutas (`delivery_batches`) del repartidor quedaban abiertas y
+  //    huérfanas — con pedidos borrados dentro, siguen contando para el
+  //    límite de 3 por ruta.
+  try {
+    await db.query(`
+      UPDATE negocios SET total_pedidos = GREATEST(total_pedidos - $1, 0)
+       WHERE id = $2`, [pedidosACancelar.length, NEGOCIO_DON_BETO.id]);
+    await db.query(`
+      DELETE FROM delivery_batches
+       WHERE driver_id = (SELECT r.id FROM repartidores r
+                            JOIN usuarios u ON u.id = r.usuario_id
+                           WHERE u.telefono = '0000000004')
+         AND NOT EXISTS (SELECT 1 FROM pedidos p WHERE p.batch_id = delivery_batches.id)`);
+  } catch (_) {}
+
   await db.end();
 });
 
@@ -191,8 +212,11 @@ describe('El catálogo público NO filtra datos personales del dueño', () => {
     'usuario_id', 'comision_porcentaje',
   ];
 
+  // Se pide con localidad: sin ella el catálogo va vacío a propósito (no se
+  // muestra nada a quien no sabemos dónde está), y este test necesita
+  // negocios reales que inspeccionar.
   test('GET /negocios (sin token) no devuelve documentos ni datos financieros', async () => {
-    const res = await cliente.get('/negocios');
+    const res = await cliente.get('/negocios?ciudad=puerto_escondido');
     expect(res.status).toBe(200);
     const negocios = res.data?.data?.negocios || [];
     expect(negocios.length).toBeGreaterThan(0);
@@ -206,7 +230,7 @@ describe('El catálogo público NO filtra datos personales del dueño', () => {
   });
 
   test('GET /negocios/:id (sin token) tampoco los devuelve', async () => {
-    const lista = await cliente.get('/negocios');
+    const lista = await cliente.get('/negocios?ciudad=puerto_escondido');
     const id = lista.data.data.negocios[0].id;
     const res = await cliente.get(`/negocios/${id}`);
     expect(res.status).toBe(200);

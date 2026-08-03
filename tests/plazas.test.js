@@ -110,13 +110,24 @@ describe('Plazas — el catálogo no se mezcla', () => {
     }
   });
 
-  test('una ciudad inventada no revela negocios de otra plaza', async () => {
-    // Cae a la plaza por defecto (compatibilidad con APKs viejos que no
-    // mandaban ciudad), nunca a "todas": el catálogo jamás se mezcla.
-    const r = await cliente.get('/negocios?ciudad=narnia');
-    expect(r.status).toBe(200);
-    const ciudades = new Set((r.data.data.negocios || []).map((n) => n.ciudad));
-    expect(ciudades.size).toBeLessThanOrEqual(1);
+  test('sin localidad NO se devuelve catálogo', async () => {
+    // Antes caía a la localidad por defecto, y por eso todo el mundo veía
+    // Puerto Escondido: la app pedía sin ciudad y el servidor respondía con
+    // una cualquiera. Ahora se dice que no hay cobertura y punto.
+    for (const url of ['/negocios', '/negocios?ciudad=', '/negocios?ciudad=narnia']) {
+      const r = await cliente.get(url);
+      expect(r.status).toBe(200);
+      expect(r.data.data.negocios).toEqual([]);
+      expect(r.data.data.sin_cobertura).toBe(true);
+    }
+  });
+
+  test('cada plaza tiene al menos un negocio aprobado (incluida Pinotepa)', async () => {
+    // Una plaza anunciada sin negocios es una app vacía para quien vive ahí.
+    for (const slug of SLUGS) {
+      const r = await cliente.get(`/negocios?ciudad=${slug}`);
+      expect((r.data.data.negocios || []).length).toBeGreaterThan(0);
+    }
   });
 });
 

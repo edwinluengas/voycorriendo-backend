@@ -20,8 +20,10 @@ como repartidor en VoyCorriendo (la "Plataforma"), aceptas estos Términos de
 Servicio y el Aviso de Privacidad correspondiente. Si no estás de acuerdo, no
 utilices la Plataforma.
 
-VoyCorriendo opera en Puerto Escondido, Oaxaca, México. Correo de contacto:
-**voycorriendoadmin@gmail.com**.
+VoyCorriendo opera en varias localidades del estado de Oaxaca, México. La
+cobertura vigente se determina por la ubicación del usuario dentro de la
+Plataforma; fuera de las zonas cubiertas el servicio no está disponible.
+Correo de contacto: **voycorriendoadmin@gmail.com**.
 
 ## 2. Naturaleza del servicio
 
