@@ -5,7 +5,11 @@ const { validationResult } = require('express-validator');
 const { subirImagen, obtenerUrlFirmada } = require('../services/storage.service');
 const eventos = require('../services/eventos.service');
 const { BUCKET_PRIVADO_REPARTIDORES } = require('../config/buckets');
-const { CIUDAD_DEFAULT } = require('../config/ciudades');
+const { CIUDAD_DEFAULT, plazaDe, nombreDe: nombrePlaza } = require('../config/ciudades');
+
+// Estados en los que un pedido ya no se mueve. Se usa para saber si el
+// repartidor tiene algo en curso antes de cambiarlo de plaza.
+const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -257,6 +261,30 @@ const conectarse = async (req, res) => {
       });
     }
 
+    // ─── La plaza del repartidor se DEDUCE de dónde se conecta ────────
+    // Antes se quedaba con el default (puerto_escondido) para siempre: no
+    // había ningún camino para cambiarla, así que un repartidor de Putla
+    // veía pedidos de Puerto Escondido —a 200 km— y ninguno de los suyos.
+    // Se recalcula en cada conexión, así se corrige solo si se muda.
+    if (conectado && latitud != null && longitud != null) {
+      const plaza = plazaDe(latitud, longitud);
+      if (!plaza.dentro) {
+        return res.status(403).json({
+          ok: false,
+          mensaje: `No tenemos cobertura en tu ubicación. La plaza más cercana `
+                 + `(${nombrePlaza(plaza.slug)}) queda a ${Math.round(plaza.km)} km.`,
+        });
+      }
+      // No se cambia de plaza a media ruta: sus pedidos ya asignados son de
+      // la plaza anterior y quedarían descolgados del filtro por ciudad.
+      if (plaza.slug !== repartidor.ciudad) {
+        const enCurso = await Pedido.count({
+          where: { repartidor_id: repartidor.id, estado: { [Op.notIn]: ESTADOS_TERMINALES } },
+        });
+        if (enCurso === 0) repartidor.ciudad = plaza.slug;
+      }
+    }
+
     repartidor.conectado = !!conectado;
     repartidor.conectado_desde = conectado ? new Date() : null;
     // El latido arranca AQUÍ: conectarse es, por definición, señal de vida.
@@ -277,8 +305,12 @@ const conectarse = async (req, res) => {
 
     res.json({
       ok: true,
-      mensaje: conectado ? '¡Estas en linea! Espera tu primer pedido.' : 'Te desconectaste.',
-      data: { conectado: repartidor.conectado },
+      mensaje: conectado
+        ? `¡Estás en línea en ${nombrePlaza(repartidor.ciudad)}! Espera tu primer pedido.`
+        : 'Te desconectaste.',
+      // La plaza viaja de vuelta para que el repartidor VEA en qué localidad
+      // está trabajando: solo verá pedidos de ahí, y tiene que saberlo.
+      data: { conectado: repartidor.conectado, ciudad: repartidor.ciudad, ciudad_nombre: nombrePlaza(repartidor.ciudad) },
     });
   } catch (error) {
     console.error('Error en conectarse:', error);
@@ -477,6 +509,13 @@ const pedidosDisponibles = async (req, res) => {
       });
     }
 
+    // Sin plaza asignada no se muestra NADA: mostrar "todos" los pedidos
+    // sería mandarlo a un pueblo a 200 km. Se conecta con GPS y la plaza
+    // queda puesta en ese instante (ver `conectarse`).
+    if (!repartidor.ciudad) {
+      return res.json({ ok: true, data: { pedidos: [] } });
+    }
+
     const pedidos = await Pedido.findAll({
       where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad, tipo_envio: { [Op.ne]: 'pickup' } },
       order: [['creado_en', 'ASC']],
@@ -516,11 +555,13 @@ const aceptarPedido = async (req, res) => {
     if (!pedido) {
       return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue tomado por otro repartidor.' });
     }
-    if (pedido.ciudad && pedido.ciudad !== repartidor.ciudad) {
+    // Fail-closed: si a cualquiera de los dos le falta la plaza NO se acepta.
+    // Con el `&&` de antes, un pedido sin ciudad (o un repartidor sin ella)
+    // se podía tomar desde cualquier plaza — justo el caso que este candado
+    // existe para impedir.
+    if (!pedido.ciudad || !repartidor.ciudad || pedido.ciudad !== repartidor.ciudad) {
       return res.status(403).json({ ok: false, mensaje: 'Este pedido no corresponde a tu ciudad de operación.' });
     }
-
-    const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 
     // Obtener o crear batch activo del repartidor — solo cuentan los pedidos
     // NO terminales; un batch con todo entregado/cancelado no debe seguir

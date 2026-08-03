@@ -485,6 +485,11 @@ const aprobarNegocio = async (req, res) => {
     const { avisos } = await aprobaciones.aprobarNegocio(n, { adminId: req.usuario.id, origen: 'panel admin' });
     res.json({ ok: true, data: { negocio: n, avisos } });
   } catch (e) {
+    // Fuera de plaza es una negativa con explicación, no un fallo del servidor:
+    // el admin necesita leer POR QUÉ no se pudo aprobar.
+    if (e.codigo === 'FUERA_DE_PLAZA') {
+      return res.status(400).json({ ok: false, mensaje: e.message });
+    }
     console.error('Error aprobar negocio:', e);
     res.status(500).json({ ok: false, mensaje: 'Error al aprobar.' });
   }

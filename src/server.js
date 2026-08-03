@@ -237,6 +237,10 @@ app.get('/api/config-publica', (req, res) => {
         latitud: c.latitud, longitud: c.longitud,
       })),
       ciudad_default: require('./config/ciudades').CIUDAD_DEFAULT,
+      // Radio de una plaza en km. La app decide con esto si quien abre la
+      // app está DENTRO de alguna o hay que decirle que no hay servicio.
+      // Viene del servidor para que cambiarlo no exija un APK nuevo.
+      radio_plaza_km: require('./config/ciudades').RADIO_PLAZA_KM,
     },
   });
 });

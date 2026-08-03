@@ -7,7 +7,7 @@ const {
   BUCKET_PUBLICO_NEGOCIOS, BUCKET_PRIVADO_NEGOCIOS, TIPOS_PRIVADOS_NEGOCIO,
 } = require('../config/buckets');
 const { COMISION_FLAT, LIMITE_PEDIDOS_DEUDA } = require('../config/precios');
-const { CIUDAD_DEFAULT, esValida: ciudadValida, SLUGS } = require('../config/ciudades');
+const { CIUDAD_DEFAULT, esValida: ciudadValida, plazaDe, nombreDe: nombrePlaza, RADIO_PLAZA_KM } = require('../config/ciudades');
 const tg = require('../services/telegram.service');
 const eventos = require('../services/eventos.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
@@ -236,6 +236,24 @@ const actualizarMiPerfil = async (req, res) => {
       if (req.body[c] !== undefined) negocio[c] = req.body[c];
     });
 
+    // ─── La plaza se DEDUCE del GPS, no se teclea ─────────────────────
+    // Antes `ciudad` nunca se tocaba aquí: todo negocio se quedaba con el
+    // default (puerto_escondido) aunque estuviera en Putla, así que su
+    // catálogo aparecía en la plaza equivocada y en la suya no lo veía nadie.
+    // Tampoco se acepta del body: quien escribiera "putla" a mano se colaría
+    // en un catálogo donde ningún repartidor puede llegarle.
+    if (negocio.latitud != null && negocio.longitud != null) {
+      const plaza = plazaDe(negocio.latitud, negocio.longitud);
+      if (!plaza.dentro) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Todavía no operamos en esa zona. La plaza más cercana (${nombrePlaza(plaza.slug)}) `
+                 + `queda a ${Math.round(plaza.km)} km y solo damos servicio hasta ${RADIO_PLAZA_KM} km.`,
+        });
+      }
+      negocio.ciudad = plaza.slug;
+    }
+
     await negocio.save();
 
     res.json({ ok: true, mensaje: 'Datos guardados.', data: { negocio } });
@@ -348,6 +366,20 @@ const enviarARevision = async (req, res) => {
         mensaje: 'Esa dirección ya está registrada en otra cuenta. Tu cuenta quedó bloqueada — contacta a atención a clientes.',
       });
     }
+
+    // Defensa en profundidad: la plaza se recalcula del GPS también aquí, por
+    // si las coordenadas llegaron por otro camino (endpoint legacy, admin).
+    // Un negocio guardado en la plaza equivocada es invisible para sus
+    // vecinos y visible para quien nunca podrá pedirle.
+    const plaza = plazaDe(negocio.latitud, negocio.longitud);
+    if (!plaza.dentro) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Todavía no operamos en esa zona. La plaza más cercana (${nombrePlaza(plaza.slug)}) `
+               + `queda a ${Math.round(plaza.km)} km y solo damos servicio hasta ${RADIO_PLAZA_KM} km.`,
+      });
+    }
+    negocio.ciudad = plaza.slug;
 
     negocio.verificacion_estado = 'en_revision';
     eventos.perfilEnRevision('negocio', req.usuario, negocio.nombre);
@@ -518,6 +550,20 @@ const crearNegocio = async (req, res) => {
       });
     }
 
+    // La plaza sale del GPS, nunca del body: quien escribiera un slug a mano
+    // se colocaría en un catálogo al que ningún repartidor suyo puede llegar.
+    // Sin coordenadas el negocio no se puede aprobar de todos modos
+    // (enviarARevision/aprobarNegocio las exigen), así que aquí se deja el
+    // default y se corrige en cuanto confirme su ubicación.
+    const plazaNueva = plazaDe(latitud, longitud);
+    if (plazaNueva.slug && !plazaNueva.dentro) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Todavía no operamos en esa zona. La plaza más cercana (${nombrePlaza(plazaNueva.slug)}) `
+               + `queda a ${Math.round(plazaNueva.km)} km y solo damos servicio hasta ${RADIO_PLAZA_KM} km.`,
+      });
+    }
+
     const negocio = await Negocio.create({
       usuario_id: req.usuario.id,
       nombre,
@@ -525,11 +571,7 @@ const crearNegocio = async (req, res) => {
       categoria,
       direccion,
       colonia,
-      // La ciudad se valida contra las plazas reales: si llegara cualquier
-      // texto del body, el negocio quedaria en una plaza inexistente y no
-      // aparecerian en NINGUN catalogo — el dueno no entenderia por que
-      // nadie lo ve, y desde afuera no habria forma de notarlo.
-      ciudad: ciudadValida(ciudad) ? ciudad : CIUDAD_DEFAULT,
+      ciudad: plazaNueva.dentro ? plazaNueva.slug : CIUDAD_DEFAULT,
       telefono,
       horarios,
       latitud:  latitud  != null ? latitud  : null,

@@ -78,7 +78,11 @@ const hayRepartidoresParaEnvio = async (ciudad = CIUDAD_DEFAULT) => {
          AND r.conectado = true
          AND COALESCE(r.estado_cuenta, 'normal') NOT IN ('suspendido', 'bloqueado')
          AND COALESCE(r.baja_permanente, false) = false
-         AND (r.ciudad IS NULL OR r.ciudad = :ciudad)`,
+         -- Fail-closed: un repartidor sin plaza NO cuenta como disponible en
+         -- ninguna. Con el "IS NULL OR" de antes contaba en TODAS, así que
+         -- un pedido de Zacatepec se aceptaba a domicilio porque alguien sin
+         -- ciudad estaba en línea en Puerto Escondido — y nadie iba a llegar.
+         AND r.ciudad = :ciudad`,
       {
         type: sequelize.QueryTypes.SELECT,
         replacements: { ciudad, terminales: ESTADOS_TERMINALES, latidoMin: String(LATIDO_MAX_MIN) },

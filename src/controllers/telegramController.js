@@ -305,7 +305,15 @@ const manejarUpdate = async (req, res) => {
           return enviar(chatId, '⛔ No se puede aprobar: el negocio no tiene ubicación GPS confirmada.');
         }
         const fn = objetivo.tipo === 'repartidor' ? aprobaciones.aprobarRepartidor : aprobaciones.aprobarNegocio;
-        const { avisos } = await fn(objetivo.entidad, { adminId: admin.id, origen: 'bot de Telegram' });
+        let avisos;
+        try {
+          ({ avisos } = await fn(objetivo.entidad, { adminId: admin.id, origen: 'bot de Telegram' }));
+        } catch (e) {
+          // Fuera de plaza: el dueño tiene que leer el motivo en el chat, no
+          // ver un error genérico.
+          if (e.codigo === 'FUERA_DE_PLAZA') return enviar(chatId, '⛔ ' + e.message);
+          throw e;
+        }
         return enviar(chatId,
           '✅ Aprobado el perfil de <b>' + objetivo.tipo + '</b> de ' + (usuario.nombre || '') +
           ' (' + usuario.telefono + ').\nCorreo enviado: ' + (avisos.email ? 'sí' : 'no (sin correo o proveedor caído)'));

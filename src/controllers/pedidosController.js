@@ -3,7 +3,7 @@ const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
-const { CIUDAD_DEFAULT } = require('../config/ciudades');
+const { CIUDAD_DEFAULT, plazaDe, nombreDe: nombrePlaza, esValida: ciudadValida } = require('../config/ciudades');
 const { rutaPorCalles } = require('../services/routing.service');
 const { obtenerUrlFirmada } = require('../services/storage.service');
 const { calcularCostoEnvio, getMaxKm } = require('../utils/precios');
@@ -138,6 +138,42 @@ const crearPedido = async (req, res) => {
           codigo: 'SOLO_PICKUP',
           solo_pickup: true,
           ahorro_envio: calcularFeeCliente({ tipoEnvio: tipo_envio }),
+        });
+      }
+    }
+
+    // 2.6. Pickup entre plazas. El envío a domicilio ya queda acotado por la
+    // cobertura de 6.5 km, pero el pickup NO mide distancia —no hay reparto
+    // que cubrir— así que por ahí se colaba un pedido a un negocio de otro
+    // pueblo (a 200 km) entrando por enlace directo o por la API: el negocio
+    // cocinaba para alguien que jamás iba a llegar. Si el cliente manda su
+    // ubicación, tiene que caer en la MISMA plaza que el negocio.
+    if (tipo_envio === 'pickup') {
+      const plazaNegocio = negocio.ciudad || CIUDAD_DEFAULT;
+      // (a) Por GPS: es la comprobación fuerte, pero solo existe si el
+      //     teléfono tiene la ubicación concedida.
+      const porGps = plazaDe(latitud_entrega, longitud_entrega);
+      // (b) Por la plaza que declara la app. Es un dato del cliente, así que
+      //     NO es una barrera de seguridad —quien llame la API a mano puede
+      //     omitirlo— pero atrapa el caso real: un enlace directo o un
+      //     carrito viejo de otro pueblo desde la app honesta.
+      //     Si viene con un valor que no es una plaza real se RECHAZA, en vez
+      //     de ignorarlo: mandar basura no puede ser la forma de saltarse el
+      //     candado. Omitirlo sigue permitido (APKs viejos).
+      if (req.body.ciudad_cliente !== undefined && req.body.ciudad_cliente !== null
+          && !ciudadValida(req.body.ciudad_cliente)) {
+        return res.status(400).json({ ok: false, mensaje: 'Localidad no válida.', codigo: 'OTRA_PLAZA' });
+      }
+      const declarada = ciudadValida(req.body.ciudad_cliente) ? req.body.ciudad_cliente : null;
+
+      const cruzada = (porGps.slug && porGps.slug !== plazaNegocio)
+                   || (declarada && declarada !== plazaNegocio);
+      if (cruzada) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Este negocio está en ${nombrePlaza(plazaNegocio)} y tú estás en otra localidad. `
+                 + `Solo puedes pedir a negocios de tu localidad.`,
+          codigo: 'OTRA_PLAZA',
         });
       }
     }
@@ -1031,7 +1067,10 @@ const avisarRepartidoresEnRutaCompatible = async (pedido, io) => {
       // Un repartidor suspendido/bloqueado no debe recibir la invitación:
       // aceptarPedido se la iba a rechazar de todos modos.
       if (!repartidor || ['suspendido', 'bloqueado'].includes(repartidor.estado_cuenta)) continue;
-      if (pedido.ciudad && repartidor.ciudad && pedido.ciudad !== repartidor.ciudad) continue;
+      // Fail-closed igual que en aceptarPedido: si a alguno le falta la plaza
+      // no se ofrece. Antes, con el `&&`, un pedido sin ciudad se ofrecía a
+      // repartidores de cualquier plaza y el aviso los mandaba a otro pueblo.
+      if (!pedido.ciudad || !repartidor.ciudad || pedido.ciudad !== repartidor.ciudad) continue;
 
       io.to(`repartidor:${repartidor.id}`).emit('pedido_en_tu_ruta', {
         pedido_id:  pedido.id,

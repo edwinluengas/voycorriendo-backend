@@ -18,6 +18,7 @@
 const { Usuario, Repartidor, Negocio } = require('../models');
 const { enviarEmail, emailPerfilAprobado } = require('./email.service');
 const { logAdmin } = require('../utils/audit');
+const { plazaDe, nombreDe } = require('../config/ciudades');
 const tg = require('./telegram.service');
 
 // ─── Notificaciones (nunca lanzan) ────────────────────────
@@ -75,10 +76,26 @@ const aprobarRepartidor = async (repartidor, { adminId, origen = 'panel' } = {})
 
 const aprobarNegocio = async (negocio, { adminId, origen = 'panel' } = {}) => {
   const antes = { verificacion_estado: negocio.verificacion_estado };
+
+  // Última red: la plaza se fija desde el GPS en el momento de aprobar, venga
+  // el negocio del wizard, del endpoint legacy o de una carga manual. Un
+  // negocio aprobado en la plaza equivocada sale en el catálogo de un pueblo
+  // al que ningún repartidor suyo puede llegar, y desaparece del propio.
+  const plaza = plazaDe(negocio.latitud, negocio.longitud);
+  if (!plaza.dentro) {
+    const e = new Error(
+      `No se puede aprobar: la ubicación del negocio queda fuera de nuestras plazas`
+      + `${plaza.km != null ? ` (a ${Math.round(plaza.km)} km de ${nombreDe(plaza.slug)})` : ' (sin coordenadas válidas)'}.`,
+    );
+    e.codigo = 'FUERA_DE_PLAZA';
+    throw e;
+  }
+
   await negocio.update({
     verificacion_estado: 'aprobado',
     verificacion_nota: null,
     activo: true,
+    ciudad: plaza.slug,
     resolucion_en: new Date(),
   });
 
