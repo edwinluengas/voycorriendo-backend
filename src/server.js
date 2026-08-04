@@ -724,6 +724,32 @@ const migrarDB = async () => {
   await run(`ALTER TABLE pedidos ADD CONSTRAINT limite_efectivo
     CHECK (metodo_pago <> 'efectivo' OR total <= 10000)`);
 
+  // ── Un pedido "pendiente" por cliente (2026-08-04) ────────────
+  // La regla —no mandar otro pedido mientras el restaurante no conteste— se
+  // valida en `crearPedido`, pero ese chequeo vive FUERA de la transacción:
+  // dos toques casi simultáneos podían pasarlo los dos y crear dos pedidos.
+  // El índice lo hace imposible en la base, que es el único lugar donde una
+  // carrera se gana de verdad.
+  //
+  // Se hace a mano (no con `run`) porque aquí un fallo SÍ importa y no puede
+  // quedar en un aviso perdido: si ya hubiera un cliente con dos pendientes,
+  // el índice no se crea y hay que saberlo.
+  try {
+    await sequelize.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_un_pedido_pendiente_por_cliente
+        ON pedidos (cliente_id) WHERE estado = 'pendiente'`);
+  } catch (e) {
+    const [dupes] = await sequelize.query(
+      `SELECT cliente_id, COUNT(*)::int AS n FROM pedidos WHERE estado = 'pendiente'
+        GROUP BY cliente_id HAVING COUNT(*) > 1`,
+    ).catch(() => [[]]);
+    console.error('[migración] ⚠️  NO se pudo crear el candado de un pedido pendiente por cliente:', e.message);
+    if (dupes?.length) {
+      console.error('[migración] ⚠️  Clientes con más de un pedido pendiente (resolver a mano):',
+        dupes.map((d) => `${d.cliente_id}=${d.n}`).join(', '));
+    }
+  }
+
   console.log('[migración] Completada.');
 };
 

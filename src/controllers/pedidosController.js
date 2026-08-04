@@ -73,6 +73,29 @@ const crearPedido = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Este negocio no está disponible.' });
     }
 
+    // 1.5. Un pedido a la vez MIENTRAS el negocio no responde.
+    // Pedido explícito del dueño (2026-08-04): tras enviar un pedido, el
+    // cliente no puede mandar otro hasta que el restaurante lo acepte o lo
+    // rechace. Antes solo se frenaba el duplicado exacto (mismo negocio y
+    // mismo total), así que bastaba con cambiar un producto para acumular
+    // pedidos sin respuesta y dejar a la cocina con varios encima.
+    // En cuanto el negocio contesta —confirmado, o cancelado/rechazado— el
+    // cliente vuelve a poder pedir, aunque el pedido aceptado siga en curso.
+    const esperandoRespuesta = await Pedido.findOne({
+      where: { cliente_id: req.usuario.id, estado: 'pendiente' },
+      order: [['creado_en', 'DESC']],
+      attributes: ['id', 'numero'],
+    });
+    if (esperandoRespuesta) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: 'Ya tienes un pedido esperando respuesta del restaurante. '
+               + 'En cuanto lo acepten o lo cancelen podrás hacer otro.',
+        codigo: 'PEDIDO_ESPERANDO_RESPUESTA',
+        data: { pedido_id: esperandoRespuesta.id, numero: esperandoRespuesta.numero },
+      });
+    }
+
     // 2. Validar items
     let subtotal = 0;
     let requiereINE = false;
@@ -428,6 +451,20 @@ const crearPedido = async (req, res) => {
       data: { pedido },
     });
   } catch (error) {
+    // El candado real de "un pedido pendiente por cliente" es un índice único
+    // en la base — es el único lugar donde una carrera se gana de verdad. Si
+    // salta aquí es que dos peticiones casi simultáneas pasaron el chequeo
+    // previo; al cliente hay que decirle lo mismo, no un error genérico.
+    const esCandadoPendiente = error?.name === 'SequelizeUniqueConstraintError'
+      && String(error?.parent?.constraint || '').includes('un_pedido_pendiente');
+    if (esCandadoPendiente) {
+      return res.status(409).json({
+        ok: false,
+        mensaje: 'Ya tienes un pedido esperando respuesta del restaurante. '
+               + 'En cuanto lo acepten o lo cancelen podrás hacer otro.',
+        codigo: 'PEDIDO_ESPERANDO_RESPUESTA',
+      });
+    }
     console.error('Error al crear pedido:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al procesar tu pedido.' });
   }

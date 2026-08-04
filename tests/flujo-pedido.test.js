@@ -332,6 +332,15 @@ describe('Fase de prueba real — efectivo, tope $700 y pickup', () => {
     if (creados.length) await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
   });
 
+  // Desde 2026-08-04 el cliente no puede mandar OTRO pedido mientras el
+  // restaurante no conteste el anterior. Estos tests encadenan pedidos, así
+  // que borran el previo antes de crear el siguiente — si no, el segundo
+  // choca contra ese candado (409) en vez de probar lo que quiere probar.
+  const soltarCandado = async () => {
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002') AND estado = 'pendiente'`);
+  };
+  beforeEach(soltarCandado);
+
   test('el tope de efectivo es $700 de productos', async () => {
     const { token } = await login('cliente');
     // 30 × $22 = $660 → pasa (con el tope viejo de $500 habría fallado)
@@ -340,6 +349,7 @@ describe('Fase de prueba real — efectivo, tope $700 y pickup', () => {
     creados.push(ok.data.data.pedido.id);
 
     // 33 × $22 = $726 → se rechaza
+    await soltarCandado();
     const excede = await crearPedido(token, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 33 }] });
     expect(excede.status).toBe(400);
     expect(excede.data.mensaje).toMatch(/700/);
@@ -358,6 +368,78 @@ describe('Fase de prueba real — efectivo, tope $700 y pickup', () => {
     creados.push(pedido.id);
     expect(parseFloat(pedido.costo_envio)).toBe(0);
     expect(pedido.direccion_entrega).toMatch(/Recoge en tienda/i);
+  });
+});
+
+describe('Un pedido a la vez mientras el restaurante no contesta', () => {
+  // Regla del dueño (2026-08-04): tras enviar un pedido, el cliente no puede
+  // mandar otro hasta que el restaurante lo acepte o lo rechace. Antes solo
+  // se frenaba el duplicado EXACTO (mismo negocio y mismo total), así que
+  // bastaba cambiar la cantidad para dejarle a la cocina varios encima.
+  const creados = [];
+
+  const limpiar = async () => {
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+  };
+  beforeAll(limpiar);
+  afterAll(async () => {
+    await limpiar();
+    creados.length = 0;
+  });
+
+  test('el segundo pedido se rechaza aunque cambie el importe', async () => {
+    const { token } = await login('cliente');
+    const primero = await crearPedido(token, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }] });
+    expect(primero.status).toBe(201);
+    creados.push(primero.data.data.pedido.id);
+
+    const segundo = await crearPedido(token, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 9 }] });
+    expect(segundo.status).toBe(409);
+    expect(segundo.data.codigo).toBe('PEDIDO_ESPERANDO_RESPUESTA');
+    // Y NO se creó nada: el candado no puede dejar un pedido a medias.
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::int AS c FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+    expect(rows[0].c).toBe(1);
+  });
+
+  test('tampoco a otro negocio distinto', async () => {
+    const { token } = await login('cliente');
+    // Sigue vivo el pedido del test anterior (mismo describe, sin limpiar).
+    const otro = await crearPedido(token, {
+      negocio_id: NEGOCIO_DON_BETO.id,
+      items: [{ producto_id: PRODUCTO_QUESADILLA, cantidad: 4 }],
+      tipo_envio: 'pickup',
+    });
+    expect(otro.status).toBe(409);
+    expect(otro.data.codigo).toBe('PEDIDO_ESPERANDO_RESPUESTA');
+  });
+
+  test('en cuanto el restaurante ACEPTA, el cliente puede volver a pedir', async () => {
+    const { token: tCliente } = await login('cliente');
+    const { token: tNegocio } = await login('negocio');
+    const confirmado = await cliente.patch(
+      `/pedidos/${creados[0]}/estado`, { estado: 'confirmado' }, conAuth(tNegocio));
+    expect(confirmado.status).toBe(200);
+
+    // Importe DISTINTO al del pedido ya confirmado: con el mismo total y el
+    // mismo negocio saltaría el candado anti-duplicado (que devuelve el
+    // pedido existente con 200), y no estaríamos probando lo que queremos.
+    const nuevo = await crearPedido(tCliente, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 11 }] });
+    expect(nuevo.status).toBe(201);
+    creados.push(nuevo.data.data.pedido.id);
+  });
+
+  test('y si lo RECHAZA, también', async () => {
+    const { token: tCliente } = await login('cliente');
+    const { token: tNegocio } = await login('negocio');
+    // El pedido nuevo del test anterior sigue en 'pendiente'.
+    const rechazado = await cliente.patch(
+      `/pedidos/${creados[1]}/estado`, { estado: 'rechazado', nota: 'prueba automatizada' }, conAuth(tNegocio));
+    expect(rechazado.status).toBe(200);
+
+    const otroMas = await crearPedido(tCliente, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 13 }] });
+    expect(otroMas.status).toBe(201);
+    creados.push(otroMas.data.data.pedido.id);
   });
 });
 
