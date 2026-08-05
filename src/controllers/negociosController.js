@@ -346,6 +346,10 @@ const enviarARevision = async (req, res) => {
     if (!negocio.telefono)               faltantes.push('telefono');
     if (!negocio.foto_local)             faltantes.push('foto del local');
     if (!negocio.foto_portada)           faltantes.push('foto de portada');
+    // La foto oficial (logo) es la cara del negocio: la que el cliente ve
+    // junto al nombre en el catálogo y al abrir el menú. Sin ella el negocio
+    // aparece con un emoji genérico, indistinguible de cualquier otro.
+    if (!negocio.logo)                   faltantes.push('foto oficial del negocio');
     if (!negocio.comprobante_domicilio)  faltantes.push('comprobante de domicilio');
     if (!negocio.documento_ine_dueno)    faltantes.push('INE del dueno');
     if (!negocio.clabe_bancaria)         faltantes.push('CLABE');
