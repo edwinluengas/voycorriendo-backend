@@ -32,16 +32,52 @@ const enLinea = (s) => s
   .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
   .replace(/`([^`]+)`/g, '<code>$1</code>');
 
+// Fila de tabla: `| a | b | c |`. Se parte por las barras y se tiran los
+// extremos vacíos que dejan la primera y la última.
+const celdas = (linea) => linea.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+const esFilaTabla    = (l) => /^\|.*\|$/.test(l);
+const esSeparadorTabla = (l) => /^\|[\s:|-]+\|$/.test(l) && l.includes('-');
+
 const mdAHtml = (md) => {
   const salida = [];
   let enLista = false;
+  let enTabla = false;
 
   const cerrarLista = () => { if (enLista) { salida.push('</ul>'); enLista = false; } };
+  const cerrarTabla = () => { if (enTabla) { salida.push('</tbody></table></div>'); enTabla = false; } };
 
-  for (const cruda of escapar(md).split('\n')) {
-    const linea = cruda.trim();
+  const lineas = escapar(md).split('\n');
 
-    if (!linea) { cerrarLista(); continue; }
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i].trim();
+
+    if (!linea) { cerrarLista(); cerrarTabla(); continue; }
+
+    // ── Tablas ────────────────────────────────────────────────────
+    // El aviso de privacidad lista en una tabla con qué terceros se
+    // comparten los datos — justo lo que revisa una autoridad o la tienda
+    // de aplicaciones. Sin esto salía como texto con barras: ilegible.
+    if (esFilaTabla(linea)) {
+      // La línea de guiones solo separa el encabezado; no se dibuja.
+      if (esSeparadorTabla(linea)) continue;
+      cerrarLista();
+      const cols = celdas(linea);
+      // Es encabezado si la SIGUIENTE línea es el separador de guiones.
+      const esEncabezado = !enTabla && esSeparadorTabla((lineas[i + 1] || '').trim());
+      if (!enTabla) {
+        salida.push('<div class="tabla-scroll"><table>');
+        enTabla = true;
+        if (esEncabezado) {
+          salida.push('<thead><tr>' + cols.map((c) => `<th>${enLinea(c)}</th>`).join('') + '</tr></thead>');
+          salida.push('<tbody>');
+          continue;
+        }
+        salida.push('<tbody>');
+      }
+      salida.push('<tr>' + cols.map((c) => `<td>${enLinea(c)}</td>`).join('') + '</tr>');
+      continue;
+    }
+    cerrarTabla();
 
     if (/^---+$/.test(linea)) { cerrarLista(); salida.push('<hr>'); continue; }
 

@@ -71,8 +71,17 @@ const PLANTILLA = (titulo, cuerpo) => `<!doctype html>
   hr { border:0; border-top:1px solid #e5e7eb; margin:2em 0; }
   ul { padding-left:1.2em; }
   .marca { color:#FF5C00; font-weight:800; letter-spacing:-.5px; }
+  /* La tabla de terceros con los que se comparten datos es de lo primero
+     que revisa una autoridad o la tienda de aplicaciones. En un teléfono
+     no cabe a lo ancho, así que se deja desplazar sola en vez de romper
+     el diseño de la página. */
+  .tabla-scroll { overflow-x:auto; margin:1em 0; }
+  table { border-collapse:collapse; width:100%; font-size:.92rem; }
+  th, td { border:1px solid #e5e7eb; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#faf5f0; font-weight:700; }
   @media (prefers-color-scheme: dark) {
     body { background:#111; color:#e8e8e8; } hr { border-color:#333; }
+    th, td { border-color:#333; } th { background:#1d1a17; }
   }
 </style></head>
 <body>
