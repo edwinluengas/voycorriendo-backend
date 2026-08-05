@@ -724,6 +724,30 @@ const migrarDB = async () => {
   await run(`ALTER TABLE pedidos ADD CONSTRAINT limite_efectivo
     CHECK (metodo_pago <> 'efectivo' OR total <= 10000)`);
 
+  // ── Eliminación de cuenta (2026-08-05) ────────────────────────
+  // Estado final para la cuenta que su titular cerró. Va con `IF NOT
+  // EXISTS` porque `ALTER TYPE ... ADD VALUE` truena si ya está, y este
+  // bloque corre en cada arranque.
+  await run(`ALTER TYPE "enum_usuarios_estado" ADD VALUE IF NOT EXISTS 'eliminado'`);
+  // La columna trae ADEMÁS un CHECK con la lista de estados, heredado del
+  // esquema original. Ampliar solo el ENUM no basta: el CHECK rechazaba el
+  // UPDATE con "violates check constraint" y la baja de cuenta reventaba
+  // con un 500 —la transacción revertía entera, eso sí—.
+  await run(`ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_estado_check`);
+  await run(`ALTER TABLE usuarios ADD CONSTRAINT usuarios_estado_check
+    CHECK (estado IN ('activo','inactivo','suspendido','pendiente','eliminado'))`);
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS eliminada_en TIMESTAMPTZ`);
+
+  // ── Cuenta con localidad fija (2026-08-05) ────────────────────
+  // La app decide qué catálogo enseñar SOLO por GPS, así que quien esté
+  // fuera de las plazas no ve nada — correcto para un cliente real, y un
+  // problema para un revisor de la tienda de aplicaciones, que no está en
+  // Oaxaca y concluiría que la app no funciona. Con esta columna, una
+  // cuenta concreta (la que se le entrega a Google) queda anclada a una
+  // localidad y ve su catálogo esté donde esté. Nula para todo el mundo
+  // más: NO cambia el comportamiento de ningún usuario real.
+  await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ciudad_fija VARCHAR(40)`);
+
   // ── Un pedido "pendiente" por cliente (2026-08-04) ────────────
   // La regla —no mandar otro pedido mientras el restaurante no conteste— se
   // valida en `crearPedido`, pero ese chequeo vive FUERA de la transacción:

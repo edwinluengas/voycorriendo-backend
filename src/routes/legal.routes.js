@@ -113,4 +113,57 @@ const servir = (archivo, titulo) => (req, res) => {
 router.get('/privacidad', servir('aviso-privacidad-integral.md', 'Aviso de Privacidad'));
 router.get('/terminos',   servir('terminos-consentimiento-servicio.md', 'Términos del Servicio'));
 
+// ─── Eliminación de cuenta ─────────────────────────────────────────
+// Google Play exige, además del borrado dentro de la app, una página web
+// PÚBLICA —sin iniciar sesión— donde se explique cómo pedirla y qué pasa
+// con los datos. Es también la vía para quien ya desinstaló la app.
+router.get('/eliminar-cuenta', (req, res) => {
+  res.type('html').send(PLANTILLA('Eliminar tu cuenta de VoyCorriendo', `
+<h1>Eliminar tu cuenta</h1>
+
+<p>Puedes cerrar tu cuenta de VoyCorriendo cuando quieras. Es definitivo:
+no hay forma de recuperarla después.</p>
+
+<h2>Desde la app (lo más rápido)</h2>
+<ul>
+  <li>Abre VoyCorriendo e inicia sesión.</li>
+  <li>Ve a <strong>Perfil → Eliminar mi cuenta</strong>.</li>
+  <li>Confirma con tu contraseña.</li>
+</ul>
+<p>La cuenta se cierra en ese momento.</p>
+
+<h2>Si ya desinstalaste la app</h2>
+<p>Escríbenos a
+<a href="mailto:voycorriendoadmin@gmail.com?subject=Eliminar%20mi%20cuenta">voycorriendoadmin@gmail.com</a>
+desde el correo de tu cuenta, o indícanos el teléfono con el que te
+registraste. Atendemos la solicitud en un máximo de
+${DATOS().plazoArco || 20} días hábiles, el plazo que fija la Ley Federal de
+Protección de Datos Personales en Posesión de los Particulares.</p>
+
+<h2>Qué se borra</h2>
+<ul>
+  <li>Tu nombre, teléfono y correo.</li>
+  <li>Tu foto de perfil y tus direcciones guardadas.</li>
+  <li>Tus métodos de pago guardados.</li>
+  <li>Tus documentos de identificación (INE, licencia, comprobantes de domicilio),
+      tanto de la base de datos como del almacenamiento de archivos.</li>
+</ul>
+
+<h2>Qué se conserva, y por qué</h2>
+<p>El registro contable de los pedidos ya entregados <strong>sin tus datos
+personales</strong>. Son comprobantes de operaciones en las que participaron
+otras personas —el negocio y el repartidor cobraron por ellas— y existen
+obligaciones fiscales de conservarlos. Quedan desligados de ti: no es posible
+identificarte a partir de ellos.</p>
+
+<h2>Cuándo no se puede todavía</h2>
+<p>Si tienes un pedido en curso, una deuda de comisiones como negocio, o
+dinero sin retirar como repartidor. La app te dirá exactamente qué falta.
+En cuanto se resuelva, podrás cerrar la cuenta.</p>
+
+<p>Tu número de teléfono queda libre: si algún día quieres volver, puedes
+registrarte otra vez con él.</p>
+`));
+});
+
 module.exports = router;

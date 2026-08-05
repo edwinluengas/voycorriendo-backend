@@ -12,6 +12,8 @@ const {
   setMetodoPagoDefault,
   getNotificaciones,
   setNotificaciones,
+  estadoEliminacion,
+  eliminarMiCuenta,
 } = require('../controllers/usuariosController');
 
 const router = express.Router();
@@ -40,5 +42,11 @@ router.get('/mis-calificaciones', misCalificaciones);
 // Preferencias de notificaciones
 router.get  ('/notificaciones', getNotificaciones);
 router.patch('/notificaciones', setNotificaciones);
+
+// Eliminación de cuenta (requisito de Google Play y derecho de
+// cancelación de la LFPDPPP). El GET dice qué pasará y qué lo impide;
+// el DELETE ejecuta y exige la contraseña.
+router.get   ('/mi-cuenta/eliminacion', estadoEliminacion);
+router.delete('/mi-cuenta',             eliminarMiCuenta);
 
 module.exports = router;

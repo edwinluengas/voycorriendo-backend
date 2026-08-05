@@ -1,5 +1,7 @@
 const { Usuario, Repartidor, Negocio, Pedido } = require('../models');
 const { Op } = require('sequelize');
+const bcrypt = require('bcryptjs');
+const { revisarImpedimentos, eliminarCuenta } = require('../services/eliminarCuenta.service');
 
 // ─── GET /api/usuarios/mis-roles ─────────────────────────────
 // Devuelve que modos tiene activos el usuario y su estado.
@@ -344,6 +346,72 @@ const guardarPushToken = async (req, res) => {
   }
 };
 
+
+// ─── GET /api/usuarios/mi-cuenta/eliminacion ─────────────────
+// Qué va a pasar si el usuario cierra su cuenta, y si algo se lo impide.
+// Se consulta ANTES de que confirme: nadie debe descubrir que no puede
+// borrarse —o qué se conserva por ley— después de teclear su contraseña.
+const estadoEliminacion = async (req, res) => {
+  try {
+    const info = await revisarImpedimentos(req.usuario.id);
+    res.json({
+      ok: true,
+      data: {
+        ...info,
+        se_borra: [
+          'Tu nombre, teléfono y correo',
+          'Tu foto de perfil y tus direcciones guardadas',
+          'Tus métodos de pago guardados',
+          'Tus documentos de identificación (INE, licencia, comprobantes)',
+        ],
+        se_conserva: [
+          'El registro contable de los pedidos que ya se entregaron, sin tus datos personales: son comprobantes de operaciones en las que participaron otras personas (el negocio y el repartidor cobraron por ellas) y hay obligaciones fiscales de conservarlos.',
+        ],
+      },
+    });
+  } catch (e) {
+    console.error('Error en estadoEliminacion:', e);
+    res.status(500).json({ ok: false, mensaje: 'No pudimos consultar el estado de tu cuenta.' });
+  }
+};
+
+// ─── DELETE /api/usuarios/mi-cuenta ──────────────────────────
+// Cierra la cuenta del propio usuario. Exige la contraseña: es un acto
+// irreversible y un teléfono desbloqueado en manos ajenas no debe bastar.
+const eliminarMiCuenta = async (req, res) => {
+  try {
+    const { password } = req.body;
+    const usuario = await Usuario.findByPk(req.usuario.id);
+    if (!usuario) return res.status(404).json({ ok: false, mensaje: 'Cuenta no encontrada.' });
+
+    if (!password || !usuario.password || !(await bcrypt.compare(password, usuario.password))) {
+      return res.status(401).json({ ok: false, mensaje: 'Contraseña incorrecta.' });
+    }
+
+    // Un admin no puede borrarse solo: si se va el último, nadie puede
+    // aprobar negocios ni atender problemas y no hay forma de recuperarlo
+    // desde la app.
+    if (usuario.rol === 'admin') {
+      return res.status(403).json({
+        ok: false,
+        mensaje: 'Las cuentas de administración no se pueden eliminar desde la app.',
+      });
+    }
+
+    await eliminarCuenta(usuario, { origen: 'app' });
+    res.json({
+      ok: true,
+      mensaje: 'Tu cuenta fue eliminada. Gracias por haber usado VoyCorriendo.',
+    });
+  } catch (e) {
+    if (e.codigo === 'CUENTA_CON_PENDIENTES') {
+      return res.status(409).json({ ok: false, mensaje: e.message, impedimentos: e.impedimentos, codigo: e.codigo });
+    }
+    console.error('Error al eliminar cuenta:', e);
+    res.status(500).json({ ok: false, mensaje: 'No pudimos eliminar tu cuenta. Escríbenos y lo resolvemos.' });
+  }
+};
+
 module.exports = {
   obtenerMisRoles,
   cambiarModo,
@@ -356,4 +424,6 @@ module.exports = {
   setMetodoPagoDefault,
   getNotificaciones,
   setNotificaciones,
+  estadoEliminacion,
+  eliminarMiCuenta,
 };

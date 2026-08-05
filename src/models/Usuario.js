@@ -64,7 +64,9 @@ const Usuario = sequelize.define('Usuario', {
     defaultValue: 'cliente',
   },
   estado: {
-    type: DataTypes.ENUM('activo', 'inactivo', 'suspendido', 'pendiente'),
+    // 'eliminado' es final: la cuenta la cerró su titular y no se
+    // reactiva (a diferencia de 'suspendido', que es reversible).
+    type: DataTypes.ENUM('activo', 'inactivo', 'suspendido', 'pendiente', 'eliminado'),
     defaultValue: 'pendiente',
   },
   foto_perfil: {
@@ -178,6 +180,14 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.STRING(50),
     allowNull: true,
   },
+  // Ancla la app a una localidad para ESTA cuenta, sin importar el GPS.
+  // Existe para la cuenta que se le entrega a la tienda de aplicaciones:
+  // un revisor fuera de Oaxaca vería "sin cobertura" y concluiría que la
+  // app no sirve. Nula para cualquier usuario real.
+  ciudad_fija: {
+    type: DataTypes.STRING(40),
+    allowNull: true,
+  },
   // Perfil de usuario: direcciones guardadas, método de pago default, prefs
   // notificaciones — existían como columnas en la DB (migración en
   // server.js) pero nunca se declararon aquí. Sequelize ni las selecciona ni
@@ -237,23 +247,28 @@ Usuario.prototype.verificarPassword = async function(passwordPlano) {
   return bcrypt.compare(passwordPlano, this.password);
 };
 
-// No devolver campos sensibles en JSON
+// Lo ÚNICO que sale al serializar un usuario. Es lista BLANCA a propósito:
+// con la lista negra que había antes, cada columna nueva quedaba expuesta
+// por omisión y solo se tapaba si alguien se acordaba de agregarla. Ése es
+// exactamente el descuido que en julio publicó la INE del dueño en un
+// endpoint sin token. Al agregar una columna hay que decidir aquí, a
+// conciencia, si el usuario debe verla.
+const CAMPOS_SERIALIZABLES = [
+  'id', 'nombre', 'apellido', 'telefono', 'lada', 'pais', 'email',
+  'rol', 'modo_activo', 'estado', 'foto_perfil',
+  'telefono_verificado', 'acepto_terminos', 'terminos_aceptados_en',
+  'acepta_marketing', 'direcciones_guardadas', 'metodo_pago_default',
+  'notif_pedidos', 'notif_marketing', 'credito_disponible',
+  'ciudad_fija', 'ultima_conexion', 'creado_en', 'actualizado_en',
+];
+
 Usuario.prototype.toJSON = function() {
-  const values = { ...this.get() };
-  delete values.password;
-  delete values.otp_codigo;
-  delete values.otp_expira;
-  delete values.otp_intentos;
-  delete values.token_version;
-  delete values.reset_codigo;
-  delete values.reset_expira;
-  delete values.reset_intentos;
-  delete values.login2fa_codigo;
-  delete values.login2fa_expira;
-  delete values.login2fa_intentos;
-  delete values.intentos_fallidos;
-  delete values.bloqueado_hasta;
-  return values;
+  const todo = this.get();
+  const salida = {};
+  for (const campo of CAMPOS_SERIALIZABLES) {
+    if (campo in todo) salida[campo] = todo[campo];
+  }
+  return salida;
 };
 
 module.exports = Usuario;

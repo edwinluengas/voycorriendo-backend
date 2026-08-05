@@ -164,6 +164,9 @@ const registro = async (req, res) => {
           telefono: usuario.telefono, lada: usuario.lada, pais: usuario.pais, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
           credito_disponible: parseFloat(usuario.credito_disponible || 0),
+          // Solo va con valor en la cuenta de revisión de la tienda: la app
+          // la usa para anclar la localidad sin depender del GPS.
+          ciudad_fija: usuario.ciudad_fija || null,
         },
       },
     });
@@ -368,6 +371,9 @@ const login = async (req, res) => {
           telefono: usuario.telefono, lada: usuario.lada, pais: usuario.pais, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
           credito_disponible: parseFloat(usuario.credito_disponible || 0),
+          // Solo va con valor en la cuenta de revisión de la tienda: la app
+          // la usa para anclar la localidad sin depender del GPS.
+          ciudad_fija: usuario.ciudad_fija || null,
         },
       },
     });
@@ -435,6 +441,9 @@ const loginSegundoFactor = async (req, res) => {
           telefono: usuario.telefono, lada: usuario.lada, pais: usuario.pais, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
           credito_disponible: parseFloat(usuario.credito_disponible || 0),
+          // Solo va con valor en la cuenta de revisión de la tienda: la app
+          // la usa para anclar la localidad sin depender del GPS.
+          ciudad_fija: usuario.ciudad_fija || null,
         },
       },
     });
@@ -732,6 +741,9 @@ const restablecerPassword = async (req, res) => {
           telefono: usuario.telefono, lada: usuario.lada, pais: usuario.pais, email: usuario.email,
           rol: usuario.rol, modo_activo: usuario.modo_activo, estado: usuario.estado,
           credito_disponible: parseFloat(usuario.credito_disponible || 0),
+          // Solo va con valor en la cuenta de revisión de la tienda: la app
+          // la usa para anclar la localidad sin depender del GPS.
+          ciudad_fija: usuario.ciudad_fija || null,
         },
       },
     });
