@@ -269,7 +269,14 @@ const conectarse = async (req, res) => {
     // había ningún camino para cambiarla, así que un repartidor de Putla
     // veía pedidos de Puerto Escondido —a 200 km— y ninguno de los suyos.
     // Se recalcula en cada conexión, así se corrige solo si se muda.
-    if (conectado && latitud != null && longitud != null) {
+    // Cuenta con localidad anclada (la que se le entrega a la tienda de
+    // aplicaciones para revisar): se salta el GPS igual que el catálogo del
+    // cliente. Sin esto, quien revisa la app desde fuera de Oaxaca no puede
+    // ni conectarse como repartidor, y no llega a ver el flujo de entrega.
+    // Nulo para todos los usuarios reales.
+    if (conectado && req.usuario.ciudad_fija) {
+      repartidor.ciudad = req.usuario.ciudad_fija;
+    } else if (conectado && latitud != null && longitud != null) {
       const plaza = plazaDe(latitud, longitud);
       if (!plaza.dentro) {
         return res.status(403).json({

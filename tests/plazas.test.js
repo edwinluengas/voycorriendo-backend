@@ -135,15 +135,36 @@ describe('Plazas — la del repartidor sale de su GPS', () => {
   // Estos tests mueven de plaza a la cuenta de prueba: al final la dejan
   // como estaba (desconectada y en su plaza original).
   let estadoOriginal = null;
+  let anclajeOriginal = null;
 
   beforeAll(async () => {
     const { token } = await login('repartidor');
     const r = await cliente.get('/repartidores/mi-perfil', conAuth(token));
     estadoOriginal = r.data?.data?.repartidor?.ciudad || null;
+
+    // Estos tests verifican la detección POR GPS, y una cuenta con
+    // `ciudad_fija` la ignora a propósito (es la de revisión de la tienda).
+    // Se quita el anclaje mientras corren y se restaura al terminar: sin
+    // esto, preparar la revisión dejaba estos tests fallando para siempre.
+    const db = await require('./helpers/db').conectar();
+    try {
+      const { rows } = await db.query(
+        `SELECT ciudad_fija FROM usuarios WHERE telefono = '0000000004'`);
+      anclajeOriginal = rows[0]?.ciudad_fija || null;
+      if (anclajeOriginal) {
+        await db.query(`UPDATE usuarios SET ciudad_fija = NULL WHERE telefono = '0000000004'`);
+      }
+    } finally { await db.end().catch(() => {}); }
   });
 
   afterAll(async () => {
     const { token } = await login('repartidor');
+    if (anclajeOriginal) {
+      const db = await require('./helpers/db').conectar();
+      try {
+        await db.query(`UPDATE usuarios SET ciudad_fija = $1 WHERE telefono = '0000000004'`, [anclajeOriginal]);
+      } finally { await db.end().catch(() => {}); }
+    }
     const casa = CIUDADES.find((c) => c.slug === (estadoOriginal || 'puerto_escondido'));
     // Reconectar desde su plaza original la restituye, y luego se desconecta.
     await cliente.patch('/repartidores/conectarse',
