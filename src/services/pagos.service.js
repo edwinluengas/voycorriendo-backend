@@ -224,20 +224,59 @@ const procesarWebhookMercadoPago = async ({ query, body, headers, Pedido }) => {
 };
 
 // ─── Customers & Cards API: obtiene o crea el customer de MP ──
+//
+// OJO CON LA DESINCRONIZACIÓN: Mercado Pago guarda sus customers PARA
+// SIEMPRE, del lado de ellos, y nosotros solo anotamos el id en
+// `usuarios.mp_customer_id`. Cualquier cosa que borre esa columna de nuestro
+// lado —una limpieza de datos, recrear una cuenta, eliminar y volver a
+// registrarse— deja a MP con un customer que nosotros creemos que no existe.
+// Entonces se intentaba crear otro con el mismo correo y MP respondía
+// `bad_request` con la causa 101 "the customer already exist", que el código
+// no atrapaba: el cliente veía "verifica los datos o intenta con otra
+// tarjeta" y NINGUNA tarjeta le iba a funcionar nunca.
+//
+// La operación tiene que ser idempotente: si ya existe, se busca y se
+// reutiliza. Es lo que MP espera que haga quien integra.
 const obtenerOCrearCustomerMP = async (usuario) => {
   if (usuario.mp_customer_id) return usuario.mp_customer_id;
-  const { data } = await axios.post(
-    `${MP_BASE_URL}/v1/customers`,
-    {
-      email: usuario.email || `usuario-${usuario.id}@voycorriendo.mx`,
-      first_name: usuario.nombre,
-      last_name: usuario.apellido,
-    },
-    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
-  );
-  usuario.mp_customer_id = data.id;
-  await usuario.save();
-  return data.id;
+
+  const email = usuario.email || `usuario-${usuario.id}@voycorriendo.mx`;
+  const cabeceras = { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } };
+
+  const anotar = async (id) => {
+    usuario.mp_customer_id = id;
+    await usuario.save();
+    return id;
+  };
+
+  try {
+    const { data } = await axios.post(
+      `${MP_BASE_URL}/v1/customers`,
+      { email, first_name: usuario.nombre, last_name: usuario.apellido },
+      cabeceras,
+    );
+    return anotar(data.id);
+  } catch (e) {
+    const causas = e.response?.data?.cause || [];
+    const yaExiste = causas.some((c) => String(c.code) === '101')
+      || /already exist/i.test(e.response?.data?.message || '');
+    if (!yaExiste) throw e;
+
+    // Existe del lado de MP pero no lo teníamos anotado: se busca por correo
+    // y se recupera el vínculo.
+    const { data } = await axios.get(
+      `${MP_BASE_URL}/v1/customers/search?email=${encodeURIComponent(email)}`,
+      cabeceras,
+    );
+    const encontrado = (data?.results || [])[0];
+    if (!encontrado?.id) {
+      // MP dice que existe pero no lo devuelve: no hay nada sensato que
+      // hacer, y hay que verlo en los registros en vez de tragárselo.
+      throw new Error(`Mercado Pago reporta un cliente existente para ${email} pero no lo encuentra al buscarlo.`);
+    }
+    console.warn(`[MP] Cliente ya existía en Mercado Pago y no estaba vinculado (${encontrado.id}) — vínculo restaurado.`);
+    return anotar(encontrado.id);
+  }
 };
 
 // ─── Guarda una tarjeta ya tokenizada del lado del cliente ─────
