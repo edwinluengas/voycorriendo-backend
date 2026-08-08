@@ -47,10 +47,49 @@ const notificarPagoCapturado = async (app, pedido) => {
   }
 };
 
-const mensajePorEstadoPago = (status) => {
+// Qué decirle a la persona cuando el banco rechaza.
+//
+// Mercado Pago devuelve en `status_detail` el motivo EXACTO, y cada uno pide
+// una acción distinta. Antes se respondía siempre "Intenta con otra tarjeta",
+// que en la mayoría de los casos es el consejo equivocado: con
+// `call_for_authorize` la tarjeta está perfecta y solo hay que autorizar el
+// cargo con el banco —cambiar de tarjeta no resuelve nada y probablemente
+// vuelva a pasar—; con un CVV mal escrito, cambiar de tarjeta tampoco.
+// Un mensaje que manda a buscar el problema donde no está cuesta la venta.
+const MOTIVOS_RECHAZO = {
+  cc_rejected_call_for_authorize:
+    'Tu banco necesita que autorices este cargo. Confírmalo en tu app bancaria o llama al número del reverso de tu tarjeta, y vuelve a intentar aquí.',
+  cc_rejected_insufficient_amount:
+    'Tu tarjeta no tiene fondos suficientes para este pedido.',
+  cc_rejected_bad_filled_security_code:
+    'El código de seguridad (CVV) no coincide. Revísalo y vuelve a intentar.',
+  cc_rejected_bad_filled_date:
+    'La fecha de vencimiento no coincide. Revísala y vuelve a intentar.',
+  cc_rejected_bad_filled_card_number:
+    'El número de tarjeta no es correcto. Revísalo y vuelve a intentar.',
+  cc_rejected_bad_filled_other:
+    'Alguno de los datos de la tarjeta no coincide. Revísalos y vuelve a intentar.',
+  cc_rejected_card_disabled:
+    'Tu tarjeta está inactiva. Llama a tu banco para activarla, o usa otra.',
+  cc_rejected_card_error:
+    'Tu banco no pudo procesar el cargo en este momento. Intenta de nuevo en unos minutos.',
+  cc_rejected_duplicated_payment:
+    'Ya hiciste un pago igual hace un momento. Si fue un error, espera unos minutos antes de reintentar.',
+  cc_rejected_high_risk:
+    'Tu banco rechazó el cargo por seguridad. Intenta con otra tarjeta o paga en efectivo al recibir.',
+  cc_rejected_max_attempts:
+    'Llegaste al límite de intentos permitidos. Espera un momento o usa otra tarjeta.',
+  cc_rejected_invalid_installments:
+    'Tu tarjeta no admite ese número de pagos. Intenta con uno solo.',
+  cc_rejected_blacklist:
+    'Tu banco rechazó el cargo. Comunícate con ellos o usa otra tarjeta.',
+};
+
+const mensajePorEstadoPago = (status, detalle) => {
   if (status === 'approved') return '¡Pago aprobado! Tu pedido está confirmado.';
   if (status === 'in_process' || status === 'pending') return 'Tu pago está siendo procesado. Te avisaremos cuando se confirme.';
-  return 'El pago fue rechazado. Intenta con otra tarjeta.';
+  return MOTIVOS_RECHAZO[detalle]
+      || 'Tu banco rechazó el pago. Intenta con otra tarjeta o paga en efectivo al recibir.';
 };
 
 // ─── POST /api/pagos/preferencia ─────────────────────────
@@ -224,7 +263,7 @@ const pagarConTarjeta = async (req, res) => {
 
     res.json({
       ok: true,
-      mensaje: mensajePorEstadoPago(result.statusMP),
+      mensaje: mensajePorEstadoPago(result.statusMP, result.statusDetail),
       data: { pedido: result.pedido, status: result.statusMP, status_detail: result.statusDetail },
     });
   } catch (error) {
