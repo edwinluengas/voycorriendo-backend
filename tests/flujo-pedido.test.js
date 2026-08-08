@@ -318,11 +318,28 @@ describe('Pedido con tarjeta no visible al negocio hasta que se pague', () => {
     expect(idsVisibles).toContain(pedidoId);
   });
 
-  test('la API rechaza un pedido con tarjeta mientras el método está apagado', async () => {
+  test('el interruptor de métodos de pago manda: la API respeta lo que diga', async () => {
+    // El test NO asume si la tarjeta está encendida o apagada — eso es una
+    // decisión de negocio que cambia con una variable de entorno, sin
+    // desplegar. Lo que se verifica es que la API y `/config-publica`
+    // digan LO MISMO: si se contradijeran, el cliente vería un método en el
+    // selector que el servidor le va a rechazar al confirmar (o al revés).
     const { token } = await login('cliente');
+    const cfg = await cliente.get('/config-publica');
+    const tarjetaActiva = (cfg.data.data.metodos_pago_activos || []).includes('tarjeta');
+
     const res = await crearPedido(token, { metodo_pago: 'tarjeta' });
-    expect(res.status).toBe(400);
-    expect(res.data.codigo).toBe('METODO_PAGO_DESACTIVADO');
+
+    if (tarjetaActiva) {
+      expect(res.status).toBe(201);
+      // Con tarjeta el pedido NACE sin pagar: el negocio no debe cocinar
+      // hasta que el cobro se capture.
+      expect(res.data.data.pedido.pago_estado).toBe('pendiente');
+      pedidosACancelar.push(res.data.data.pedido.id);
+    } else {
+      expect(res.status).toBe(400);
+      expect(res.data.codigo).toBe('METODO_PAGO_DESACTIVADO');
+    }
   });
 });
 

@@ -37,15 +37,30 @@ afterAll(async () => {
   await db.end();
 });
 
+// La cuenta desechable se siembra DIRECTO en la base, no por /auth/registro.
+// Ese endpoint tiene un límite de 6 registros por ventana, y estos tests
+// necesitan varias cuentas: contra producción —donde no se puede reiniciar el
+// servidor para limpiar el contador— la suite fallaba con 429 y parecía que
+// el borrado estaba roto cuando el problema era el límite. Lo que estos tests
+// verifican es la ELIMINACIÓN, no el registro (que tiene los suyos propios).
 const crearDesechable = async () => {
+  const bcrypt = require('bcryptjs');
   const tel = String(Date.now() + Math.floor(Math.random() * 999)).slice(-10);
   desechables.push(tel);
-  const r = await cliente.post('/auth/registro', {
-    nombre: 'Prueba', apellido: 'Borrado', telefono: tel,
-    email: `borrado_${tel}@ejemplo.mx`, password: PASS, acepto_terminos: true,
-  });
-  expect(r.status).toBe(201);
-  return { tel, token: r.data.data.token, id: r.data.data.usuario.id };
+  const { rows } = await db.query(
+    `INSERT INTO usuarios (nombre, apellido, telefono, lada, pais, email, password,
+                           rol, modo_activo, estado, acepto_terminos, terminos_aceptados_en)
+     VALUES ('Prueba', 'Borrado', $1, '52', 'MX', $2, $3,
+             'cliente', 'cliente', 'activo', true, NOW())
+     RETURNING id`,
+    [tel, `borrado_${tel}@ejemplo.mx`, await bcrypt.hash(PASS, 12)],
+  );
+  const id = rows[0].id;
+  // El login SÍ va por la vía normal: la sesión tiene que ser real para que
+  // el resto de la prueba valga algo.
+  const r = await cliente.post('/auth/login', { telefono: tel, password: PASS });
+  expect(r.status).toBe(200);
+  return { tel, token: r.data.data.token, id };
 };
 
 describe('Eliminación de cuenta — antes de confirmar', () => {
@@ -143,6 +158,15 @@ describe('Eliminación de cuenta — qué queda después', () => {
       nombre: 'Otra', apellido: 'Persona', telefono: tel,
       email: `otra_${tel}@ejemplo.mx`, password: PASS, acepto_terminos: true,
     });
+    // Este SÍ pasa por el registro real (es lo que se está probando). Si el
+    // límite de 6/ventana lo frena, se dice y no se finge un fallo del
+    // borrado: lo que importa es que NO devuelva 409 "teléfono ya en uso".
+    if (otra.status === 429) {
+      console.warn('  (límite de registro alcanzado; se verifica solo que el teléfono no esté ocupado)');
+      const { rows } = await db.query(`SELECT COUNT(*)::int AS c FROM usuarios WHERE telefono = $1`, [tel]);
+      expect(rows[0].c).toBe(0);
+      return;
+    }
     expect(otra.status).toBe(201);
   });
 });
