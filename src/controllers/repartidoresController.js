@@ -170,10 +170,13 @@ const subirFoto = async (req, res) => {
     const urlVista = (await obtenerUrlFirmada(BUCKET_PRIVADO_REPARTIDORES, url)) || url;
     res.json({ ok: true, mensaje: 'Foto subida.', data: { url: urlVista, tipo } });
   } catch (error) {
+    if (error.esDatoInvalido) {
+      return res.status(400).json({ ok: false, mensaje: error.message });
+    }
     console.error('Error en subirFoto:', error);
     res.status(500).json({
       ok: false,
-      mensaje: error.message || 'No se pudo subir la foto. Intenta de nuevo.',
+      mensaje: 'No se pudo subir la foto. Intenta de nuevo.',
     });
   }
 };
@@ -520,6 +523,25 @@ const pedidosDisponibles = async (req, res) => {
       where: { estado: 'listo', repartidor_id: null, ciudad: repartidor.ciudad, tipo_envio: { [Op.ne]: 'pickup' } },
       order: [['creado_en', 'ASC']],
       limit: 10,
+      // Lista BLANCA. Antes se devolvía la fila COMPLETA del pedido a
+      // CUALQUIER repartidor conectado, de pedidos que ni siquiera había
+      // aceptado. Con ella salían:
+      //   · `codigo_entrega` — GRAVE: el código existe para probar que la
+      //     entrega ocurrió. Quien lo conoce de antemano puede marcar
+      //     "entregado" sin entregar nada y cobrar el envío igual.
+      //   · `ine_foto_url` — la identificación oficial del cliente en los
+      //     pedidos con restricción de edad.
+      //   · `notas_entrega` y `paga_con` — instrucciones privadas y con
+      //     cuánto va a pagar (a quién le conviene saberlo, no es al
+      //     repartidor que todavía no toma el pedido).
+      //   · `comision_negocio` / `ganancia_app` — márgenes internos.
+      // Aquí solo va lo que hace falta para DECIDIR si tomarlo.
+      attributes: [
+        'id', 'numero', 'estado', 'tipo_envio', 'ciudad',
+        'total', 'subtotal', 'costo_envio', 'fee_cliente', 'pago_repartidor',
+        'metodo_pago', 'distancia_km', 'items', 'creado_en',
+        'direccion_entrega', 'latitud_entrega', 'longitud_entrega',
+      ],
       include: [{
         model: Negocio,
         as: 'negocio',

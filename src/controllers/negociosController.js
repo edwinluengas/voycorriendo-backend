@@ -324,10 +324,15 @@ const subirDocumento = async (req, res) => {
     const urlVista = esPrivado ? (await obtenerUrlFirmada(bucket, url)) || url : url;
     res.json({ ok: true, mensaje: 'Documento subido.', data: { url: urlVista, tipo } });
   } catch (error) {
+    // Archivo rechazado por su contenido/tipo: es el dato del cliente, no
+    // una avería. 400, y sin ensuciar el registro de errores reales.
+    if (error.esDatoInvalido) {
+      return res.status(400).json({ ok: false, mensaje: error.message });
+    }
     console.error('Error en subirDocumento:', error);
     res.status(500).json({
       ok: false,
-      mensaje: error.message || 'No se pudo subir el documento.',
+      mensaje: 'No se pudo subir el documento.',
     });
   }
 };
@@ -482,8 +487,11 @@ const subirFotoProducto = async (req, res) => {
     await producto.save();
     res.json({ ok: true, data: { url } });
   } catch (error) {
+    if (error.esDatoInvalido) {
+      return res.status(400).json({ ok: false, mensaje: error.message });
+    }
     console.error('Error en subirFotoProducto:', error);
-    res.status(500).json({ ok: false, mensaje: error.message || 'No se pudo subir la foto.' });
+    res.status(500).json({ ok: false, mensaje: 'No se pudo subir la foto.' });
   }
 };
 

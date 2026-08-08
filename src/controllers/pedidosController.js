@@ -54,6 +54,28 @@ const crearPedido = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Los pedidos Express viajan solos y no pueden combinarse en rutas.' });
     }
 
+    // ─── Forma del cuerpo, ANTES de tocar la base ────────────────────
+    // Un `items` que no sea lista o un `negocio_id` que no sea UUID hacían
+    // reventar la consulta y el cliente recibía un 500 —"error del
+    // servidor"— por un dato mal formado que él mandó. Un 500 miente sobre
+    // de quién es la culpa, no le dice qué corregir, y ensucia los registros
+    // de errores reales.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID.test(String(negocio_id || ''))) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta indicar a qué negocio es el pedido.' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ ok: false, mensaje: 'Tu pedido no tiene productos.' });
+    }
+    if (items.length > 100) {
+      return res.status(400).json({ ok: false, mensaje: 'Demasiados productos distintos en un solo pedido.' });
+    }
+    for (const it of items) {
+      if (!it || typeof it !== 'object' || !UUID.test(String(it.producto_id || ''))) {
+        return res.status(400).json({ ok: false, mensaje: 'Hay un producto no válido en tu pedido.' });
+      }
+    }
+
     // 1. Verificar negocio
     const negocio = await Negocio.findByPk(negocio_id);
     if (!negocio || !negocio.activo) {
@@ -1345,10 +1367,13 @@ const subirFotoINE = async (req, res) => {
 
     res.json({ ok: true, mensaje: 'Foto de INE subida.', data: { url } });
   } catch (error) {
+    if (error.esDatoInvalido) {
+      return res.status(400).json({ ok: false, mensaje: error.message });
+    }
     console.error('Error en subirFotoINE:', error);
     res.status(500).json({
       ok: false,
-      mensaje: error.message || 'No se pudo subir la foto. Intenta de nuevo.',
+      mensaje: 'No se pudo subir la foto. Intenta de nuevo.',
     });
   }
 };

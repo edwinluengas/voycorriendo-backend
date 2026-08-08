@@ -46,19 +46,29 @@ const FIRMAS = {
 };
 FIRMAS['image/jpg'] = FIRMAS['image/jpeg'];
 
+// Un archivo rechazado es culpa del DATO que mandó el cliente, no una
+// avería del servidor. Se marca el error para que el controlador responda
+// 400 y no 500: un 500 miente sobre de quién es la culpa y mete ruido en
+// los registros de errores de verdad.
+const errorDeDato = (mensaje) => {
+  const e = new Error(mensaje);
+  e.esDatoInvalido = true;
+  return e;
+};
+
 const validarImagen = (mime, buffer) => {
   const mimeNorm = (mime || '').toLowerCase();
   if (!MIME_PERMITIDOS.includes(mimeNorm)) {
-    throw new Error(`Tipo de archivo no permitido: ${mime || 'desconocido'}. Solo se aceptan imágenes JPEG, PNG o WEBP.`);
+    throw errorDeDato(`Tipo de archivo no permitido: ${mime || 'desconocido'}. Solo se aceptan imágenes JPEG, PNG o WEBP.`);
   }
   if (buffer.length === 0) {
-    throw new Error('El archivo está vacío.');
+    throw errorDeDato('El archivo está vacío.');
   }
   if (buffer.length > MAX_BYTES) {
-    throw new Error(`La imagen es demasiado grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Máximo ${MAX_BYTES / 1024 / 1024} MB.`);
+    throw errorDeDato(`La imagen es demasiado grande (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Máximo ${MAX_BYTES / 1024 / 1024} MB.`);
   }
   if (!FIRMAS[mimeNorm](buffer)) {
-    throw new Error('El archivo no es una imagen válida (el contenido no coincide con su tipo declarado).');
+    throw errorDeDato('El archivo no es una imagen válida (el contenido no coincide con su tipo declarado).');
   }
 };
 

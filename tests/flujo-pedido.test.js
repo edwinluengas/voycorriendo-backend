@@ -443,6 +443,117 @@ describe('Un pedido a la vez mientras el restaurante no contesta', () => {
   });
 });
 
+describe('El repartidor NO ve el codigo de entrega antes de tiempo', () => {
+  // Vulnerabilidad REAL encontrada el 2026-08-07: `/repartidores/pedidos-
+  // disponibles` devolvía la fila COMPLETA del pedido, y con ella el
+  // `codigo_entrega`, a CUALQUIER repartidor conectado — de pedidos que ni
+  // siquiera había aceptado. El código existe para probar que la entrega
+  // ocurrió: quien lo conoce de antemano puede marcar "entregado" sin
+  // entregar nada y cobrar el envío igual. Salían también la INE del
+  // cliente, sus notas privadas y los márgenes internos.
+  const creados = [];
+
+  afterAll(async () => {
+    if (creados.length) await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
+  });
+
+  test('la lista de pedidos disponibles no filtra datos sensibles', async () => {
+    const { token: tCli } = await login('cliente');
+    const { token: tNeg } = await login('negocio');
+    const { token: tRep } = await login('repartidor');
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+
+    const nuevo = await crearPedido(tCli, {
+      items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }],
+      notas_entrega: 'Casa azul, tocar fuerte',
+      paga_con: 500,
+    });
+    expect(nuevo.status).toBe(201);
+    const pedido = nuevo.data.data.pedido;
+    creados.push(pedido.id);
+    const codigo = pedido.codigo_entrega;
+    expect(codigo).toMatch(/^\d{4}$/);
+
+    for (const estado of ['confirmado', 'preparando', 'listo']) {
+      await cliente.patch(`/pedidos/${pedido.id}/estado`, { estado }, conAuth(tNeg));
+    }
+
+    const r = await cliente.get('/repartidores/pedidos-disponibles', conAuth(tRep));
+    expect(r.status).toBe(200);
+    const visto = (r.data.data.pedidos || []).find((p) => p.id === pedido.id);
+    expect(visto).toBeDefined();
+
+    // Ni el campo, ni el valor por ninguna otra vía.
+    expect(JSON.stringify(visto)).not.toContain(codigo);
+    for (const prohibido of [
+      'codigo_entrega', 'ine_foto_url', 'notas_entrega', 'paga_con',
+      'cliente_id', 'comision_negocio', 'ganancia_app', 'pago_estado', 'pago_referencia',
+    ]) {
+      expect(visto).not.toHaveProperty(prohibido);
+    }
+
+    // Y lo que la app necesita para decidir sigue llegando.
+    for (const necesario of ['numero', 'total', 'distancia_km', 'direccion_entrega', 'fee_cliente']) {
+      expect(visto).toHaveProperty(necesario);
+    }
+    expect(visto.negocio?.nombre).toBeTruthy();
+  });
+
+  test('el codigo sigue siendo obligatorio para entregar', async () => {
+    const { token: tCli } = await login('cliente');
+    const { token: tNeg } = await login('negocio');
+    const { token: tRep } = await login('repartidor');
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+
+    const nuevo = await crearPedido(tCli, { items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 9 }] });
+    expect(nuevo.status).toBe(201);
+    const pedido = nuevo.data.data.pedido;
+    creados.push(pedido.id);
+    for (const estado of ['confirmado', 'preparando', 'listo']) {
+      await cliente.patch(`/pedidos/${pedido.id}/estado`, { estado }, conAuth(tNeg));
+    }
+    await cliente.post('/repartidores/aceptar-pedido', { pedido_id: pedido.id }, conAuth(tRep));
+
+    const inventado = await cliente.patch(`/pedidos/${pedido.id}/estado`,
+      { estado: 'entregado', codigo_entrega: '1111' }, conAuth(tRep));
+    expect(inventado.status).not.toBe(200);
+
+    const correcto = await cliente.patch(`/pedidos/${pedido.id}/estado`,
+      { estado: 'entregado', codigo_entrega: pedido.codigo_entrega }, conAuth(tRep));
+    expect(correcto.status).toBe(200);
+  });
+});
+
+describe('Entradas mal formadas se rechazan con 400, no revientan con 500', () => {
+  // Un 500 miente sobre de quién es la culpa (el dato lo mandó el cliente),
+  // no dice qué corregir, y ensucia el registro de errores reales.
+  test('items que no es lista, ids que no son UUID', async () => {
+    const { token } = await login('cliente');
+    const casos = [
+      { negocio_id: NEGOCIO_DON_BETO.id, items: 'hola' },
+      { negocio_id: NEGOCIO_DON_BETO.id, items: { a: 1 } },
+      { negocio_id: NEGOCIO_DON_BETO.id, items: null },
+      { negocio_id: 'no-es-uuid', items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }] },
+      { negocio_id: NEGOCIO_DON_BETO.id, items: [{ producto_id: 'xx', cantidad: 8 }] },
+      { negocio_id: NEGOCIO_DON_BETO.id, items: ['hola'] },
+    ];
+    for (const body of casos) {
+      const r = await cliente.post('/pedidos',
+        { metodo_pago: 'efectivo', tipo_envio: 'pickup', ...body }, conAuth(token));
+      expect(r.status).toBe(400);
+    }
+  });
+
+  test('un archivo que no es imagen se rechaza con 400', async () => {
+    const { token } = await login('negocio');
+    const ejecutable = Buffer.from('MZ    ').toString('base64');
+    const r = await cliente.post('/negocios/documento',
+      { tipo: 'logo', base64: ejecutable, mime: 'image/jpeg' }, conAuth(token));
+    expect(r.status).toBe(400);
+    expect(r.data.mensaje).toMatch(/no es una imagen/i);
+  });
+});
+
 describe('Permisos — un repartidor no puede tocar pedidos ajenos', () => {
   let pedidoId;
 
@@ -509,7 +620,12 @@ describe('Validación de imágenes subidas (mime/tamaño)', () => {
       { tipo: 'licencia', base64: 'aGVsbG8=', mime: 'application/x-msdownload' },
       conAuth(token)
     );
-    expect(res.status).toBe(500); // el controller no traduce el error a 400, pero SÍ debe rechazar
+    // Antes esto respondía 500 y el test lo daba por bueno con un comentario
+    // ("el controller no traduce el error a 400"). Un archivo rechazado es
+    // culpa del DATO que mandó el cliente, no una avería del servidor: 500
+    // miente sobre de quién es la culpa y ensucia el registro de errores
+    // reales. Corregido el 2026-08-07.
+    expect(res.status).toBe(400);
     expect(res.data.ok).toBe(false);
     expect(res.data.mensaje).toMatch(/no permitido/i);
   });
