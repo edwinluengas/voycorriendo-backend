@@ -103,6 +103,34 @@ const crearPedido = async (req, res) => {
     // pedidos sin respuesta y dejar a la cocina con varios encima.
     // En cuanto el negocio contesta —confirmado, o cancelado/rechazado— el
     // cliente vuelve a poder pedir, aunque el pedido aceptado siga en curso.
+    // ANTES del candado: un pedido con pago digital que NUNCA se cobró no
+    // está "esperando al restaurante" — el restaurante ni siquiera lo ha
+    // visto (no se le notifica ni le aparece en su lista hasta que el cobro
+    // se captura). Es un intento de pago abandonado: la tarjeta se rechazó,
+    // el cliente cerró la app, o se le fue el internet a media pantalla.
+    //
+    // Contarlo como pendiente dejaba a la persona ENCERRADA: no podía hacer
+    // ningún otro pedido, y el mensaje le decía que esperara una respuesta
+    // que jamás iba a llegar. Se cancelan aquí, que es cuando se sabe que
+    // los abandonó — está haciendo otro pedido, justamente.
+    const abandonados = await Pedido.findAll({
+      where: {
+        cliente_id: req.usuario.id,
+        estado: 'pendiente',
+        metodo_pago: { [Op.in]: ['tarjeta', 'mercado_pago', 'transferencia'] },
+        pago_estado: { [Op.ne]: 'capturado' },
+      },
+      attributes: ['id', 'numero'],
+    });
+    for (const viejo of abandonados) {
+      await viejo.update({
+        estado: 'cancelado',
+        cancelado_en: new Date(),
+        nota_cancelacion: 'Intento de pago no completado; el cliente inició otro pedido.',
+      });
+      console.log(`[pedidos] ${viejo.numero} cancelado: pago digital nunca capturado y el cliente hizo otro pedido.`);
+    }
+
     const esperandoRespuesta = await Pedido.findOne({
       where: { cliente_id: req.usuario.id, estado: 'pendiente' },
       order: [['creado_en', 'DESC']],

@@ -563,7 +563,7 @@ describe('Entradas mal formadas se rechazan con 400, no revientan con 500', () =
 
   test('un archivo que no es imagen se rechaza con 400', async () => {
     const { token } = await login('negocio');
-    const ejecutable = Buffer.from('MZ    ').toString('base64');
+    const ejecutable = Buffer.from([0x4D,0x5A,0x90,0,3,0,0,0]).toString('base64');   // cabecera MZ de un .exe de Windows
     const r = await cliente.post('/negocios/documento',
       { tipo: 'logo', base64: ejecutable, mime: 'image/jpeg' }, conAuth(token));
     expect(r.status).toBe(400);
@@ -767,6 +767,70 @@ describe('Flujo completo feliz: efectivo, pendiente → entregado', () => {
       expect(parseFloat(fondo.rows[0].monto_disponible)).toBe(0);
     }
   });
+});
+
+describe('Pedido con tarjeta sin cobrar — no bloquea ni llega al restaurante', () => {
+  // Va en su PROPIO bloque, al final: estos tests limpian la tabla de pedidos
+  // del cliente de prueba, y puestos en medio le borraban el pedido a las
+  // pruebas que lo tenían guardado por posición.
+  test('un pedido con tarjeta SIN COBRAR no bloquea: el restaurante ni lo vio', async () => {
+    // Bug real reportado el 2026-08-08, al encender el pago con tarjeta.
+    // Un pedido con pago digital nace en 'pendiente' y el restaurante NO lo
+    // ve —no se le notifica ni le aparece— hasta que el cobro se captura.
+    // El candado lo contaba igual, así que un intento de pago abandonado
+    // (tarjeta rechazada, app cerrada, sin internet) dejaba a la persona
+    // ENCERRADA: no podía hacer ningún otro pedido, y el mensaje le pedía
+    // esperar una respuesta que nunca iba a llegar.
+    const { token: tCliente } = await login('cliente');
+    const { token: tNegocio } = await login('negocio');
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+
+    const conTarjeta = await crearPedido(tCliente, {
+      metodo_pago: 'tarjeta', tipo_envio: 'pickup',
+      items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }],
+    });
+    // Si la tarjeta estuviera apagada este test no aplica.
+    if (conTarjeta.status !== 201) return;
+    const fantasma = conTarjeta.data.data.pedido;
+    expect(fantasma.pago_estado).toBe('pendiente');
+
+    // El restaurante no lo ve ni puede aceptarlo.
+    const suLista = await cliente.get('/pedidos/negocio/mis-pedidos', conAuth(tNegocio));
+    expect((suLista.data.data.pedidos || []).map((p) => p.id)).not.toContain(fantasma.id);
+
+    // Y el cliente SÍ puede hacer otro.
+    const nuevo = await crearPedido(tCliente, {
+      tipo_envio: 'pickup', items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 9 }],
+    });
+    expect(nuevo.status).toBe(201);
+
+    // El abandonado queda cancelado, no colgado para siempre.
+    const { rows } = await db.query(`SELECT estado FROM pedidos WHERE id = $1`, [fantasma.id]);
+    expect(rows[0].estado).toBe('cancelado');
+
+    await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [[fantasma.id, nuevo.data.data.pedido.id]]);
+  });
+
+  test('pero uno con tarjeta YA COBRADA sí bloquea', async () => {
+    const { token } = await login('cliente');
+    await db.query(`DELETE FROM pedidos WHERE cliente_id = (SELECT id FROM usuarios WHERE telefono = '0000000002')`);
+    const pagado = await crearPedido(token, {
+      metodo_pago: 'tarjeta', tipo_envio: 'pickup',
+      items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 8 }],
+    });
+    if (pagado.status !== 201) return;
+    const id = pagado.data.data.pedido.id;
+    await db.query(`UPDATE pedidos SET pago_estado = 'capturado' WHERE id = $1`, [id]);
+
+    const otro = await crearPedido(token, {
+      tipo_envio: 'pickup', items: [{ producto_id: PRODUCTO_PASTOR, cantidad: 9 }],
+    });
+    expect(otro.status).toBe(409);
+    expect(otro.data.codigo).toBe('PEDIDO_ESPERANDO_RESPUESTA');
+
+    await db.query(`DELETE FROM pedidos WHERE id = $1`, [id]);
+  });
+
 });
 
 describe('Rutas de ruta (batch) del repartidor', () => {
