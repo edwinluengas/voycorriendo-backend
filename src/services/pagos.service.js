@@ -68,7 +68,14 @@ const verificarFirmaMP = (headers, dataId) => {
   const { ts, v1 } = parts;
   if (!ts || !v1) return false;
 
-  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  // La documentación de Mercado Pago exige el `data.id` EN MINÚSCULAS dentro
+  // del manifest cuando es alfanumérico. Si llega con mayúsculas y no se
+  // normaliza, la firma legítima no coincide, el webhook se rechaza, y el
+  // pago del cliente NUNCA se marca como capturado: paga y su pedido queda
+  // colgado esperando un cobro que sí ocurrió. Con pagos por tarjeta ya
+  // activos, esto deja dinero cobrado y pedidos sin avanzar.
+  const idNormalizado = String(dataId).toLowerCase();
+  const manifest = `id:${idNormalizado};request-id:${xRequestId};ts:${ts};`;
   const computed  = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex');
   try {
     return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(v1));
