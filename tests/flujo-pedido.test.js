@@ -46,6 +46,20 @@ beforeAll(async () => {
   await db.query(`
     UPDATE repartidores SET conectado = true, ultimo_latido = NOW()
      WHERE usuario_id = (SELECT id FROM usuarios WHERE telefono = '0000000004')`);
+
+  // Deja el negocio de prueba SANO antes de empezar. Cada test revierte lo
+  // suyo, pero pruebas manuales por fuera (cobros de tarjeta, cancelaciones)
+  // pueden dejar deuda residual; acumulada, el negocio cruza el límite de
+  // pedidos en efectivo y `bloqueado_por_deuda`/`estado_cuenta='bloqueado'`
+  // hacen que TODO pedido a ese negocio se rechace — y fallan tests que no
+  // tienen nada roto, escondiendo el resultado real. Partir de cero es lo
+  // correcto: es una cuenta de PRUEBA, su deuda no es real.
+  await db.query(`
+    UPDATE negocios
+       SET deuda_plataforma = 0, pedidos_efectivo_pendientes = 0,
+           bloqueado_por_deuda = false,
+           estado_cuenta = 'normal', estado_motivo = NULL
+     WHERE id = '33333333-0000-0000-0000-000000000001'`);
 });
 
 afterAll(async () => {
