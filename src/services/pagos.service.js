@@ -289,13 +289,20 @@ const obtenerOCrearCustomerMP = async (usuario) => {
 // ─── Guarda una tarjeta ya tokenizada del lado del cliente ─────
 // El "token" viene de POST /v1/card_tokens hecho en la app con la public
 // key — el número de tarjeta y el CVV nunca tocan este backend.
-const guardarTarjetaMP = async ({ usuario, token }) => {
+const guardarTarjetaMP = async ({ usuario, token, deviceId }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
   const customerId = await obtenerOCrearCustomerMP(usuario);
   const { data } = await axios.post(
     `${MP_BASE_URL}/v1/customers/${customerId}/cards`,
     { token },
-    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+    { headers: {
+        Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
+        // Huella de dispositivo (ver /mp-device-id.html en server.js) — sin
+        // esto MP rechaza con PA_UNAUTHORIZED_RESULT_FROM_POLICIES. Si la
+        // app no logró capturarla (webview lento, sin red), se omite en vez
+        // de mandar un header vacío/roto.
+        ...(deviceId ? { 'X-meli-session-id': deviceId } : {}),
+      } }
   );
   return {
     mp_card_id:        data.id,
@@ -328,12 +335,15 @@ const eliminarTarjetaMP = async ({ usuario, mp_card_id }) => {
 // llamada puntual y nunca se guarda ni se loguea — se reenvía a MP y se
 // descarta, mismo estándar que cualquier procesador que soporte "pagar con
 // tarjeta guardada, solo pide el CVV".
-const generarTokenDesdeTarjetaGuardada = async ({ mp_card_id, security_code }) => {
+const generarTokenDesdeTarjetaGuardada = async ({ mp_card_id, security_code, deviceId }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
   const { data } = await axios.post(
     `${MP_BASE_URL}/v1/card_tokens`,
     { card_id: mp_card_id, security_code },
-    { headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` } }
+    { headers: {
+        Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
+        ...(deviceId ? { 'X-meli-session-id': deviceId } : {}),
+      } }
   );
   return data.id;
 };
@@ -342,7 +352,7 @@ const generarTokenDesdeTarjetaGuardada = async ({ mp_card_id, security_code }) =
 // token: generado en la app con la public key (tarjeta NUEVA, capturada en
 // el formulario) o generado aquí mismo en el backend vía
 // generarTokenDesdeTarjetaGuardada (tarjeta guardada — ver nota arriba).
-const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey, mpCustomerId }) => {
+const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey, mpCustomerId, deviceId }) => {
   if (!MP_ACCESS_TOKEN) throw new Error('MERCADOPAGO_ACCESS_TOKEN no configurado en .env');
 
   const cuotas = Number.isInteger(Number(installments)) && installments >= 1 && installments <= 24
@@ -388,6 +398,7 @@ const crearPagoConTarjeta = async ({ pedido, cliente, token, installments, payme
     { headers: {
         Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
         'X-Idempotency-Key': claveIdempotencia,
+        ...(deviceId ? { 'X-meli-session-id': deviceId } : {}),
       } }
   );
 

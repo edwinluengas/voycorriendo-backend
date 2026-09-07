@@ -27,10 +27,10 @@ const listar = async (req, res) => {
 // usando la public key. El número de tarjeta y el CVV nunca llegan aquí.
 const agregar = async (req, res) => {
   try {
-    const { token } = req.body;
+    const { token, device_id } = req.body;
     if (!token) return res.status(400).json({ ok: false, mensaje: 'Falta el token de la tarjeta.' });
 
-    const info = await pagosService.guardarTarjetaMP({ usuario: req.usuario, token });
+    const info = await pagosService.guardarTarjetaMP({ usuario: req.usuario, token, deviceId: device_id });
 
     const yaTieneTarjetas = await TarjetaGuardada.count({ where: { usuario_id: req.usuario.id } });
     const tarjeta = await TarjetaGuardada.create({

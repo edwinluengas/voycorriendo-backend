@@ -164,7 +164,7 @@ const webhookMercadoPago = async (req, res) => {
 const pagarConTarjeta = async (req, res) => {
   let pedidoClaimed = null;
   try {
-    const { pedido_id, token: tokenNueva, tarjeta_id, cvv, installments, payment_method_id: pmIdNueva, issuer_id: issuerIdNueva, idempotency_key } = req.body;
+    const { pedido_id, token: tokenNueva, tarjeta_id, cvv, installments, payment_method_id: pmIdNueva, issuer_id: issuerIdNueva, idempotency_key, device_id } = req.body;
     if (!tokenNueva && !(tarjeta_id && cvv)) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan datos de la tarjeta.' });
     }
@@ -188,7 +188,7 @@ const pagarConTarjeta = async (req, res) => {
       if (!tarjeta || tarjeta.usuario_id !== req.usuario.id) {
         return res.status(404).json({ ok: false, mensaje: 'Tarjeta no encontrada.' });
       }
-      token = await pagosService.generarTokenDesdeTarjetaGuardada({ mp_card_id: tarjeta.mp_card_id, security_code: cvv });
+      token = await pagosService.generarTokenDesdeTarjetaGuardada({ mp_card_id: tarjeta.mp_card_id, security_code: cvv, deviceId: device_id });
       payment_method_id = tarjeta.payment_method_id;
       issuer_id = tarjeta.issuer_id;
       // El dueño de la tarjeta es req.usuario (ownership ya verificado
@@ -213,7 +213,7 @@ const pagarConTarjeta = async (req, res) => {
 
     const cliente = await Usuario.findByPk(pedido.cliente_id);
     const result = await pagosService.crearPagoConTarjeta({
-      pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey: idempotency_key, mpCustomerId,
+      pedido, cliente, token, installments, payment_method_id, issuer_id, idempotencyKey: idempotency_key, mpCustomerId, deviceId: device_id,
     });
 
     if (!result.ok) {

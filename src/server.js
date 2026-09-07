@@ -208,6 +208,42 @@ app.get('/api/salud', (req, res) => {
   });
 });
 
+// ─── Device ID de Mercado Pago (antifraude) ────────────────────
+// Página estática mínima que la app carga en un WebView oculto para
+// generar la huella de dispositivo que exige el motor de riesgo de MP
+// (`security.js`). Sirve desde un dominio real (no HTML inline en el
+// cliente) porque la huella se asocia al origen que la sirve. Sin esto,
+// MP rechazaba TODA operación de tarjeta (guardar/cobrar) con
+// PA_UNAUTHORIZED_RESULT_FROM_POLICIES — confirmado en producción
+// 2026-09-07, reproducido con dos tarjetas de países distintos.
+// CSP propia: helmet bloquea scripts externos por defecto; esta ruta
+// necesita cargar el script de mercadopago.com, así que se sobreescribe
+// solo aquí, sin tocar la política del resto del sitio.
+app.get('/mp-device-id.html', (req, res) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' https://www.mercadopago.com; connect-src 'self' https://www.mercadopago.com;"
+  );
+  res.type('html').send(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script src="https://www.mercadopago.com/v2/security.js" view="checkout" output="deviceId"></script>
+<script>
+  (function espera(intentos) {
+    if (window.deviceId) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(window.deviceId);
+    } else if (intentos < 40) {
+      setTimeout(function () { espera(intentos + 1); }, 150);
+    } else if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage('');
+    }
+  })(0);
+</script>
+</body>
+</html>`);
+});
+
 // Configuración pública que la app consulta al arrancar. Permite prender o
 // apagar cosas (p. ej. el pago con tarjeta) cambiando una variable de entorno
 // en Railway, SIN tener que compilar y distribuir un APK nuevo. No expone
