@@ -1,12 +1,61 @@
--- ============================
+-- ============================================================================
 -- SEEDS DE PRUEBA VOY CORRIENDO
--- ============================
+--
+-- ⚠️  SOLO PARA BASES DE DESARROLLO. NUNCA correr contra producción.
+--     Crea una cuenta con rol 'admin'; en producción sería una puerta trasera.
+--
+-- Las contraseñas NO van en este archivo. Antes vivían aquí en texto plano,
+-- lo que significaba que cualquiera con acceso al repo tenía la credencial
+-- del panel de administración.
+--
+-- Además tenían un segundo problema: la columna `password` guarda un HASH
+-- bcrypt. El hasheo ocurre en los hooks beforeCreate/beforeUpdate del modelo
+-- Sequelize (src/models/Usuario.js), y el SQL crudo se los salta. Un valor en
+-- texto plano aquí jamás habría podido iniciar sesión, porque comparar con
+-- bcrypt un texto que no es hash siempre devuelve false.
+--
+-- Por eso ahora hay que pasar HASHES, no contraseñas. Genera uno así:
+--
+--   node -e "console.log(require('bcryptjs').hashSync(process.argv[1], 12))" 'TuPassword'
+--
+-- Y corre el archivo pasando cada hash como variable de psql:
+--
+--   psql "$DATABASE_URL" \
+--     -v hash_admin="'\$2a\$12\$...'" \
+--     -v hash_cliente="'\$2a\$12\$...'" \
+--     -v hash_repartidor="'\$2a\$12\$...'" \
+--     -v hash_negocio="'\$2a\$12\$...'" \
+--     -f src/config/seeds.sql
+-- ============================================================================
+
+\set ON_ERROR_STOP on
+
+\if :{?hash_admin}
+\else
+  \warn 'ERROR: falta -v hash_admin. Lee el encabezado de este archivo.'
+  \quit
+\endif
+\if :{?hash_cliente}
+\else
+  \warn 'ERROR: falta -v hash_cliente. Lee el encabezado de este archivo.'
+  \quit
+\endif
+\if :{?hash_repartidor}
+\else
+  \warn 'ERROR: falta -v hash_repartidor. Lee el encabezado de este archivo.'
+  \quit
+\endif
+\if :{?hash_negocio}
+\else
+  \warn 'ERROR: falta -v hash_negocio. Lee el encabezado de este archivo.'
+  \quit
+\endif
 
 -- ADMIN
 INSERT INTO usuarios (id, nombre, apellido, telefono, email, password, rol, estado, telefono_verificado)
 VALUES (
     uuid_generate_v4(), 'Admin', 'Sistema', '0000000000', 'admin@voycorriendo.com',
-    'admin123', 'admin', 'activo', TRUE
+    :hash_admin, 'admin', 'activo', TRUE
 )
 ON CONFLICT (telefono) DO NOTHING;
 
@@ -14,7 +63,7 @@ ON CONFLICT (telefono) DO NOTHING;
 INSERT INTO usuarios (id, nombre, apellido, telefono, email, password, rol, estado, telefono_verificado)
 VALUES (
     uuid_generate_v4(), 'Carlos', 'Ramírez', '5512345678', 'carlos@example.com',
-    'cliente123', 'cliente', 'activo', TRUE
+    :hash_cliente, 'cliente', 'activo', TRUE
 )
 ON CONFLICT (telefono) DO NOTHING;
 
@@ -22,7 +71,7 @@ ON CONFLICT (telefono) DO NOTHING;
 INSERT INTO usuarios (id, nombre, apellido, telefono, email, password, rol, estado, telefono_verificado)
 VALUES (
     uuid_generate_v4(), 'Luis', 'Martínez', '5598765432', 'luis@example.com',
-    'repartidor123', 'repartidor', 'activo', TRUE
+    :hash_repartidor, 'repartidor', 'activo', TRUE
 )
 ON CONFLICT (telefono) DO NOTHING;
 
@@ -30,7 +79,7 @@ ON CONFLICT (telefono) DO NOTHING;
 INSERT INTO usuarios (id, nombre, apellido, telefono, email, password, rol, estado, telefono_verificado)
 VALUES (
     uuid_generate_v4(), 'Ana', 'Gómez', '5588887777', 'ana@tacosmex.com',
-    'negocio123', 'negocio', 'activo', TRUE
+    :hash_negocio, 'negocio', 'activo', TRUE
 )
 ON CONFLICT (telefono) DO NOTHING;
 
