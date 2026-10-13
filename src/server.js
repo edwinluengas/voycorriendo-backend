@@ -60,6 +60,7 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   console.log(`Cliente conectado: ${socket.id} usuario:${socket.userId}`);
+  require('./services/disponibilidad.service').registrarLatidoPorUsuarios([socket.userId]);
 
   // Sala PRIVADA por usuario. Existe para lo que no debe pasar por la sala
   // compartida del pedido: a `pedido:<id>` están unidos el cliente, el
@@ -147,6 +148,14 @@ io.on('connection', (socket) => {
     console.log(`Cliente desconectado: ${socket.id}`);
   });
 });
+
+// Latido por socket abierto (ver registrarLatidoPorUsuarios): cada 5 min,
+// los repartidores conectados con la app abierta en CUALQUIER modo siguen
+// contando como activos. Va antes que el job que desconecta a los 20 min.
+setInterval(() => {
+  const usuarios = [...io.of('/').sockets.values()].map((s) => s.userId);
+  require('./services/disponibilidad.service').registrarLatidoPorUsuarios(usuarios);
+}, 5 * 60 * 1000).unref();
 
 // Hacemos io accesible desde controladores
 app.set('io', io);

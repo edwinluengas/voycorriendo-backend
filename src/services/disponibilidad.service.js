@@ -116,6 +116,31 @@ const registrarLatido = (repartidorId) => {
   ).catch((e) => console.warn('[disponibilidad] no se pudo registrar el latido:', e.message));
 };
 
+// Latido por socket abierto: un repartidor con el switch encendido y la app
+// ABIERTA (socket vivo) cuenta como activo aunque esté en otro modo. Existe
+// para el negocio que reparte sus propios pedidos con la misma cuenta
+// (Sabor a Mi, 2026-10-12): mientras atiende la pantalla de negocio no toca
+// /api/repartidores, y el job lo desconectaba a los 20 min dejando su plaza
+// solo con pickup. Un socket vivo prueba que la app está abierta, que es lo
+// mismo que prueba el polling de la pantalla de repartidor. Solo refresca a
+// quien YA tiene el switch encendido — nunca conecta a nadie.
+const registrarLatidoPorUsuarios = async (usuarioIds) => {
+  const ids = [...new Set((usuarioIds || []).filter(Boolean))];
+  if (!ids.length) return 0;
+  try {
+    const [filas] = await sequelize.query(
+      `UPDATE repartidores SET ultimo_latido = NOW()
+        WHERE conectado = true AND usuario_id IN (:ids)
+        RETURNING id`,
+      { replacements: { ids } },
+    );
+    return filas?.length || 0;
+  } catch (e) {
+    console.warn('[disponibilidad] no se pudo registrar el latido por socket:', e.message);
+    return 0;
+  }
+};
+
 // Apaga el switch de los repartidores que llevan callados demasiado tiempo.
 // Devuelve cuántos se desconectaron. Lo corre el job cada 5 min.
 const desconectarInactivos = async () => {
@@ -137,6 +162,6 @@ const desconectarInactivos = async () => {
 
 module.exports = {
   hayRepartidoresParaEnvio, mensajeSoloPickup, MENSAJES_SOLO_PICKUP,
-  registrarLatido, desconectarInactivos,
+  registrarLatido, registrarLatidoPorUsuarios, desconectarInactivos,
   LATIDO_MAX_MIN, LATIDO_DESCONECTAR_MIN,
 };
