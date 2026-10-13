@@ -189,6 +189,17 @@ const enviarARevision = async (req, res) => {
     if (!repartidor) {
       return res.status(404).json({ ok: false, mensaje: 'Perfil no encontrado.' });
     }
+    // Ya aprobado: reenviar el wizard NO lo regresa a revisión. Pasó en vivo
+    // (2026-10-12, Sabor a Mi): la repartidora recién aprobada volvió a abrir
+    // "Quiero ser repartidor", tocó enviar y quedó otra vez "en revisión"
+    // justo antes de su primer pedido, sin que nadie en el panel lo pidiera.
+    if (repartidor.verificacion_estado === 'aprobado') {
+      return res.json({
+        ok: true,
+        mensaje: 'Tu cuenta de repartidor ya está aprobada. Cambia a modo repartidor y conéctate.',
+        data: { repartidor },
+      });
+    }
     // Validar que tenga lo minimo
     const faltantes = [];
     if (!repartidor.tipo_vehiculo) faltantes.push('tipo de vehiculo');
