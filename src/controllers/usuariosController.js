@@ -337,7 +337,12 @@ const guardarPushToken = async (req, res) => {
     if (!token || !token.startsWith('ExponentPushToken')) {
       return res.status(400).json({ ok: false, mensaje: 'Token inválido.' });
     }
-    await req.usuario.update({ token_push: token });
+    // Un token por dispositivo, hasta 3, el más reciente primero. Antes se
+    // sobrescribía: el último celular en abrir la app le quitaba los avisos
+    // al otro, y una cuenta con sesión en dos equipos solo sonaba en uno.
+    const previos = (req.usuario.token_push || '').split(',').map((t) => t.trim()).filter(Boolean);
+    const tokens = [token, ...previos.filter((t) => t !== token)].slice(0, 3);
+    await req.usuario.update({ token_push: tokens.join(',') });
     console.log(`[push] token guardado para usuario ${req.usuario.id}: ${token.slice(0, 20)}...`);
     res.json({ ok: true });
   } catch (e) {

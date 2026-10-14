@@ -14,8 +14,14 @@ const { nombreDe: nombrePlaza } = require('../config/ciudades');
  * @param {object} data             Payload para la app (navegación, etc.)
  */
 async function enviarPush(tokens, titulo, cuerpo, data = {}) {
-  const lista = (Array.isArray(tokens) ? tokens : [tokens])
-    .filter((t) => t && typeof t === 'string' && t.startsWith('ExponentPushToken'));
+  // `usuarios.token_push` guarda los tokens de TODOS los dispositivos de la
+  // cuenta separados por coma (ver guardarPushToken): una misma persona puede
+  // tener la sesión abierta en dos celulares —p. ej. la dueña de un negocio
+  // que también reparte— y los dos deben sonar.
+  const lista = [...new Set((Array.isArray(tokens) ? tokens : [tokens])
+    .flatMap((t) => (typeof t === 'string' ? t.split(',') : []))
+    .map((t) => t.trim())
+    .filter((t) => t.startsWith('ExponentPushToken')))];
 
   if (lista.length === 0) return;
 

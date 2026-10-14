@@ -759,11 +759,17 @@ const obtenerPerfil = async (req, res) => {
 };
 
 // ─── POST /api/auth/logout ───────────────────────────────
-// Invalida el JWT actual incrementando token_version.
-// El cliente debe eliminar su token local.
+// El cliente elimina su token local. Para cuentas normales NO se incrementa
+// token_version: eso tumbaba TODAS las sesiones, y una misma cuenta puede
+// estar abierta en dos celulares (p. ej. la dueña de un negocio que también
+// reparte) — salir en uno la sacaba del otro a media entrega. Para revocar
+// todo siguen el cambio de contraseña y `admin-seguridad cerrar-sesiones`.
+// Los admins conservan el cierre total: su sesión vale más que la comodidad.
 const logout = async (req, res) => {
   try {
-    await req.usuario.update({ token_version: (req.usuario.token_version ?? 0) + 1 });
+    if (req.usuario.rol === 'admin') {
+      await req.usuario.update({ token_version: (req.usuario.token_version ?? 0) + 1 });
+    }
     res.json({ ok: true, mensaje: 'Sesión cerrada.' });
   } catch (error) {
     console.error('Error en logout:', error);
