@@ -665,6 +665,8 @@ const migrarDB = async () => {
   // Bloqueo del negocio por deuda: ahora es por CANTIDAD de pedidos en
   // efectivo sin liquidar (15), no por monto acumulado ($1,000 antes).
   await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS pedidos_efectivo_pendientes INTEGER NOT NULL DEFAULT 0`);
+  // Sucursales: cada sucursal es un negocio propio que apunta a su matriz.
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS matriz_id UUID`);
 
   // Lista negra permanente: placas de repartidor y direcciones de negocio
   // que quedan vetadas para siempre tras un bloqueo por incumplimiento.

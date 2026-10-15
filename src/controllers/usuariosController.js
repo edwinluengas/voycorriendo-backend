@@ -46,8 +46,11 @@ const obtenerMisRoles = async (req, res) => {
       : { activo: false, estado: 'inactivo', mensaje: null };
 
     // Negocio: activo si existe fila en negocios
+    // Con sucursales hay varias filas: el rol lo define la matriz (la más
+    // antigua), que es la que el dueño registró y le aprobaron primero.
     const negocio = await Negocio.findOne({
       where: { usuario_id: usuarioId },
+      order: [['creado_en', 'ASC']],
       attributes: [
         'id', 'nombre', 'activo', 'verificacion_estado', 'verificacion_nota',
         'estado_cuenta', 'estado_motivo', 'abierto_ahora',
@@ -134,7 +137,7 @@ const cambiarModo = async (req, res) => {
     // para que vea el dashboard con su estado. La validacion fina ocurre en
     // cada endpoint operativo.
     if (modo === 'negocio') {
-      const negocio = await Negocio.findOne({ where: { usuario_id: usuarioId } });
+      const negocio = await Negocio.findOne({ where: { usuario_id: usuarioId }, order: [['creado_en', 'ASC']] });
       if (!negocio) {
         return res.status(403).json({
           ok: false,

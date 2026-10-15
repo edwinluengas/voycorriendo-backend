@@ -14,6 +14,9 @@ const Negocio = sequelize.define('Negocio', {
     allowNull: false,
     references: { model: 'usuarios', key: 'id' },
   },
+  // Sucursal de otra plaza: apunta a la matriz (el primer negocio del dueño).
+  // Nulo en la matriz y en todo negocio sin sucursales.
+  matriz_id: { type: DataTypes.UUID, allowNull: true },
   // ─── Datos basicos (allowNull: true porque el wizard los llena por etapas) ─
   nombre: { type: DataTypes.STRING(150), allowNull: true },
   descripcion: { type: DataTypes.TEXT, allowNull: true },

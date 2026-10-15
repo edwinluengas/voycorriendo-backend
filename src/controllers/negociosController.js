@@ -11,6 +11,7 @@ const { CIUDAD_DEFAULT, esValida: ciudadValida, plazaDe, nombreDe: nombrePlaza, 
 const tg = require('../services/telegram.service');
 const eventos = require('../services/eventos.service');
 const { validarDireccionNegocio, bloquearNegocioPermanente } = require('../services/seguridadCuentas.service');
+const { negocioDelDueno } = require('../utils/negocioDelDueno');
 
 const MIME_EXT = { 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
 const safeExt = (mime) => MIME_EXT[(mime || '').toLowerCase()] || 'jpg';
@@ -163,8 +164,7 @@ const activarModoNegocio = async (req, res) => {
 // El dueno consulta su propio negocio (con todos los campos).
 const obtenerMiNegocio = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({
-      where: { usuario_id: req.usuario.id },
+    const negocio = await negocioDelDueno(req, {
       include: [{ model: Producto, as: 'productos', required: false, order: [['nombre', 'ASC']] }],
     });
     if (!negocio) {
@@ -189,7 +189,7 @@ const obtenerMiNegocio = async (req, res) => {
 // Actualiza datos del wizard. Acepta cualquier subset.
 const actualizarMiPerfil = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) {
       return res.status(404).json({
         ok: false,
@@ -263,6 +263,14 @@ const actualizarMiPerfil = async (req, res) => {
                  + `queda a ${Math.round(plaza.km)} km y solo damos servicio hasta ${RADIO_PLAZA_KM} km.`,
         });
       }
+      // Una sucursal por plaza: dos del mismo dueño en el mismo pueblo
+      // saldrían duplicadas en el catálogo con el mismo nombre.
+      if (await sucursalEnPlaza(req.usuario.id, negocio.id, plaza.slug)) {
+        return res.status(400).json({
+          ok: false,
+          mensaje: `Ya tienes una sucursal en ${nombrePlaza(plaza.slug)}. Confirma la ubicación del local nuevo estando en él.`,
+        });
+      }
       negocio.ciudad = plaza.slug;
     }
 
@@ -299,7 +307,7 @@ const subirDocumento = async (req, res) => {
       return res.status(400).json({ ok: false, mensaje: 'Falta base64 o mime.' });
     }
 
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) {
       return res.status(404).json({ ok: false, mensaje: 'Activa primero el modo negocio.' });
     }
@@ -340,7 +348,7 @@ const subirDocumento = async (req, res) => {
 // ─── POST /api/negocios/enviar-a-revision ──────────────────
 const enviarARevision = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) {
       return res.status(404).json({ ok: false, mensaje: 'Negocio no encontrado.' });
     }
@@ -400,10 +408,19 @@ const enviarARevision = async (req, res) => {
                + `queda a ${Math.round(plaza.km)} km y solo damos servicio hasta ${RADIO_PLAZA_KM} km.`,
       });
     }
+    if (await sucursalEnPlaza(req.usuario.id, negocio.id, plaza.slug)) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `Ya tienes una sucursal en ${nombrePlaza(plaza.slug)}.`,
+      });
+    }
     negocio.ciudad = plaza.slug;
 
     negocio.verificacion_estado = 'en_revision';
-    eventos.perfilEnRevision('negocio', req.usuario, negocio.nombre);
+    eventos.perfilEnRevision(
+      'negocio', req.usuario,
+      negocio.matriz_id ? `${negocio.nombre} (sucursal ${nombrePlaza(plaza.slug)})` : negocio.nombre,
+    );
     negocio.enviado_revision_en = new Date();
     await negocio.save();
 
@@ -421,7 +438,7 @@ const enviarARevision = async (req, res) => {
 // ─── GET /api/negocios/mi-negocio/productos ────────────────
 const listarMisProductos = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const productos = await Producto.findAll({
       where: { negocio_id: negocio.id },
@@ -436,7 +453,7 @@ const listarMisProductos = async (req, res) => {
 // ─── POST /api/negocios/mi-negocio/productos ───────────────
 const crearMiProducto = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const { nombre, descripcion, precio, categoria, tiempo_preparacion } = req.body;
     if (!nombre || precio == null) {
@@ -458,7 +475,7 @@ const crearMiProducto = async (req, res) => {
 // ─── PATCH /api/negocios/mi-negocio/productos/:prod_id ─────
 const actualizarMiProducto = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
@@ -476,7 +493,7 @@ const subirFotoProducto = async (req, res) => {
   try {
     const { base64, mime } = req.body;
     if (!base64 || !mime) return res.status(400).json({ ok: false, mensaje: 'Falta base64 o mime.' });
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
@@ -498,7 +515,7 @@ const subirFotoProducto = async (req, res) => {
 // ─── DELETE /api/negocios/mi-negocio/productos/:prod_id ────
 const eliminarMiProducto = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     const producto = await Producto.findOne({ where: { id: req.params.prod_id, negocio_id: negocio.id } });
     if (!producto) return res.status(404).json({ ok: false, mensaje: 'Producto no encontrado.' });
@@ -514,7 +531,7 @@ const eliminarMiProducto = async (req, res) => {
 const cambiarApertura = async (req, res) => {
   try {
     const { abierto } = req.body;
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) {
       return res.status(404).json({ ok: false, mensaje: 'No tienes negocio.' });
     }
@@ -542,6 +559,146 @@ const cambiarApertura = async (req, res) => {
   } catch (error) {
     console.error('Error en cambiarApertura:', error);
     res.status(500).json({ ok: false, mensaje: 'Error al cambiar estado.' });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// SUCURSALES: un mismo dueño, un negocio por plaza
+// ═══════════════════════════════════════════════════════════
+// Cada sucursal es un negocio completo (su dirección, su GPS, sus pedidos,
+// su deuda, su apertura) que apunta a la matriz con `matriz_id`. El cliente
+// no ve nada distinto: en cada plaza aparece la sucursal de esa plaza.
+
+const CAMPOS_SUCURSAL = [
+  'id', 'nombre', 'ciudad', 'direccion', 'colonia', 'logo', 'matriz_id',
+  'verificacion_estado', 'verificacion_nota', 'activo', 'abierto_ahora', 'creado_en',
+];
+
+// Otra sucursal del mismo dueño ya ubicada (con GPS) en esa plaza.
+const sucursalEnPlaza = (usuarioId, negocioId, slug) => Negocio.findOne({
+  where: {
+    usuario_id: usuarioId,
+    id: { [Op.ne]: negocioId },
+    ciudad: slug,
+    latitud: { [Op.ne]: null },
+  },
+  attributes: ['id'],
+});
+
+// ─── GET /api/negocios/mis-sucursales ──────────────────────
+const listarMisSucursales = async (req, res) => {
+  try {
+    const negocios = await Negocio.findAll({
+      where: { usuario_id: req.usuario.id },
+      order: [['creado_en', 'ASC']],
+      attributes: [...CAMPOS_SUCURSAL, 'latitud'],
+    });
+    const sucursales = negocios.map((n) => {
+      const j = n.toJSON();
+      const ubicada = j.latitud != null;
+      delete j.latitud;
+      return {
+        ...j,
+        es_matriz: !j.matriz_id,
+        // Sin GPS la columna `ciudad` todavía trae el default: no decir una
+        // plaza que no es.
+        plaza_nombre: ubicada ? nombrePlaza(j.ciudad) : null,
+      };
+    });
+    res.json({ ok: true, data: { sucursales } });
+  } catch (error) {
+    console.error('Error en listarMisSucursales:', error);
+    res.status(500).json({ ok: false, mensaje: 'Error al obtener tus sucursales.' });
+  }
+};
+
+// ─── POST /api/negocios/mis-sucursales ─────────────────────
+// Crea la sucursal como borrador copiando de la matriz lo que es de la
+// MARCA (nombre, fotos, menú, datos de cobro, INE del dueño). Lo que es del
+// LOCAL —dirección, GPS, foto del local, comprobante de domicilio— lo llena
+// el dueño en el mismo asistente de alta, y el admin la aprueba como a
+// cualquier negocio nuevo.
+const crearSucursal = async (req, res) => {
+  try {
+    const negocios = await Negocio.findAll({
+      where: { usuario_id: req.usuario.id },
+      order: [['creado_en', 'ASC']],
+    });
+    if (!negocios.length) {
+      return res.status(404).json({ ok: false, mensaje: 'Primero registra tu negocio.' });
+    }
+    const matriz = negocios.find((n) => !n.matriz_id) || negocios[0];
+    if (matriz.verificacion_estado !== 'aprobado') {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Tu negocio principal tiene que estar aprobado antes de abrir sucursales.',
+      });
+    }
+    if (negocios.some((n) => ['suspendido', 'bloqueado'].includes(n.estado_cuenta))) {
+      return res.status(403).json({ ok: false, mensaje: 'Tu cuenta esta restringida. Contacta a soporte.' });
+    }
+    // Una sucursal sin terminar a la vez: si ya hay una, se retoma esa en
+    // vez de dejar borradores huérfanos.
+    const borrador = negocios.find((n) => n.matriz_id && ['pendiente', 'rechazado'].includes(n.verificacion_estado));
+    if (borrador) {
+      return res.json({ ok: true, mensaje: 'Ya tienes una sucursal sin terminar.', data: { sucursal: borrador } });
+    }
+
+    const sucursal = await Negocio.sequelize.transaction(async (t) => {
+      const nueva = await Negocio.create({
+        usuario_id: req.usuario.id,
+        matriz_id: matriz.id,
+        nombre: matriz.nombre,
+        descripcion: matriz.descripcion,
+        categoria: matriz.categoria,
+        tipo_entrega: matriz.tipo_entrega,
+        logo: matriz.logo,
+        foto_portada: matriz.foto_portada,
+        documento_ine_dueno: matriz.documento_ine_dueno,
+        documento_rfc: matriz.documento_rfc,
+        telefono: matriz.telefono,
+        horarios: matriz.horarios,
+        tiempo_entrega_min: matriz.tiempo_entrega_min,
+        tiempo_entrega_max: matriz.tiempo_entrega_max,
+        clabe_bancaria: matriz.clabe_bancaria, // el getter descifra, el setter vuelve a cifrar
+        banco: matriz.banco,
+        comision_porcentaje: matriz.comision_porcentaje,
+        ciudad: CIUDAD_DEFAULT, // se corrige sola en cuanto confirme su GPS
+        verificacion_estado: 'pendiente',
+        activo: false,
+        abierto_ahora: false,
+      }, { transaction: t });
+
+      // El menú se copia: desde ahí cada sucursal ajusta precios y
+      // disponibilidad por su cuenta (lo que se acaba en una no se acaba en
+      // la otra).
+      const productos = await Producto.findAll({ where: { negocio_id: matriz.id }, transaction: t });
+      if (productos.length) {
+        await Producto.bulkCreate(productos.map((p) => ({
+          negocio_id: nueva.id,
+          nombre: p.nombre,
+          descripcion: p.descripcion,
+          precio: p.precio,
+          categoria: p.categoria,
+          imagen: p.imagen,
+          disponible: p.disponible,
+          destacado: p.destacado,
+          tiempo_preparacion: p.tiempo_preparacion,
+          opciones: p.opciones,
+          requiere_id: p.requiere_id,
+        })), { transaction: t });
+      }
+      return nueva;
+    });
+
+    res.status(201).json({
+      ok: true,
+      mensaje: 'Sucursal creada. Completa su dirección y ubicación para enviarla a revisión.',
+      data: { sucursal },
+    });
+  } catch (error) {
+    console.error('Error en crearSucursal:', error);
+    res.status(500).json({ ok: false, mensaje: 'No se pudo crear la sucursal.' });
   }
 };
 
@@ -688,7 +845,7 @@ const actualizarProducto = async (req, res) => {
 // ─── GET /api/negocios/mi-negocio/ganancias ───────────────
 const gananciasNegocio = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
 
     const pedidos = await Pedido.findAll({
@@ -826,7 +983,7 @@ const gananciasNegocio = async (req, res) => {
 // Admin valida y usa PATCH /api/admin/negocios/:id/confirmar-pago para liberar.
 const registrarPagoDeuda = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
 
     const { referencia_spei, monto } = req.body;
@@ -864,7 +1021,7 @@ const retiroDiarioNegocio = async (req, res) => {
   try {
     const { PCT_DESCUENTO_PAGO_DIARIO } = require('../config/precios');
 
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) return res.status(404).json({ ok: false, mensaje: 'No tienes negocio registrado.' });
 
     const pedidos = await Pedido.findAll({
@@ -976,6 +1133,9 @@ module.exports = {
   gananciasNegocio,
   registrarPagoDeuda,
   retiroDiarioNegocio,
+  // Sucursales
+  listarMisSucursales,
+  crearSucursal,
   // Legacy / operacion
   crearNegocio,
   actualizarNegocio,

@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const { sequelize: dbConn } = require('../config/database');
 const { randomInt } = require('crypto');
 const { calcularDistanciaKm } = require('../utils/distancia');
+const { negocioDelDueno } = require('../utils/negocioDelDueno');
 const { CIUDAD_DEFAULT, plazaDe, nombreDe: nombrePlaza, esValida: ciudadValida } = require('../config/ciudades');
 const { rutaPorCalles } = require('../services/routing.service');
 const { obtenerUrlFirmada } = require('../services/storage.service');
@@ -650,7 +651,7 @@ const obtenerPedido = async (req, res) => {
 // ─── GET /api/pedidos/negocio/mis-pedidos ────────────────
 const pedidosDelNegocio = async (req, res) => {
   try {
-    const negocio = await Negocio.findOne({ where: { usuario_id: req.usuario.id } });
+    const negocio = await negocioDelDueno(req);
     if (!negocio) {
       return res.status(404).json({ ok: false, mensaje: 'No tienes un negocio asociado a tu cuenta.' });
     }

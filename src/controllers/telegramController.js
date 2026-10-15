@@ -248,7 +248,7 @@ const manejarUpdate = async (req, res) => {
       if (!usuario) return null;
       const [rep, neg] = await Promise.all([
         Repartidor.findOne({ where: { usuario_id: usuario.id } }),
-        Negocio.findOne({ where: { usuario_id: usuario.id } }),
+        Negocio.findOne({ where: { usuario_id: usuario.id }, order: [['creado_en', 'ASC']] }),
       ]);
       return { usuario, rep, neg };
     };

@@ -50,8 +50,9 @@ const ESTADOS_TERMINALES = ['entregado', 'cancelado', 'rechazado'];
 const revisarImpedimentos = async (usuarioId) => {
   const impedimentos = [];
 
-  const [negocio, repartidor] = await Promise.all([
-    Negocio.findOne({ where: { usuario_id: usuarioId } }),
+  // Todas las sucursales del dueño, no solo la primera.
+  const [negocios, repartidor] = await Promise.all([
+    Negocio.findAll({ where: { usuario_id: usuarioId } }),
     Repartidor.findOne({ where: { usuario_id: usuarioId } }),
   ]);
 
@@ -60,7 +61,7 @@ const revisarImpedimentos = async (usuarioId) => {
       estado: { [Op.notIn]: ESTADOS_TERMINALES },
       [Op.or]: [
         { cliente_id: usuarioId },
-        ...(negocio ? [{ negocio_id: negocio.id }] : []),
+        ...(negocios.length ? [{ negocio_id: { [Op.in]: negocios.map((n) => n.id) } }] : []),
         ...(repartidor ? [{ repartidor_id: repartidor.id }] : []),
       ],
     },
@@ -69,8 +70,9 @@ const revisarImpedimentos = async (usuarioId) => {
     impedimentos.push(`Tienes ${enCurso} pedido(s) en curso. Espera a que terminen o cancélalos.`);
   }
 
-  if (negocio && parseFloat(negocio.deuda_plataforma || 0) > 0) {
-    impedimentos.push(`Tu negocio debe $${parseFloat(negocio.deuda_plataforma).toFixed(2)} de comisiones. Liquida antes de cerrar la cuenta.`);
+  const deuda = negocios.reduce((s, n) => s + parseFloat(n.deuda_plataforma || 0), 0);
+  if (deuda > 0) {
+    impedimentos.push(`Tu negocio debe $${deuda.toFixed(2)} de comisiones. Liquida antes de cerrar la cuenta.`);
   }
 
   if (repartidor) {
@@ -88,7 +90,7 @@ const revisarImpedimentos = async (usuarioId) => {
     }
   }
 
-  return { puede: impedimentos.length === 0, impedimentos, tieneNegocio: !!negocio, tieneRepartidor: !!repartidor };
+  return { puede: impedimentos.length === 0, impedimentos, tieneNegocio: negocios.length > 0, tieneRepartidor: !!repartidor };
 };
 
 // En la base se guarda la URL completa; `borrarImagen` espera la RUTA dentro
@@ -133,20 +135,22 @@ const eliminarCuenta = async (usuario, { origen = 'app', adminId = null } = {}) 
     throw e;
   }
 
-  const negocio = await Negocio.findOne({ where: { usuario_id: usuario.id } });
+  const negocios = await Negocio.findAll({ where: { usuario_id: usuario.id } });
   const repartidor = await Repartidor.findOne({ where: { usuario_id: usuario.id } });
 
   // 1. Archivos: identificaciones y fotos. Fuera de la base Y del disco.
   await borrarArchivos([
     [BUCKET_PUBLICO_REPARTIDORES, usuario.foto_perfil],
-    ...(negocio ? [
+    // Las sucursales comparten logo, portada e INE con la matriz: cada
+    // archivo se borra una sola vez.
+    ...new Map(negocios.flatMap((negocio) => [
       [BUCKET_PRIVADO_NEGOCIOS, negocio.documento_ine_dueno],
       [BUCKET_PRIVADO_NEGOCIOS, negocio.documento_rfc],
       [BUCKET_PRIVADO_NEGOCIOS, negocio.comprobante_domicilio],
       [BUCKET_PUBLICO_NEGOCIOS, negocio.logo],
       [BUCKET_PUBLICO_NEGOCIOS, negocio.foto_portada],
       [BUCKET_PUBLICO_NEGOCIOS, negocio.foto_local],
-    ] : []),
+    ]).map((par) => [`${par[0]}|${par[1]}`, par])).values(),
     ...(repartidor ? [
       [BUCKET_PRIVADO_REPARTIDORES, repartidor.foto_ine_frente],
       [BUCKET_PRIVADO_REPARTIDORES, repartidor.foto_ine_reverso],
@@ -168,7 +172,7 @@ const eliminarCuenta = async (usuario, { origen = 'app', adminId = null } = {}) 
 
     // 3. Negocio: deja de operar y pierde todo dato identificable del dueño.
     //    La fila se conserva porque los pedidos históricos apuntan a ella.
-    if (negocio) {
+    for (const negocio of negocios) {
       await negocio.update({
         activo: false, abierto_ahora: false,
         verificacion_estado: 'rechazado',
@@ -230,10 +234,10 @@ const eliminarCuenta = async (usuario, { origen = 'app', adminId = null } = {}) 
   //    conservar por la puerta de atrás lo que se acaba de borrar.
   logAdmin({
     adminId, accion: 'eliminar_cuenta', entidadTipo: 'usuario', entidadId: usuario.id,
-    estadoDespues: { origen, tenia_negocio: !!negocio, tenia_repartidor: !!repartidor },
+    estadoDespues: { origen, tenia_negocio: negocios.length > 0, tenia_repartidor: !!repartidor },
   });
 
-  return { ok: true, tenia_negocio: !!negocio, tenia_repartidor: !!repartidor };
+  return { ok: true, tenia_negocio: negocios.length > 0, tenia_repartidor: !!repartidor };
 };
 
 module.exports = { revisarImpedimentos, eliminarCuenta };

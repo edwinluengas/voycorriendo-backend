@@ -20,6 +20,8 @@ const {
   gananciasNegocio,
   registrarPagoDeuda,
   retiroDiarioNegocio,
+  listarMisSucursales,
+  crearSucursal,
   // Legacy
   crearNegocio,
   actualizarNegocio,
@@ -54,6 +56,10 @@ router.post  ('/mi-negocio/productos/:prod_id/foto',    proteger, subirFotoProdu
 router.get   ('/mi-negocio/ganancias',                  proteger, gananciasNegocio);
 router.post  ('/mi-negocio/pagar-deuda',                proteger, registrarPagoDeuda);
 router.post  ('/mi-negocio/retiro-diario',              proteger, retiroDiarioNegocio);
+
+// ─── Sucursales (un negocio por plaza, mismo dueño) ───────────
+router.get  ('/mis-sucursales', proteger, listarMisSucursales);
+router.post ('/mis-sucursales', proteger, crearSucursal);
 
 // ─── Detalle publico (debe ir DESPUES de las rutas con nombre) ─
 router.get('/:id', obtenerNegocio);
