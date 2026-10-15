@@ -195,6 +195,8 @@ const avisos = async () => {
   try { estado = JSON.parse(fs.readFileSync(ESTADO_AVISOS, 'utf8')); } catch (_) { /* primera vez */ }
   const ahora = (await q('SELECT NOW() ahora'))[0].ahora;
   const desde = estado.desde;
+  // De paso, la foto del negocio para el agente del dueño (solo lectura).
+  try { await escribirEstadoJefe(); } catch (_) { /* se reintenta en un minuto */ }
   fs.mkdirSync(path.dirname(ESTADO_AVISOS), { recursive: true });
   fs.writeFileSync(ESTADO_AVISOS, JSON.stringify({ desde: ahora }));
   if (!desde) return 'NO_REPLY';
@@ -228,6 +230,24 @@ const avisos = async () => {
   return l.length ? l.join('\n\n') : 'NO_REPLY';
 };
 
+// ─── Agente del dueño (OpenClaw `voycorriendo-jefe`) ──────
+// El agente corre sobre Claude CLI y NO puede ejecutar nada (a propósito):
+// para consultas, aquí se escribe ESTADO.md en su workspace y él solo lo lee.
+// Aprobar/rechazar NO se hace desde WhatsApp (se queda en el panel / Telegram).
+const JEFE_WS = path.join(os.homedir(), '.openclaw-voycorriendo-jefe', 'workspace');
+
+const escribirEstadoJefe = async () => {
+  if (!fs.existsSync(JEFE_WS)) return;
+  const hora = new Date().toLocaleString('es-MX', { timeZone: TZ, dateStyle: 'medium', timeStyle: 'short' });
+  const partes = await Promise.all([hoy(), ventas(7), conectados(), abiertos(), pendientes()]);
+  const md = `# ESTADO de VoyCorriendo\n\nActualizado: ${hora} (hora del centro de México). Se regenera cada minuto.\n\n`
+    + ['## Pedidos de hoy', '## Ventas últimos 7 días', '## Repartidores conectados', '## Negocios', '## Pendientes de aprobación']
+      .map((t, i) => `${t}\n\n${partes[i]}`).join('\n\n');
+  const tmp = path.join(JEFE_WS, 'ESTADO.md.tmp');
+  fs.writeFileSync(tmp, md);
+  fs.renameSync(tmp, path.join(JEFE_WS, 'ESTADO.md'));
+};
+
 // ─── CLI ──────────────────────────────────────────────────
 const COMANDOS = {
   hoy: () => hoy(),
@@ -238,6 +258,7 @@ const COMANDOS = {
   aprobar: (a) => aprobar(a[0]),
   rechazar: (a) => rechazar(a[0], a.slice(1).join(' ')),
   avisos: () => avisos(),
+  estado: async () => { await escribirEstadoJefe(); return 'NO_REPLY'; },
 };
 
 (async () => {
