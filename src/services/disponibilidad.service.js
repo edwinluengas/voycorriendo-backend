@@ -134,6 +134,13 @@ const registrarLatidoPorUsuarios = async (usuarioIds) => {
         RETURNING id`,
       { replacements: { ids } },
     );
+    // El mismo latido mantiene abierto el negocio del dueño (todas sus
+    // sucursales abiertas), sin importar en qué modo tenga la app.
+    await sequelize.query(
+      `UPDATE negocios SET ultimo_latido = NOW()
+        WHERE abierto_ahora = true AND usuario_id IN (:ids)`,
+      { replacements: { ids } },
+    );
     return filas?.length || 0;
   } catch (e) {
     console.warn('[disponibilidad] no se pudo registrar el latido por socket:', e.message);
@@ -160,8 +167,76 @@ const desconectarInactivos = async () => {
   }
 };
 
+// ─── Negocios "abiertos" sin nadie atendiendo ────────────────────────────
+// Antes `abierto_ahora` se quedaba prendido para siempre: un negocio cuyo
+// dueño dejó de usar la app seguía en el catálogo como abierto, los clientes
+// le pedían y cada pedido se cancelaba solo a los 20 min (Sabor a Mi, Putla,
+// 2026-10: dos pedidos reales perdidos así). Ahora se cierra solo.
+//
+// El margen depende de si el dueño PUEDE enterarse sin tener la app enfrente:
+//  - sin notificaciones push → 20 min sin señal (no vería ningún pedido).
+//  - con push → 4 h: le suena el aviso aunque tenga la app en segundo plano,
+//    y Android corta el socket de una app en segundo plano en minutos.
+const NEGOCIO_INACTIVO_MIN          = parseInt(process.env.NEGOCIO_INACTIVO_MIN || '20', 10);
+const NEGOCIO_INACTIVO_CON_PUSH_MIN = parseInt(process.env.NEGOCIO_INACTIVO_CON_PUSH_MIN || '240', 10);
+
+/**
+ * Cierra los negocios abiertos sin señal de su dueño y le avisa por push.
+ * Las cuentas de prueba (teléfono 000000000x: suite automática y revisores
+ * de Google Play) quedan fuera salvo que se pida explícitamente.
+ * @param {object} [opciones]
+ * @param {string[]} [opciones.soloIds]            limitar a estos negocios (tests)
+ * @param {boolean}  [opciones.incluirCuentasPrueba]
+ * @returns {Promise<number>} negocios cerrados
+ */
+const cerrarNegociosInactivos = async ({ soloIds = null, incluirCuentasPrueba = false } = {}) => {
+  try {
+    const [filas] = await sequelize.query(
+      `UPDATE negocios n
+          SET abierto_ahora = false
+         FROM usuarios u
+        WHERE u.id = n.usuario_id
+          AND n.abierto_ahora = true
+          ${incluirCuentasPrueba ? '' : "AND u.telefono NOT LIKE '00000000%'"}
+          ${soloIds ? 'AND n.id IN (:soloIds)' : ''}
+          AND (
+            n.ultimo_latido IS NULL
+            OR n.ultimo_latido < NOW() - ((CASE WHEN COALESCE(u.token_push, '') LIKE '%ExponentPushToken%'
+                                                THEN :conPush ELSE :sinPush END) || ' minutes')::interval
+          )
+        RETURNING n.id, n.nombre, u.token_push`,
+      {
+        replacements: {
+          conPush: String(NEGOCIO_INACTIVO_CON_PUSH_MIN),
+          sinPush: String(NEGOCIO_INACTIVO_MIN),
+          ...(soloIds ? { soloIds } : {}),
+        },
+      },
+    );
+    const cerrados = filas || [];
+    if (cerrados.length) {
+      const { enviarPush } = require('./notificaciones.service');
+      for (const n of cerrados) {
+        enviarPush(
+          n.token_push,
+          `Pusimos ${n.nombre || 'tu negocio'} como cerrado`,
+          'No vimos actividad en la app y no queremos que te lleguen pedidos sin que los veas. '
+          + 'Ábrelo desde la app cuando estés listo para atender.',
+          { tipo: 'negocio_cerrado_inactividad', negocioId: n.id },
+        ).catch(() => {});
+      }
+    }
+    return cerrados.length;
+  } catch (e) {
+    console.error('[disponibilidad] error cerrando negocios inactivos:', e.message);
+    return 0;
+  }
+};
+
 module.exports = {
   hayRepartidoresParaEnvio, mensajeSoloPickup, MENSAJES_SOLO_PICKUP,
   registrarLatido, registrarLatidoPorUsuarios, desconectarInactivos,
+  cerrarNegociosInactivos,
   LATIDO_MAX_MIN, LATIDO_DESCONECTAR_MIN,
+  NEGOCIO_INACTIVO_MIN, NEGOCIO_INACTIVO_CON_PUSH_MIN,
 };

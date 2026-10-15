@@ -87,6 +87,10 @@ const Negocio = sequelize.define('Negocio', {
   activo: { type: DataTypes.BOOLEAN, defaultValue: false },
   // El propio dueño puede abrir/cerrar (estilo Go Online del repartidor).
   abierto_ahora: { type: DataTypes.BOOLEAN, defaultValue: false },
+  // Última señal de vida del dueño con el negocio abierto (al abrirlo y cada
+  // 5 min con la app abierta en cualquier modo). Sin señal, el job lo cierra:
+  // un negocio "abierto" sin nadie atendiendo recibe pedidos que mueren solos.
+  ultimo_latido: { type: DataTypes.DATE, allowNull: true },
   tiempo_entrega_min: { type: DataTypes.INTEGER, defaultValue: 20 },
   tiempo_entrega_max: { type: DataTypes.INTEGER, defaultValue: 40 },
   // Cuenta bancaria — cifrada con AES-256-GCM

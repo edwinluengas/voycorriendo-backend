@@ -549,6 +549,9 @@ const cambiarApertura = async (req, res) => {
     }
 
     negocio.abierto_ahora = !!abierto;
+    // Abrir es la señal de vida más clara: sin esto el job lo volvía a
+    // cerrar en su siguiente vuelta (latido vacío o de hace días).
+    if (abierto) negocio.ultimo_latido = new Date();
     await negocio.save();
 
     res.json({

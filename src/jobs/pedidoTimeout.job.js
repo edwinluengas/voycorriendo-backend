@@ -231,6 +231,15 @@ function iniciarJobPedidoTimeout() {
     } catch (e) {
       console.error('[PedidoTimeout] Error desconectando repartidores inactivos:', e.message);
     }
+    // Lo mismo para el negocio: "abierto" sin dueño atendiendo solo junta
+    // pedidos que se cancelan a los 20 min.
+    try {
+      const { cerrarNegociosInactivos } = require('../services/disponibilidad.service');
+      const n = await cerrarNegociosInactivos();
+      if (n > 0) console.log(`[PedidoTimeout] ${n} negocio(s) cerrado(s) por inactividad del dueño.`);
+    } catch (e) {
+      console.error('[PedidoTimeout] Error cerrando negocios inactivos:', e.message);
+    }
   });
   const { LATIDO_DESCONECTAR_MIN } = require('../services/disponibilidad.service');
   console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min, libera crédito atrapado, y desconecta repartidores con más de ${LATIDO_DESCONECTAR_MIN} min sin actividad.`);
