@@ -58,7 +58,8 @@ beforeAll(async () => {
     UPDATE negocios
        SET deuda_plataforma = 0, pedidos_efectivo_pendientes = 0,
            bloqueado_por_deuda = false,
-           estado_cuenta = 'normal', estado_motivo = NULL
+           estado_cuenta = 'normal', estado_motivo = NULL,
+           abierto_ahora = true, ultimo_latido = NOW()
      WHERE id = '33333333-0000-0000-0000-000000000001'`);
 });
 
@@ -582,6 +583,24 @@ describe('Entradas mal formadas se rechazan con 400, no revientan con 500', () =
       { tipo: 'logo', base64: ejecutable, mime: 'image/jpeg' }, conAuth(token));
     expect(r.status).toBe(400);
     expect(r.data.mensaje).toMatch(/no es una imagen/i);
+  });
+});
+
+describe('Negocio cerrado — no recibe pedidos', () => {
+  // Bug real (Sabor a Mi, octubre 2026): el pedido entraba con el negocio
+  // cerrado, nadie lo atendía y se cancelaba solo a los 20 minutos.
+  afterAll(async () => {
+    await db.query(`UPDATE negocios SET abierto_ahora = true, ultimo_latido = NOW() WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
+  });
+
+  test('pedir a un negocio cerrado devuelve 400 NEGOCIO_CERRADO y no crea nada', async () => {
+    const { token } = await login('cliente');
+    await db.query(`UPDATE negocios SET abierto_ahora = false WHERE id = $1`, [NEGOCIO_DON_BETO.id]);
+    const r = await crearPedido(token, { tipo_envio: 'pickup' });
+    if (r.data?.data?.pedido?.id) pedidosACancelar.push(r.data.data.pedido.id);
+    expect(r.status).toBe(400);
+    expect(r.data.codigo).toBe('NEGOCIO_CERRADO');
+    expect(r.data.mensaje).toMatch(/cerrado/i);
   });
 });
 

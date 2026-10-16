@@ -252,6 +252,19 @@ const crearPedido = async (req, res) => {
       }
     }
 
+    // 2.6. Negocio cerrado. Antes `abierto_ahora` no se revisaba al crear el
+    // pedido: un cliente podía pedirle a un negocio cerrado (Sabor a Mi,
+    // octubre 2026), nadie lo veía y se cancelaba solo a los 20 min. Va
+    // DESPUÉS del candado de plaza: "es de otro pueblo" explica mejor el
+    // rechazo que "está cerrado".
+    if (!negocio.abierto_ahora) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: `${(negocio.nombre || 'Este negocio').trim()} está cerrado en este momento. Intenta más tarde o elige otro negocio.`,
+        codigo: 'NEGOCIO_CERRADO',
+      });
+    }
+
     // 3. Calcular distancia y validar cobertura por tipo_envio
     // IMPORTANTE: si no podemos determinar la distancia (falta ubicación del
     // negocio o del cliente, o falla el cálculo), el pedido se RECHAZA — antes

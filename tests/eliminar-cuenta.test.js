@@ -23,7 +23,11 @@ const PRODUCTO_PASTOR  = '36f7d479-f8c6-484e-9999-7e5561fc78fe';
 let db;
 const desechables = [];   // teléfonos creados, se borran al final
 
-beforeAll(async () => { db = await conectar(); });
+beforeAll(async () => {
+  db = await conectar();
+  // Un pedido a un negocio cerrado se rechaza (NEGOCIO_CERRADO).
+  await db.query(`UPDATE negocios SET abierto_ahora = true, ultimo_latido = NOW() WHERE id = $1`, [NEGOCIO_DON_BETO]);
+});
 
 afterAll(async () => {
   for (const tel of desechables) {
