@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { Op } = require('sequelize');
 const { Pedido, Usuario } = require('../models');
+const { sequelize } = require('../config/database');
 const push = require('../services/notificaciones.service');
 const tg = require('../services/telegram.service');
 const pagosService = require('../services/pagos.service');
@@ -58,11 +59,21 @@ const ATASCADO_MIN = parseInt(process.env.PEDIDO_ATASCADO_MIN || '90');
 async function cancelarPedidosExpirados() {
   const limite = new Date(Date.now() - TIMEOUT_MIN * 60 * 1000);
 
+  // Se cuenta desde que quedó LISTO, no desde que se creó: antes un pedido
+  // que tardaba más de TIMEOUT_MIN en cocinarse se cancelaba apenas quedaba
+  // listo, como "pérdida" cargada al restaurante. Pedidos viejos sin
+  // listo_en caen a actualizado_en (≈ el momento en que pasaron a listo).
+  // PICKUP no espera repartidor —espera al cliente en el mostrador—, así que
+  // no entra en este timeout.
   const pedidos = await Pedido.findAll({
     where: {
       estado: 'listo',
       repartidor_id: null,
-      creado_en: { [Op.lt]: limite },
+      tipo_envio: { [Op.ne]: 'pickup' },
+      [Op.and]: [sequelize.where(
+        sequelize.fn('COALESCE', sequelize.col('listo_en'), sequelize.col('actualizado_en')),
+        { [Op.lt]: limite },
+      )],
     },
   });
 
@@ -245,4 +256,4 @@ function iniciarJobPedidoTimeout() {
   console.log(`[PedidoTimeout] Job iniciado — revisa cada 5 min, cancela 'listo' tras ${TIMEOUT_MIN} min, cancela 'pendiente' tras ${PENDIENTE_TIMEOUT_MIN} min, alerta atascados tras ${ATASCADO_MIN} min, libera crédito atrapado, y desconecta repartidores con más de ${LATIDO_DESCONECTAR_MIN} min sin actividad.`);
 }
 
-module.exports = { iniciarJobPedidoTimeout };
+module.exports = { iniciarJobPedidoTimeout, cancelarPedidosExpirados };

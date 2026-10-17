@@ -749,9 +749,11 @@ const actualizarEstado = async (req, res) => {
     }
 
     if (rolEfectivo === 'negocio') {
-      // El negocio debe estar aprobado para operar pedidos
+      // El negocio DEL PEDIDO debe estar aprobado para operarlo. Antes se
+      // buscaba "algún negocio aprobado del dueño": con sucursales, el
+      // bloqueo por deuda de una sucursal se revisaba contra otra.
       const negocioActivo = await Negocio.findOne({
-        where: { usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
+        where: { id: pedido.negocio_id, usuario_id: req.usuario.id, verificacion_estado: 'aprobado' },
         attributes: ['id', 'bloqueado_por_deuda', 'estado_cuenta'],
       });
       if (!negocioActivo) {
@@ -813,6 +815,7 @@ const actualizarEstado = async (req, res) => {
     // Timestamps
     const timestamps = {
       confirmado: 'confirmado_en',
+      listo:      'listo_en',
       en_camino:  'asignado_en',
       en_envio:   'enviado_en',
       entregado:  'entregado_en',
@@ -1052,8 +1055,17 @@ const actualizarEstado = async (req, res) => {
           numero:    pedido.numero,
           ciudad:    pedido.ciudad,
         });
+        // Solo a quien PUEDE tomarlo: conectado y en la plaza del pedido.
+        // Antes el push le llegaba a todo repartidor aprobado del sistema,
+        // conectado o no y de cualquier pueblo (un pedido de Putla sonaba en
+        // Puerto Escondido, a 200 km, sin poder aceptarse).
         const repartidoresAprobados = await Repartidor.findAll({
-          where: { verificacion_estado: 'aprobado' },
+          where: {
+            verificacion_estado: 'aprobado',
+            conectado: true,
+            ciudad: pedido.ciudad,
+            estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
+          },
           include: [{ model: Usuario, as: 'usuario', attributes: ['token_push'] }],
         });
         const tokensRep = repartidoresAprobados.map((r) => r.usuario?.token_push).filter(Boolean);

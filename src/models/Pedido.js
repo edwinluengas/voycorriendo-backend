@@ -112,6 +112,7 @@ const Pedido = sequelize.define('Pedido', {
   // Tiempos
   confirmado_en: { type: DataTypes.DATE, allowNull: true },
   asignado_en:   { type: DataTypes.DATE, allowNull: true },
+  listo_en:      { type: DataTypes.DATE, allowNull: true },
   recogido_en:   { type: DataTypes.DATE, allowNull: true },
   enviado_en:    { type: DataTypes.DATE, allowNull: true },
   entregado_en:  { type: DataTypes.DATE, allowNull: true },

@@ -589,8 +589,10 @@ const aceptarPedido = async (req, res) => {
       return res.status(403).json({ ok: false, mensaje: 'Tu cuenta está restringida. Contacta a soporte.' });
     }
 
+    // Pickup nunca lleva repartidor: no sale en "disponibles", pero antes se
+    // podía aceptar igual llamando la API con el id.
     const pedido = await Pedido.findOne({
-      where: { id: pedido_id, estado: 'listo', repartidor_id: null },
+      where: { id: pedido_id, estado: 'listo', repartidor_id: null, tipo_envio: { [Op.ne]: 'pickup' } },
     });
     if (!pedido) {
       return res.status(409).json({ ok: false, mensaje: 'Este pedido ya fue tomado por otro repartidor.' });

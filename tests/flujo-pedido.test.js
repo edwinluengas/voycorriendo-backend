@@ -486,7 +486,20 @@ describe('El repartidor NO ve el codigo de entrega antes de tiempo', () => {
   const creados = [];
 
   afterAll(async () => {
-    if (creados.length) await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
+    if (!creados.length) return;
+    // El test de "código obligatorio" ENTREGA un pedido en efectivo: genera
+    // ledger y $35 de deuda al negocio de prueba. Sin revertirlo, cada
+    // corrida de la suite dejaba deuda colgando de un pedido ya borrado.
+    const entregados = await db.query(
+      `SELECT COUNT(*)::int n FROM ledger_conciliacion WHERE pedido_id = ANY($1)`, [creados]);
+    const n = entregados.rows[0].n;
+    await db.query(`DELETE FROM ledger_conciliacion WHERE pedido_id = ANY($1)`, [creados]);
+    if (n > 0) {
+      await db.query(`UPDATE negocios SET deuda_plataforma = GREATEST(0, deuda_plataforma - $1),
+                        pedidos_efectivo_pendientes = GREATEST(0, pedidos_efectivo_pendientes - $2)
+                      WHERE id = $3`, [35 * n, n, NEGOCIO_DON_BETO.id]);
+    }
+    await db.query(`DELETE FROM pedidos WHERE id = ANY($1)`, [creados]);
   });
 
   test('la lista de pedidos disponibles no filtra datos sensibles', async () => {

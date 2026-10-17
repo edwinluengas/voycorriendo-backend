@@ -639,6 +639,11 @@ const migrarDB = async () => {
   // código pero nunca se creó la columna — se perdía silenciosamente.
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS nota_cancelacion VARCHAR(255)`);
 
+  // listo_en: cuándo quedó listo para recoger. El timeout "sin repartidor"
+  // contaba desde creado_en, así que un pedido que tardaba más de 15 min en
+  // cocinarse se cancelaba apenas quedaba listo (ver pedidoTimeout.job).
+  await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS listo_en TIMESTAMPTZ`);
+
   // Pago con tarjeta nativo (sin salir a Mercado Pago) + tarjetas guardadas
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_customer_id VARCHAR(50)`);
   await run(`CREATE TABLE IF NOT EXISTS tarjetas_guardadas (
