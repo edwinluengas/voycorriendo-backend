@@ -23,6 +23,7 @@ const { conectarDB, sequelize } = require('./config/database');
 // negocio por `POST /admin/negocios/:id/liquidar-semanal`.
 const { iniciarJobPedidoTimeout } = require('./jobs/pedidoTimeout.job');
 const { iniciarJobLimpiezaIneCliente } = require('./jobs/limpiezaIneCliente.job');
+const { iniciarJobPrimerPedido } = require('./jobs/primerPedido.job');
 const { registrarWebhook } = require('./services/telegram.service');
 
 // Rutas
@@ -643,6 +644,13 @@ const migrarDB = async () => {
   // contaba desde creado_en, así que un pedido que tardaba más de 15 min en
   // cocinarse se cancelaba apenas quedaba listo (ver pedidoTimeout.job).
   await run(`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS listo_en TIMESTAMPTZ`);
+  // Avisos que se mandan una sola vez en la vida de la plataforma (p. ej. el
+  // primer pedido real). La clave es la marca de "ya se avisó".
+  await run(`CREATE TABLE IF NOT EXISTS avisos_unicos (
+    clave VARCHAR(60) PRIMARY KEY,
+    detalle TEXT,
+    enviado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
 
   // Pago con tarjeta nativo (sin salir a Mercado Pago) + tarjetas guardadas
   await run(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS mp_customer_id VARCHAR(50)`);
@@ -840,6 +848,7 @@ const iniciar = async () => {
   // 0.0.0.0 -> escuchar en todas las interfaces (necesario en Railway/Docker)
   iniciarJobPedidoTimeout();
   iniciarJobLimpiezaIneCliente();
+  iniciarJobPrimerPedido();
   await registrarWebhook();
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\nVOYCORRIENDO API corriendo en puerto ${PORT}`);
