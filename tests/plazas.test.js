@@ -86,7 +86,7 @@ describe('Plazas — la app las recibe del servidor', () => {
 describe('Plazas — el catálogo no se mezcla', () => {
   test('cada plaza devuelve SOLO negocios de esa plaza', async () => {
     for (const slug of SLUGS) {
-      const r = await cliente.get(`/negocios?ciudad=${slug}`);
+      const r = await cliente.get(`/negocios?ciudad=${slug}&pruebas=1`);
       expect(r.status).toBe(200);
       const negocios = r.data.data.negocios || [];
       for (const n of negocios) {
@@ -98,7 +98,7 @@ describe('Plazas — el catálogo no se mezcla', () => {
   test('ninguna plaza ve los negocios de otra', async () => {
     const porPlaza = {};
     for (const slug of SLUGS) {
-      const r = await cliente.get(`/negocios?ciudad=${slug}`);
+      const r = await cliente.get(`/negocios?ciudad=${slug}&pruebas=1`);
       porPlaza[slug] = new Set((r.data.data.negocios || []).map((n) => n.id));
     }
     for (const a of SLUGS) {
@@ -107,6 +107,15 @@ describe('Plazas — el catálogo no se mezcla', () => {
         const comunes = [...porPlaza[a]].filter((id) => porPlaza[b].has(id));
         expect(comunes).toEqual([]);
       }
+    }
+  });
+
+  test('el catálogo público no muestra negocios de prueba/demo', async () => {
+    for (const slug of SLUGS) {
+      const publico = await cliente.get(`/negocios?ciudad=${slug}`);
+      const ids = (publico.data.data.negocios || []).map((n) => n.id);
+      expect(ids).not.toContain('33333333-0000-0000-0000-000000000001'); // Tacos Don Beto (tests)
+      expect(ids).not.toContain('33333333-0000-0000-0000-000000000002'); // Mariscos La Lupita (demo)
     }
   });
 
@@ -125,7 +134,7 @@ describe('Plazas — el catálogo no se mezcla', () => {
   test('cada plaza tiene al menos un negocio aprobado (incluida Pinotepa)', async () => {
     // Una plaza anunciada sin negocios es una app vacía para quien vive ahí.
     for (const slug of SLUGS) {
-      const r = await cliente.get(`/negocios?ciudad=${slug}`);
+      const r = await cliente.get(`/negocios?ciudad=${slug}&pruebas=1`);
       expect((r.data.data.negocios || []).length).toBeGreaterThan(0);
     }
   });
@@ -205,7 +214,7 @@ describe('Plazas — no se puede pedir a un negocio de otro pueblo', () => {
   beforeAll(async () => {
     ({ token } = await login('cliente'));
     for (const slug of SLUGS.filter((s) => s !== 'puerto_escondido')) {
-      const r = await cliente.get(`/negocios?ciudad=${slug}`);
+      const r = await cliente.get(`/negocios?ciudad=${slug}&pruebas=1`);
       const n = (r.data.data.negocios || [])[0];
       if (!n) continue;
       const detalle = await cliente.get(`/negocios/${n.id}`);

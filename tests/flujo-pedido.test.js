@@ -231,7 +231,7 @@ describe('El catálogo público NO filtra datos personales del dueño', () => {
   // muestra nada a quien no sabemos dónde está), y este test necesita
   // negocios reales que inspeccionar.
   test('GET /negocios (sin token) no devuelve documentos ni datos financieros', async () => {
-    const res = await cliente.get('/negocios?ciudad=puerto_escondido');
+    const res = await cliente.get('/negocios?ciudad=puerto_escondido&pruebas=1');
     expect(res.status).toBe(200);
     const negocios = res.data?.data?.negocios || [];
     expect(negocios.length).toBeGreaterThan(0);
@@ -245,7 +245,7 @@ describe('El catálogo público NO filtra datos personales del dueño', () => {
   });
 
   test('GET /negocios/:id (sin token) tampoco los devuelve', async () => {
-    const lista = await cliente.get('/negocios?ciudad=puerto_escondido');
+    const lista = await cliente.get('/negocios?ciudad=puerto_escondido&pruebas=1');
     const id = lista.data.data.negocios[0].id;
     const res = await cliente.get(`/negocios/${id}`);
     expect(res.status).toBe(200);

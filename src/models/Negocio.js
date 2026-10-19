@@ -91,6 +91,9 @@ const Negocio = sequelize.define('Negocio', {
   // 5 min con la app abierta en cualquier modo). Sin señal, el job lo cierra:
   // un negocio "abierto" sin nadie atendiendo recibe pedidos que mueren solos.
   ultimo_latido: { type: DataTypes.DATE, allowNull: true },
+  // Negocios de prueba/demo: no salen en el catálogo de los clientes (solo
+  // con ?pruebas=1, que usan los tests). Siguen aceptando pedidos por id.
+  oculto: { type: DataTypes.BOOLEAN, defaultValue: false },
   tiempo_entrega_min: { type: DataTypes.INTEGER, defaultValue: 20 },
   tiempo_entrega_max: { type: DataTypes.INTEGER, defaultValue: 40 },
   // Cuenta bancaria — cifrada con AES-256-GCM

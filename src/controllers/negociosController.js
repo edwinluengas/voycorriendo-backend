@@ -64,6 +64,8 @@ const listarNegocios = async (req, res) => {
       estado_cuenta: { [Op.notIn]: ['suspendido', 'bloqueado'] },
       ciudad,
     };
+    // Los de prueba/demo solo aparecen si se piden explícitamente (tests).
+    if (req.query.pruebas !== '1') where.oculto = false;
     if (categoria) where.categoria = categoria;
     if (buscar) {
       where.nombre = { [Op.iLike]: `%${buscar}%` };

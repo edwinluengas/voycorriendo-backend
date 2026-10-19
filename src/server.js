@@ -682,6 +682,14 @@ const migrarDB = async () => {
   await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS matriz_id UUID`);
   // Latido del dueño con el negocio abierto: sin él, el job lo cierra solo.
   await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS ultimo_latido TIMESTAMPTZ`);
+  // Negocios de prueba/demo fuera del catálogo público: un cliente real que
+  // pide a "Mariscos La Lupita" (demo, sin nadie atendiendo) espera 20 min a
+  // que el pedido se cancele solo. Las cuentas internas usan teléfonos
+  // 00000000xx, así que cualquier negocio nuevo de esas cuentas se oculta solo.
+  await run(`ALTER TABLE negocios ADD COLUMN IF NOT EXISTS oculto BOOLEAN NOT NULL DEFAULT false`);
+  await run(`UPDATE negocios SET oculto = true
+              WHERE oculto = false
+                AND usuario_id IN (SELECT id FROM usuarios WHERE telefono LIKE '00000000%')`);
 
   // Lista negra permanente: placas de repartidor y direcciones de negocio
   // que quedan vetadas para siempre tras un bloqueo por incumplimiento.

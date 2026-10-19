@@ -98,7 +98,7 @@ describe('Sucursales', () => {
 
   test('un header con un negocio ajeno NO lo deja operar: cae en su matriz', async () => {
     // Antojitos La Mixteca (Zacatepec) es de otra cuenta.
-    const otro = await cliente.get('/negocios', { params: { ciudad: 'zacatepec' } });
+    const otro = await cliente.get('/negocios', { params: { ciudad: 'zacatepec', pruebas: '1' } });
     const ajeno = otro.data.data.negocios[0];
     expect(ajeno).toBeTruthy();
     const r = await cliente.get('/negocios/mi-negocio', conNegocio(ajeno.id));
